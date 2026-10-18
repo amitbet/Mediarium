@@ -102,7 +102,10 @@ func main() {
 		}
 		return
 	}
-	if err := run(); err != nil {
+	if runAsService() {
+		return
+	}
+	if err := run(context.Background()); err != nil {
 		log.Fatalf("mediarium: %v", err)
 	}
 	// After an update, a restore or the Restart button, start the next program
@@ -120,7 +123,7 @@ var (
 	restartUpdateDir string
 )
 
-func run() error {
+func run(parent context.Context) error {
 	// The log also goes into a small in-memory buffer (secrets taken out), so
 	// Settings > System can copy the recent lines for a support request.
 	// What goes to stderr (`docker logs`, which people paste into bug reports)
@@ -263,7 +266,7 @@ func run() error {
 		MaxHeaderBytes:    64 << 10,
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	// After a restore is staged the app has to restart to apply it. Stopping

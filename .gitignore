@@ -35,3 +35,4 @@ Thumbs.db
 
 # Agent and editor tooling stays out of the repo
 /music/
+__pycache__/

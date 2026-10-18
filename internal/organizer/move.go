@@ -421,10 +421,13 @@ func (c *ctxReader) Read(p []byte) (int, error) {
 // MapPath says where a path went after a move, for the caller's records. The
 // units are those of the move; ok is false for a path none of them covers.
 func MapPath(units []MoveUnit, p string) (string, bool) {
+	p = filepath.Clean(p)
 	// The longest source wins, so a file unit inside a folder unit is exact.
 	sorted := append([]MoveUnit(nil), units...)
 	sort.Slice(sorted, func(i, j int) bool { return len(sorted[i].Src) > len(sorted[j].Src) })
 	for _, u := range sorted {
+		u.Src = filepath.Clean(u.Src)
+		u.Dst = filepath.Clean(u.Dst)
 		if p == u.Src {
 			return u.Dst, true
 		}

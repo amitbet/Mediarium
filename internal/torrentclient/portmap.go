@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -345,15 +344,6 @@ func natpmpMap(ctx context.Context, gw *net.UDPAddr, op byte, internal, suggeste
 		return 0, 0, err
 	}
 	return int(binary.BigEndian.Uint16(resp[10:12])), binary.BigEndian.Uint32(resp[12:16]), nil
-}
-
-// defaultGateway reads the default route from the system (Linux).
-func defaultGateway() (net.IP, error) {
-	b, err := os.ReadFile("/proc/net/route")
-	if err != nil {
-		return nil, fmt.Errorf("find the router: %w", err)
-	}
-	return parseDefaultGateway(string(b))
 }
 
 // parseDefaultGateway finds the gateway of the default route in the text of
