@@ -10,7 +10,10 @@ if (!$UserOnly -and ((Get-Service Mediarium -ErrorAction SilentlyContinue) -or (
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ('mediarium-installer-test-' + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $testRoot | Out-Null
 function Invoke-Setup([string]$File, [string]$Arguments) {
-    $p = Start-Process -FilePath $File -ArgumentList $Arguments -Wait -PassThru
+    # Start-Process -Wait also waits for descendants, including the background
+    # user application the installer intentionally leaves running.
+    $p = Start-Process -FilePath $File -ArgumentList $Arguments -PassThru
+    if (!$p.WaitForExit(180000)) { throw "Installer did not finish within three minutes: $File" }
     if ($p.ExitCode -ne 0) { throw "Installer command failed with exit $($p.ExitCode): $File" }
 }
 function Assert-Ready([int]$Port) {
