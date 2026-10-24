@@ -63,6 +63,16 @@ into `windows-service` with a merge commit. There were no conflicts. All 22
 files differing from upstream are covered by the inventory above. The Windows
 README now names v3.7.2 and the required Go 1.26.10 toolchain.
 
+Validation: the Windows build, all 615 frontend tests, Python migration test,
+and focused Go service/configuration/organizer/cleanup/indexer/store tests pass.
+Selected API restart, folder settings and path-handling tests also pass.
+Frontend lint completes with existing upstream warnings. The API filesystem
+comparison test `TestFilesystemCheckUsesTheNearestExistingFolder` fails because
+upstream's unchanged `internal/organizer/samefs_windows.go` explicitly returns
+`supported=false`. Native Windows volume detection remains unsupported; this
+is not introduced by the merge. The full torrent suite also retains the Windows
+fixture-cleanup limitation described in `windows/README.md`.
+
 Compare `git diff upstream/main -- .` and `git log upstream/main..HEAD` against
 this inventory on every merge. Preserve local work before merging a release tag.
 Build and test before stopping the installed service. Back up the stopped
