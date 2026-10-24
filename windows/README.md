@@ -99,7 +99,8 @@ paths and an account with access to those shares.
 Upstream currently publishes Linux updates. Use this fork's Windows installer to
 upgrade Windows. `install-tools.ps1` stages checksum-verified 7-Zip 26.04 and par2cmdline
 1.4.0 into the application's tools directory; the installer puts it on the service's
-PATH. The tool installer requires x64 Windows and the included `tar.exe`.
+PATH. The tool installer requires x64 Windows and 7-Zip (preinstalled on CI), or a
+Windows `tar.exe` with LZMA support. ZIP files use PowerShell's built-in extractor.
 FlareSolverr is a separate service; migrate its URL if it remains on
 another host. Built-in API registrations from upstream release binaries are not
 included in source builds; configured personal API credentials migrate with the DB.

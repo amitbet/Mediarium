@@ -16,8 +16,20 @@ foreach ($archive in $archives) {
     if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ne $archive[2]) { throw "Checksum failed for $($archive[1])" }
     $target = Join-Path $scratch ([IO.Path]::GetFileNameWithoutExtension($archive[1]))
     New-Item -ItemType Directory -Path $target | Out-Null
-    & tar.exe -xf $path -C $target
-    if ($LASTEXITCODE) { throw "Extraction failed for $($archive[1])" }
+    if ($archive[1] -like '*.zip') {
+        Expand-Archive -LiteralPath $path -DestinationPath $target
+    } else {
+        $sevenZip = Get-Command 7z.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source
+        if (!$sevenZip -and (Test-Path "${env:ProgramFiles}\7-Zip\7z.exe")) { $sevenZip = "${env:ProgramFiles}\7-Zip\7z.exe" }
+        if ($sevenZip) {
+            & $sevenZip x -y "-o$target" $path
+        } else {
+            # Windows 11's libarchive supports this; older Windows Server
+            # tar builds lack LZMA. CI has 7-Zip preinstalled.
+            & tar.exe -xf $path -C $target
+        }
+        if ($LASTEXITCODE) { throw "Extraction failed for $($archive[1]); install 7-Zip if tar lacks LZMA support." }
+    }
 }
 Copy-Item -LiteralPath (Join-Path $scratch '7zip\x64\7za.exe') -Destination (Join-Path $toolsDir '7z.exe') -Force
 Copy-Item -LiteralPath (Join-Path $scratch '7zip\License.txt') -Destination (Join-Path $toolsDir '7zip-License.txt') -Force
