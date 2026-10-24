@@ -76,7 +76,8 @@ this upgrade; they are preserved as fork changes, not attributed to upstream.
   on disposable CI accounts, including key/environment preservation.
 - `windows/build.ps1`: optional console-free GUI build and explicit CGO=0.
   `install-tools.ps1` can stage tools in a writable folder without elevation;
-  `install.ps1` can configure a freshly packaged executable already at its target.
+  `install.ps1` can configure a freshly packaged executable already at its target
+  and grants LocalService read/execute access for custom installation folders.
 - `cmd/app/user_windows.go`, `user_windows_test.go`, `main.go`, `service_other.go`:
   native --user-mode/--stop-user-mode dispatch, isolated per-user defaults and log,
   a per-user/session/config named event for single instance and graceful stop,

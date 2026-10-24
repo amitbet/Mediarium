@@ -23,6 +23,10 @@ New-Item -ItemType Directory -Force -Path $InstallDir,$ConfigDir,$DataDir | Out-
 if ($Binary -ne (Join-Path $InstallDir 'mediarium.exe')) {
     Copy-Item -LiteralPath $Binary -Destination "$InstallDir\mediarium.exe" -Force
 }
+# A custom installation folder may inherit private per-user ACLs. The service
+# needs read/execute access to its program and bundled tools, never write access.
+& icacls.exe $InstallDir /grant '*S-1-5-19:(OI)(CI)RX' /T /Q
+if ($LASTEXITCODE) { throw 'Program access for LocalService failed' }
 foreach ($folder in 'downloads','movies','series','music','ebooks','audiobooks') {
     New-Item -ItemType Directory -Force -Path (Join-Path $DataDir $folder) | Out-Null
 }
