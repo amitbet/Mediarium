@@ -20,7 +20,9 @@ if ($existing) {
     if ($serviceProcess -and !$serviceProcess.WaitForExit(30000)) { throw 'Previous Mediarium process did not exit' }
 }
 New-Item -ItemType Directory -Force -Path $InstallDir,$ConfigDir,$DataDir | Out-Null
-Copy-Item -LiteralPath $Binary -Destination "$InstallDir\mediarium.exe" -Force
+if ($Binary -ne (Join-Path $InstallDir 'mediarium.exe')) {
+    Copy-Item -LiteralPath $Binary -Destination "$InstallDir\mediarium.exe" -Force
+}
 foreach ($folder in 'downloads','movies','series','music','ebooks','audiobooks') {
     New-Item -ItemType Directory -Force -Path (Join-Path $DataDir $folder) | Out-Null
 }

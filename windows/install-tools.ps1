@@ -1,4 +1,3 @@
-#Requires -RunAsAdministrator
 [CmdletBinding()]
 param([string]$InstallDir = 'C:\Program Files\Mediarium')
 $ErrorActionPreference = 'Stop'
@@ -25,4 +24,4 @@ Copy-Item -LiteralPath (Join-Path $scratch '7zip\License.txt') -Destination (Joi
 Get-ChildItem (Join-Path $scratch 'par2') -Recurse -File | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $toolsDir -Force }
 & (Join-Path $toolsDir 'par2.exe') -V
 if ($LASTEXITCODE) { throw 'PAR2 tool could not run' }
-Write-Output "Tools installed in $toolsDir. Rerun install.ps1 to apply the service PATH."
+Write-Output "Tools installed in $toolsDir."

@@ -18,6 +18,10 @@
 
 # Mediarium
 
+**Windows fork:** [download service or per-user installers](https://github.com/amitbet/Mediarium/releases),
+read the [Windows guide](windows/README.md), or review [all fork changes](fork_nodes.md).
+This public fork is maintained on `main`; the `upstream` remote tracks rdborg/Mediarium.
+
 Mediarium is a self-hosted media manager. Find a movie or show, and it searches your Usenet and torrent indexers, downloads the best release, unpacks it, names it and puts it in your library, ready for Plex, Jellyfin or Emby.
 
 It does the jobs of Radarr, Sonarr, Prowlarr, SABnzbd, a torrent client and Bazarr in **one app**: one container, one web page, one search bar, one thing to update and back up.

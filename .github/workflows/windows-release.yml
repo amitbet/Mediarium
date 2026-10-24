@@ -1,0 +1,150 @@
+name: Windows installers
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/windows-release.yml'
+      - 'windows/**'
+      - 'cmd/app/**'
+      - 'web/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'VERSION'
+    tags: ['windows-v*']
+  pull_request:
+    paths: ['windows/**', 'cmd/app/**', '.github/workflows/windows-release.yml']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish a public Windows release after installer tests pass
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: false
+
+jobs:
+  installers:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      publish: ${{ steps.version.outputs.publish }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Validate version and release tag
+        id: version
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          BUILD_NUMBER: ${{ github.run_number }}
+          PUBLISH: ${{ inputs.publish || false }}
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'Windows releases require a stable three-part VERSION.' }
+          $number = [int]$env:BUILD_NUMBER
+          $publish = $env:PUBLISH -eq 'true'
+          if ($env:REF_TYPE -eq 'tag') {
+            if ($env:REF_NAME -notmatch ('^windows-v' + [regex]::Escape($version) + '\.(\d+)$')) { throw 'Tag must be windows-v<VERSION>.<build number>.' }
+            $number = [int]$Matches[1]
+            $publish = $true
+          }
+          if ($number -lt 0 -or $number -gt 65535) { throw 'Build number must fit Windows version metadata.' }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "number=$number" >> $env:GITHUB_OUTPUT
+          "tag=windows-v$version.$number" >> $env:GITHUB_OUTPUT
+          "publish=$($publish.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+      - name: Build embedded UI and standalone executable
+        run: ./windows/build.ps1 -Windowed
+      - name: Test service and user lifecycle
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          go test ./cmd/app -run 'Test(WindowsService|UserApplication)' -count=1
+          if ($LASTEXITCODE) { throw 'Windows lifecycle tests failed' }
+          python windows/test_migrate_config.py
+          if ($LASTEXITCODE) { throw 'Configuration migration test failed' }
+          $errors = @()
+          Get-ChildItem windows/*.ps1 | ForEach-Object {
+            $tokens = $null; $parseErrors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$parseErrors)
+            $errors += $parseErrors
+          }
+          if ($errors.Count) { throw ($errors | Out-String) }
+      - name: Build service and per-user installers with bundled tools
+        env:
+          BUILD_NUMBER: ${{ steps.version.outputs.number }}
+        run: ./windows/package.ps1 -BuildNumber ([int]$env:BUILD_NUMBER)
+      - name: Install, upgrade and uninstall both modes
+        run: ./windows/test-installers.ps1 -InstallersDir dist/installers
+      - name: Keep installers and SHA-256 checksums
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-installers
+          path: dist/installers/*
+          if-no-files-found: error
+          retention-days: 14
+      - name: Keep installer diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-installer-diagnostics
+          path: |
+            ${{ runner.temp }}/mediarium-installer-test-*/*.log
+            C:/ProgramData/Mediarium/service.log
+            C:/Users/runneradmin/AppData/Local/Mediarium/config/user.log
+          if-no-files-found: ignore
+
+  release:
+    needs: installers
+    if: needs.installers.outputs.publish == 'true' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: windows-installers
+          path: release
+      - name: Publish Windows installers
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.installers.outputs.tag }}
+          VERSION: ${{ needs.installers.outputs.version }}
+        run: |
+          set -euo pipefail
+          cd release
+          sha256sum --check sha256sums.txt
+          cat > notes.md <<'NOTES'
+          Two x64 Windows installers, with the complete web UI and extraction/repair tools bundled:
+
+          - **service-setup.exe**: administrator install, native LocalService service, delayed automatic startup and recovery. Opens http://localhost:8264.
+          - **user-setup.exe**: current-user install with no elevation or Windows service. Start/Stop shortcuts and optional sign-in startup. Opens http://localhost:8265.
+
+          Upgrades stop cleanly and back up configuration. Uninstall retains configuration, encryption keys and media. Existing service environments and media paths are preserved. New service installs work without a D: drive.
+
+          These community Windows builds are not Authenticode-signed. Source builds require personal API credentials where upstream uses private built-in registrations.
+
+          See windows/README.md and fork_nodes.md in this repository for setup, paths, backup and platform limitations.
+          NOTES
+          gh release create "$TAG" ./*.exe sha256sums.txt --target "$GITHUB_SHA" --title "Mediarium $VERSION for Windows ($TAG)" --notes-file notes.md

@@ -1,7 +1,9 @@
 ﻿# Windows fork notes
 
 This file records every local departure from rdborg/Mediarium (the `upstream`
-remote). `origin` is amitbet/Mediarium; the maintained branch is `windows-service`.
+remote). `origin` is the public amitbet/Mediarium fork; the maintained branch is
+`main`. The former `windows-service` branch is retained as historical context;
+upstream does not need a reserved local main branch.
 The original fork base is upstream v3.2.3 (`86dd096`). Local changes include the
 committed Windows adaptation (`635c541`) and the pre-existing AudioBook Bay work
 preserved before the 2026-10-24 upstream merge.
@@ -53,6 +55,36 @@ this upgrade; they are preserved as fork changes, not attributed to upstream.
 - `internal/indexers/definitions_test.go`: locate the fixture definition by ID
   rather than assuming it sorts first when additional built-ins are present.
 - `docs/indexers.md`: document AudioBook Bay setup and behavior.
+
+## Windows installers and release automation (2026-10-24)
+
+- `.github/workflows/windows-release.yml`: isolated Windows installer CI on main,
+  pull requests, manual dispatch and windows-v<VERSION>.<build> tags. Builds the UI
+  and a CGO-free Windows GUI executable, runs lifecycle/migration checks, packages
+  both installers, tests actual install/upgrade/uninstall and publishes installers
+  with SHA-256 checksums only after success. Upstream's Linux/Docker workflow is
+  preserved. No signing certificate or upstream private API registration is bundled.
+- `windows/installer.iss`: separate service (admin) and current-user (no elevation)
+  Inno Setup installers, stable distinct app identities, uninstallers, Start menu
+  controls and optional user sign-in startup. Tools and licences are bundled.
+- `windows/setup.ps1`: installer lifecycle, clean stop, private configuration and
+  binary backups, port checks, readiness, preserving existing service environment
+  and paths, uninstall without deleting user data. Fresh service installs use
+  ProgramData media and need no D: drive. User mode uses port 8265 and separate data.
+- `windows/package.ps1`: compile both installers, stage pinned tools and licences,
+  and write checksums. `windows/test-installers.ps1` exercises both complete flows
+  on disposable CI accounts, including key/environment preservation.
+- `windows/build.ps1`: optional console-free GUI build and explicit CGO=0.
+  `install-tools.ps1` can stage tools in a writable folder without elevation;
+  `install.ps1` can configure a freshly packaged executable already at its target.
+- `cmd/app/user_windows.go`, `user_windows_test.go`, `main.go`, `service_other.go`:
+  native --user-mode/--stop-user-mode dispatch, isolated per-user defaults and log,
+  a per-user/session/config named event for single instance and graceful stop,
+  verified PID/executable identity before waiting for shutdown, in-process restart,
+  and focused lifecycle tests. Non-Windows console behavior is preserved.
+- `windows/README.md` documents installers, operational paths, release tags and CI.
+- `README.md` links the Windows fork's downloads/guide and names main as the
+  maintained branch. `CHANGELOG.md` records the fork's Windows installer features.
 
 ## Upgrade procedure
 

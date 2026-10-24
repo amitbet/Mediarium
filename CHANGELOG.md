@@ -8,6 +8,15 @@ under [Unreleased]. How releases are cut: [docs/RELEASING.md](docs/RELEASING.md)
 
 ## [Unreleased]
 
+### Added (Windows fork)
+
+- Native Windows service and per-user installers with bundled extraction/repair
+  tools, graceful upgrades, private backups and data-preserving uninstall.
+- User-mode Start/Stop shortcuts, optional sign-in startup, single-instance
+  protection and in-process restart. User mode needs no administrator privileges.
+- Windows installer CI and public releases with SHA-256 checksums, including
+  installation, upgrade and uninstall tests on a disposable Windows runner.
+
 ## [3.7.2] - 2026-10-24
 
 In short: files that are far too short are turned away, a release search shows which indexers it asked, a show can have its own numbering, music filters for the artist pages, and more fixes for the nzb360 dashboard.

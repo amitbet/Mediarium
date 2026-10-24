@@ -102,6 +102,12 @@ func main() {
 		}
 		return
 	}
+	if handled, err := handleUserMode(os.Args[1:]); handled {
+		if err != nil {
+			log.Fatalf("Mediarium user mode: %v", err)
+		}
+		return
+	}
 	if runAsService() {
 		return
 	}
