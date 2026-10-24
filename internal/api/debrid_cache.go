@@ -16,7 +16,7 @@ import (
 	"github.com/rdborg/mediarium/internal/settings"
 )
 
-// Cached releases. When the debrid service is TorBox, Mediarium asks it once
+// Cached releases. When the debrid service is TorBox or Premiumize, Mediarium asks it once
 // per search which of the torrents found it already has, so the release list
 // can say "Cached" and automatic searches can take a ready release over an
 // equal one that has to be downloaded first. Real-Debrid has no such check.
@@ -249,6 +249,9 @@ func (s *Server) markCachedPayloads(ctx context.Context, rows []searchResultPayl
 	answers := s.cachedAnswers(ctx, hashes)
 	for i := range rows {
 		rows[i].Cached = answers[rows[i].hash]
+		if rows[i].Cached {
+			rows[i].BelowMinSeeders = false // a release the service has needs no seeders
+		}
 	}
 }
 

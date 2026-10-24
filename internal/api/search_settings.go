@@ -87,9 +87,16 @@ func (s *Server) handlePutDelay(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, cfg)
 }
 
-// sizeLimits reads the size table; a missing or unreadable one is "off".
-func (s *Server) sizeLimits() quality.SizeLimits {
-	raw, err := s.Settings.Get(settings.KeySizeLimits)
+// sizeKeys are the settings keys of the size tables: movies and shows have
+// one each, since TRaSH's sizes differ between Radarr and Sonarr.
+var sizeKeys = map[string]string{"movie": settings.KeySizeLimits, "tv": settings.KeySizeLimitsTV}
+
+// sizeLimits reads the movie size table; a missing or unreadable one is "off".
+func (s *Server) sizeLimits() quality.SizeLimits { return s.sizeLimitsFor("movie") }
+
+// sizeLimitsFor reads the table of one kind ("movie" or "tv").
+func (s *Server) sizeLimitsFor(kind string) quality.SizeLimits {
+	raw, err := s.Settings.Get(sizeKeys[kind])
 	if err != nil || raw == "" {
 		return quality.SizeLimits{}
 	}
@@ -118,6 +125,20 @@ type sizeTablePayload struct {
 	Rows    []sizeRow `json:"rows"`
 }
 
+// sizeKind reads ?kind=movie|tv (movie when left out). ok is false after it
+// has answered with an error.
+func sizeKind(w http.ResponseWriter, r *http.Request) (kind string, ok bool) {
+	kind = r.URL.Query().Get("kind")
+	if kind == "" {
+		kind = "movie"
+	}
+	if _, known := sizeKeys[kind]; !known {
+		writeError(w, http.StatusBadRequest, `The kind is "movie" or "tv".`)
+		return "", false
+	}
+	return kind, true
+}
+
 func sizeTablePayloadOf(t quality.SizeLimits) sizeTablePayload {
 	defaults := quality.DefaultSizeLimits()
 	out := sizeTablePayload{Enabled: t.Enabled, Rows: []sizeRow{}}
@@ -130,10 +151,18 @@ func sizeTablePayloadOf(t quality.SizeLimits) sizeTablePayload {
 }
 
 func (s *Server) handleGetSizeLimits(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, sizeTablePayloadOf(s.sizeLimits()))
+	kind, ok := sizeKind(w, r)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, sizeTablePayloadOf(s.sizeLimitsFor(kind)))
 }
 
 func (s *Server) handlePutSizeLimits(w http.ResponseWriter, r *http.Request) {
+	kind, ok := sizeKind(w, r)
+	if !ok {
+		return
+	}
 	var in sizeTablePayload
 	if err := decodeJSON(r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, "That isn't a valid size table.")
@@ -153,22 +182,26 @@ func (s *Server) handlePutSizeLimits(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	s.saveSizeLimits(w, table)
+	s.saveSizeLimits(w, kind, table)
 }
 
 // handleResetSizeLimits puts every quality back to its default. The switch
 // keeps its position.
 func (s *Server) handleResetSizeLimits(w http.ResponseWriter, r *http.Request) {
-	s.saveSizeLimits(w, quality.SizeLimits{Enabled: s.sizeLimits().Enabled})
+	kind, ok := sizeKind(w, r)
+	if !ok {
+		return
+	}
+	s.saveSizeLimits(w, kind, quality.SizeLimits{Enabled: s.sizeLimitsFor(kind).Enabled})
 }
 
-func (s *Server) saveSizeLimits(w http.ResponseWriter, table quality.SizeLimits) {
+func (s *Server) saveSizeLimits(w http.ResponseWriter, kind string, table quality.SizeLimits) {
 	raw, err := json.Marshal(table)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := s.Settings.Set(settings.KeySizeLimits, string(raw), false); err != nil {
+	if err := s.Settings.Set(sizeKeys[kind], string(raw), false); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

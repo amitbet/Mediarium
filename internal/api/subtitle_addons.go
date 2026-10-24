@@ -212,6 +212,11 @@ func (s *Server) findAddonSubtitles(ctx context.Context, q subtitles.Query) (res
 	for _, a := range list {
 		asked++
 		found, err := s.addons.Find(ctx, a.URL, aq)
+		line := subtitles.Diagnostic{Source: a.Name, Lookup: "imdb", Value: imdb, Count: len(found), Found: len(found)}
+		if err != nil {
+			line.Note, line.Detail = "error", err.Error()
+		}
+		subtitles.Report(ctx, line)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", a.Name, err))
 			continue

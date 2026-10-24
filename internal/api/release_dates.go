@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/rdborg/mediarium/internal/metadata"
+	"github.com/rdborg/mediarium/internal/settings"
 )
 
 // The calendar shows a monitored movie on its digital release date as well as
@@ -28,9 +29,22 @@ const (
 	releaseDigital       = "digital"
 )
 
-// releaseRegion is the country release dates are read for: the one of the
-// language titles are shown in (Settings > Info, lists and subtitles).
+// releaseCountrySetting is the country chosen for release dates (Settings >
+// Info, lists and subtitles), or "" when it follows the info language.
+func (s *Server) releaseCountrySetting() string {
+	if v, _ := s.Settings.Get(settings.KeyReleaseCountry); metadata.IsReleaseCountry(v) {
+		return v
+	}
+	return ""
+}
+
+// releaseRegion is the country release dates are read for: the one chosen in
+// Settings > Info, lists and subtitles, or else the one of the language titles
+// are shown in.
 func (s *Server) releaseRegion() string {
+	if c := s.releaseCountrySetting(); c != "" {
+		return c
+	}
 	return metadata.RegionOfLanguage(s.infoLanguage())
 }
 

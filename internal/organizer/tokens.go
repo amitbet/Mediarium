@@ -314,7 +314,28 @@ var Schemes = []Scheme{
 	{"plex-editions", "Plex with editions",
 		"{Movie CleanTitle} ({Release Year}) {edition-{Edition Tags}} [{Quality Full}]{-Release Group}",
 		"{Series TitleYear} - S{Season:00}E{Episode:00} - {Episode CleanTitle} [{Quality Full}]{-Release Group}"},
+	// The TRaSH Guides' recommended naming (trash-guides.info, Radarr and
+	// Sonarr "recommended naming scheme"), as far as Mediarium can write it:
+	// audio channels, bit depth, subtitle languages and the custom format
+	// names are not known here, and Mediarium has no IMDb id for a title, so
+	// the IMDb variants are left out. The series folder is fixed here, so
+	// only TRaSH's file formats are used.
+	{"trash", "TRaSH recommended", trashMovie("", "{Edition Tags}"), trashEpisode},
+	{"trash-plex-tmdb", "TRaSH recommended, Plex with TMDb id", trashMovie("{tmdb-{TmdbId}} ", "edition-{Edition Tags}"), trashEpisode},
+	{"trash-emby-tmdb", "TRaSH recommended, Emby with TMDb id", trashMovie("[tmdb-{TmdbId}] ", "edition-{Edition Tags}"), trashEpisode},
+	{"trash-jellyfin-tmdb", "TRaSH recommended, Jellyfin with TMDb id", trashMovie("[tmdbid-{TmdbId}] ", "{Edition Tags}"), trashEpisode},
 }
+
+// trashMovie is TRaSH's movie file name with the id tag (or nothing) after
+// the year and the edition written as TRaSH writes it for that media server.
+func trashMovie(idTag, edition string) string {
+	return "{Movie CleanTitle} {(Release Year)} " + idTag + "- {" + edition + "} {[MediaInfo 3D]}{[Quality Full]}" +
+		"{[MediaInfo AudioCodec]}{[MediaInfo VideoDynamicRangeType]}{[MediaInfo VideoCodec]}{-Release Group}"
+}
+
+// trashEpisode is TRaSH's standard episode file name.
+const trashEpisode = "{Series CleanTitle} {(Year)} - S{Season:00}E{Episode:00} - {Episode CleanTitle} " +
+	"{[Quality Full]}{[MediaInfo AudioCodec]}{[MediaInfo VideoDynamicRangeType]}{[MediaInfo VideoCodec]}{-Release Group}"
 
 // --- values ---
 

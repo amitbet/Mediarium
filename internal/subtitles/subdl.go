@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"path"
@@ -38,10 +39,22 @@ var ErrSubDLKey = errors.New("SubDL rejected the API key")
 
 // subdlLink is the form of a SubDL download path: "/subtitle/3197651-3213944.zip",
 // or one file of a pack, "/subtitle/<id>/<file id>".
-var subdlLink = regexp.MustCompile(`^/subtitle/[A-Za-z0-9_-]+(?:\.zip|/[A-Za-z0-9_-]+)$`)
+var subdlLink = regexp.MustCompile(`^/subtitle/[A-Za-z0-9._~%+=-]+(?:/[A-Za-z0-9._~%+=-]+)*$`)
 
-// ValidSubDLLink reports whether link is a SubDL download path.
-func ValidSubDLLink(link string) bool { return subdlLink.MatchString(link) }
+// ValidSubDLLink reports whether link is a SubDL download path: a plain path
+// under /subtitle/ on SubDL's download host, with no query, no spaces and no
+// ".." part. The host is always put in front by us, never taken from SubDL.
+func ValidSubDLLink(link string) bool {
+	if !subdlLink.MatchString(link) {
+		return false
+	}
+	for _, part := range strings.Split(link, "/") {
+		if part == ".." || part == "." {
+			return false
+		}
+	}
+	return true
+}
 
 type SubDL struct {
 	apiKey     string
@@ -103,6 +116,8 @@ type subdlResponse struct {
 		ReleaseName string   `json:"release_name"`
 		Name        string   `json:"name"`
 		URL         string   `json:"url"`
+		Lang        string   `json:"lang"`     // "english"
+		Language    string   `json:"language"` // "EN"
 		Season      flexInt  `json:"season"`
 		Episode     flexInt  `json:"episode"`
 		EpisodeFrom flexInt  `json:"episode_from"`
@@ -149,24 +164,26 @@ func (c *SubDL) get(ctx context.Context, q url.Values) (subdlResponse, error) {
 	return out, nil
 }
 
-// Find searches SubDL for q. SubDL doesn't have every title under its TMDB id,
-// so when that finds nothing the IMDb id and then the title are tried. A title
-// SubDL doesn't know is no results, not an error.
-func (c *SubDL) Find(ctx context.Context, q Query) ([]Result, error) {
+// subdlLookup is one way of asking SubDL about a title.
+type subdlLookup struct {
+	kind, value string // "tmdb", "imdb" or "title"
+	v           url.Values
+}
+
+// subdlLookups lists how q can be asked, most exact first: the TMDB id, the
+// IMDb id, then the title (with the year for a film). Each is its own call, so
+// SubDL never has to match several of them at once.
+func subdlLookups(q Query) []subdlLookup {
 	episode := q.ParentTMDBID > 0
-	kind := "movie"
-	if episode {
-		kind = "tv"
-	}
-	var lookups []url.Values
+	var out []subdlLookup
 	switch {
 	case episode:
-		lookups = append(lookups, url.Values{"tmdb_id": {strconv.Itoa(q.ParentTMDBID)}})
+		out = append(out, subdlLookup{"tmdb", strconv.Itoa(q.ParentTMDBID), url.Values{"tmdb_id": {strconv.Itoa(q.ParentTMDBID)}}})
 	case q.TMDBID > 0:
-		lookups = append(lookups, url.Values{"tmdb_id": {strconv.Itoa(q.TMDBID)}})
+		out = append(out, subdlLookup{"tmdb", strconv.Itoa(q.TMDBID), url.Values{"tmdb_id": {strconv.Itoa(q.TMDBID)}}})
 	}
 	if q.IMDBID != "" {
-		lookups = append(lookups, url.Values{"imdb_id": {q.IMDBID}})
+		out = append(out, subdlLookup{"imdb", q.IMDBID, url.Values{"imdb_id": {q.IMDBID}}})
 	}
 	name, year := q.Title, q.Year
 	if name == "" {
@@ -174,32 +191,62 @@ func (c *SubDL) Find(ctx context.Context, q Query) ([]Result, error) {
 	}
 	if name != "" {
 		v := url.Values{"film_name": {name}}
+		value := name
 		if year > 0 && !episode {
 			v.Set("year", strconv.Itoa(year))
+			value += " (" + strconv.Itoa(year) + ")"
 		}
-		lookups = append(lookups, v)
+		out = append(out, subdlLookup{"title", value, v})
 	}
-	for _, v := range lookups {
-		// hi=1 and comment=1 ask SubDL to include the hearing-impaired flag and the
-		// uploader's comment, which is where a "forced" track is usually said so.
-		v.Set("subs_per_page", strconv.Itoa(subdlPerPage))
-		v.Set("releases", "1")
-		v.Set("hi", "1")
-		v.Set("comment", "1")
-		v.Set("type", kind)
-		if episode {
-			v.Set("season_number", strconv.Itoa(q.Season))
-			v.Set("episode_number", strconv.Itoa(q.Episode))
-		}
-		if q.Language != "" {
-			v.Set("languages", subdlLanguage(q.Language))
-		}
-		res, err := c.findPages(ctx, v, q)
-		if err != nil {
-			return nil, err
-		}
-		if len(res) > 0 {
-			return res, nil
+	return out
+}
+
+// Find searches SubDL for q. SubDL doesn't have every title under its TMDB id,
+// so the IMDb id and then the title are tried too: a lookup that gives nothing
+// usable, for whatever reason, is followed by the next. When none does, every
+// lookup is tried once more with as few filters as possible (no language, no
+// extras), and the language is judged here. Each lookup reports what it asked
+// and what came back (see Diagnostic). A title SubDL doesn't know is no
+// results, not an error.
+func (c *SubDL) Find(ctx context.Context, q Query) ([]Result, error) {
+	episode := q.ParentTMDBID > 0
+	kind := "movie"
+	if episode {
+		kind = "tv"
+	}
+	lookups := subdlLookups(q)
+	for _, bare := range []bool{false, true} {
+		for _, l := range lookups {
+			v := url.Values{}
+			for k, vals := range l.v {
+				v[k] = vals
+			}
+			v.Set("subs_per_page", strconv.Itoa(subdlPerPage))
+			v.Set("type", kind)
+			if episode {
+				v.Set("season_number", strconv.Itoa(q.Season))
+				v.Set("episode_number", strconv.Itoa(q.Episode))
+			}
+			if !bare {
+				// hi=1 and comment=1 ask SubDL to include the hearing-impaired flag and the
+				// uploader's comment, which is where a "forced" track is usually said so.
+				v.Set("releases", "1")
+				v.Set("hi", "1")
+				v.Set("comment", "1")
+				if q.Language != "" {
+					v.Set("languages", subdlLanguage(q.Language))
+				}
+			} else {
+				v.Del("year")
+			}
+			res, st, err := c.findPages(ctx, v, q, bare)
+			Report(ctx, st.line(l, bare, len(res), err))
+			if err != nil {
+				return nil, err
+			}
+			if len(res) > 0 {
+				return res, nil
+			}
 		}
 	}
 	return nil, nil
@@ -208,10 +255,46 @@ func (c *SubDL) Find(ctx context.Context, q Query) ([]Result, error) {
 // subdlPerPage is the most SubDL gives per page.
 const subdlPerPage = 30
 
+// subdlStats is what one lookup saw, for its diagnostic line.
+type subdlStats struct {
+	status     bool // SubDL's own "status"
+	message    string
+	found      int // subtitles in the answers
+	badLink    int
+	badSample  string // the first link that was turned down, shortened, for the diagnostic
+	wrongEp    int
+	wrongLang  int
+	langsFound map[string]bool
+}
+
+func (st subdlStats) line(l subdlLookup, bare bool, kept int, err error) Diagnostic {
+	d := Diagnostic{Source: "SubDL", Lookup: l.kind, Value: l.value, Bare: bare, Count: kept, Found: st.found}
+	switch {
+	case err != nil:
+		d.Note, d.Detail = "error", err.Error()
+	case kept > 0:
+	case st.found == 0 && !st.status:
+		d.Note, d.Detail = "no-match", st.message
+	case st.found == 0:
+	case st.wrongLang > 0 && st.wrongLang >= st.badLink && st.wrongLang >= st.wrongEp:
+		d.Note, d.Detail = "wrong-language", joinLanguages(st.langsFound)
+	case st.badLink > 0 && st.badLink >= st.wrongEp:
+		d.Note, d.Detail = "bad-link", st.badSample
+	case st.wrongEp > 0:
+		d.Note = "wrong-episode"
+	}
+	if kept == 0 {
+		// What a search that found nothing asked and heard, for the log.
+		log.Printf("subtitles: SubDL lookup %s %q (fewer filters: %t): %d found, none kept, note %q %s", l.kind, l.value, bare, st.found, d.Note, redactSecrets(d.Detail))
+	}
+	return d
+}
+
 // findPages reads up to maxSearchPages pages of one search, going on while a
 // page comes back full.
-func (c *SubDL) findPages(ctx context.Context, v url.Values, q Query) ([]Result, error) {
+func (c *SubDL) findPages(ctx context.Context, v url.Values, q Query, bare bool) ([]Result, subdlStats, error) {
 	var out []Result
+	st := subdlStats{langsFound: map[string]bool{}}
 	for page := 1; page <= maxSearchPages; page++ {
 		pv := url.Values{}
 		for k, vals := range v {
@@ -225,35 +308,108 @@ func (c *SubDL) findPages(ctx context.Context, v url.Values, q Query) ([]Result,
 			if page > 1 {
 				break // the first page worked: use it
 			}
-			return nil, err
+			return nil, st, err
+		}
+		if page == 1 {
+			st.status = resp.Status
+			st.message = strings.TrimSpace(resp.Error + " " + resp.Message)
 		}
 		if !resp.Status {
 			break // "can't find movie or tv" and the like
 		}
-		out = append(out, c.results(resp, q)...)
+		out = append(out, c.results(resp, q, bare, &st)...)
 		if len(resp.Subtitles) < subdlPerPage {
 			break
 		}
 	}
-	return out, nil
+	return out, st, nil
 }
 
-// results turns one answer into results, leaving out what isn't for q.
-func (c *SubDL) results(resp subdlResponse, q Query) []Result {
+// sameLanguage reports whether a language as SubDL writes it ("EN", "en",
+// "english", "BR_PT") is the wanted one. A spelling that isn't recognised
+// counts as a match: it is better to show a doubtful result than to hide a
+// good one. Regions (pt-BR, pt-PT) are not told apart here.
+func sameLanguage(wanted, got string) bool {
+	got = strings.TrimSpace(got)
+	if got == "" || wanted == "" {
+		return true
+	}
+	g := languageBase(got)
+	return g == "" || languageBase(wanted) == g
+}
+
+// languageBase is the two-letter code of a language in any spelling, or empty
+// when it isn't known.
+func languageBase(s string) string {
+	k := strings.ReplaceAll(fold(strings.TrimSpace(s)), "_", "-")
+	if k == "br-pt" || k == "pt-br" {
+		return "pt"
+	}
+	if code, ok := languageByName[k]; ok {
+		base, _, _ := strings.Cut(code, "-")
+		return base
+	}
+	if base, _, ok := strings.Cut(k, "-"); ok {
+		if code, ok := languageByName[base]; ok {
+			return code
+		}
+	}
+	return ""
+}
+
+// downloadPath makes a SubDL download path of what SubDL gave as "url": the
+// path itself, or the same with the download host in front.
+func downloadPath(u string) string {
+	u = strings.TrimSpace(u)
+	for _, prefix := range []string{subdlDownload, "https://subdl.com", "http://dl.subdl.com", "//dl.subdl.com"} {
+		u = strings.TrimPrefix(u, prefix)
+	}
+	// A query or a fragment is not part of the path we ask for: the download
+	// host serves the file from the path alone.
+	if i := strings.IndexAny(u, "?#"); i >= 0 {
+		u = u[:i]
+	}
+	return u
+}
+
+// results turns one answer into results, leaving out what isn't for q and
+// counting why in st. A subtitle whose release name doesn't match the video is
+// kept: the list is ranked by fit, not cut. With bare set the answer holds
+// every language, so one that doesn't say its language is left out.
+func (c *SubDL) results(resp subdlResponse, q Query, bare bool, st *subdlStats) []Result {
 	var out []Result
 	for _, s := range resp.Subtitles {
-		if !ValidSubDLLink(s.URL) {
+		st.found++
+		link := downloadPath(s.URL)
+		if !ValidSubDLLink(link) {
+			st.badLink++
+			if st.badSample == "" {
+				st.badSample = shortSample(link)
+			}
 			continue
+		}
+		spelled := s.Language
+		if spelled == "" {
+			spelled = s.Lang
+		}
+		if spelled != "" {
+			st.langsFound[spelled] = true
 		}
 		if q.ParentTMDBID > 0 {
 			// Only subtitles for this one episode: a whole-season pack or a
 			// different episode isn't what was asked for.
 			switch {
 			case s.FullSeason, s.EpisodeFrom > 0 && s.EpisodeEnd > s.EpisodeFrom:
+				st.wrongEp++
 				continue
 			case s.Season > 0 && int(s.Season) != q.Season, s.Episode > 0 && int(s.Episode) != q.Episode:
+				st.wrongEp++
 				continue
 			}
+		}
+		if !sameLanguage(q.Language, spelled) || (bare && q.Language != "" && spelled == "") {
+			st.wrongLang++
+			continue
 		}
 		release := s.ReleaseName
 		if release == "" {
@@ -261,7 +417,7 @@ func (c *SubDL) results(resp subdlResponse, q Query) []Result {
 		}
 		nameHI, forced := ClassifyName(s.Name + " " + s.ReleaseName + " " + s.Comment)
 		out = append(out, Result{
-			Language: q.Language, Release: release, Source: SourceSubDL, Link: s.URL, Releases: s.Releases,
+			Language: q.Language, Release: release, Source: SourceSubDL, Link: link, Releases: s.Releases,
 			HearingImpaired: s.HI || nameHI, ForeignPartsOnly: forced && !s.HI,
 		})
 	}
@@ -375,4 +531,19 @@ func containsInt(list []int, v int) bool {
 func looksLikeSRT(b []byte) bool {
 	head := b[:min(len(b), 4096)]
 	return bytes.Contains(head, []byte("-->"))
+}
+
+// shortSample shortens a rejected download link for the diagnostic: the first
+// part of it, with a query string (which could hold a key) cut off.
+func shortSample(link string) string {
+	if link == "" {
+		return "nothing, the link was empty"
+	}
+	if i := strings.IndexAny(link, "?#"); i >= 0 {
+		link = link[:i] + " (and more after it)"
+	}
+	if len(link) > 80 {
+		link = link[:80] + "..."
+	}
+	return link
 }

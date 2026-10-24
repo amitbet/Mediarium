@@ -10,6 +10,90 @@ export interface ReleaseNotes {
 
 export const WHATS_NEW: ReleaseNotes[] = [
   {
+    version: '3.7.0',
+    items: [
+      t("The calendar shows each episode on the day and hour it airs in your own time zone, using air times from TVmaze."),
+    ],
+  },
+  {
+    version: '3.6.0',
+    items: [
+      t("Simkl sign-in works again with the apps Simkl creates now, with a code you enter on Simkl's site."),
+      t("Cancel a running download and grab another release in one step, and the statistics stay when you clear finished downloads."),
+    ],
+  },
+  {
+    version: '3.5.0',
+    items: [
+      t("Shows that have ended now show as ended, and the show page says what is being monitored and how much space it uses."),
+      t("Connecting Simkl works again, and you can be told when the TRaSH Guides sync changed something."),
+    ],
+  },
+  {
+    version: '3.4.0',
+    items: [
+      t("Home Assistant and other assistants can now sign in to MCP with a login and approval, no key to paste."),
+      t("Discover can filter by original language, rating and runtime, and import by hand works from any folder."),
+      t("Discord messages show the custom format score, and you can be told when a download client goes down."),
+    ],
+  },
+  {
+    version: '3.3.0',
+    items: [
+      t("Connect an AI assistant or a voice assistant to your library with MCP (off until you switch it on), and send Usenet downloads to SABnzbd or NZBGet."),
+      t("See what is inside your video files (codec, HDR, audio and subtitle languages) and filter the library by it."),
+      t("Put qualities in your own order and in groups, rescan a music album's folder, and delete a single album file."),
+    ],
+  },
+  {
+    version: '3.2.11',
+    items: [
+      t("A small arrow after a release's score opens why it scored that way and why an automatic search may skip it."),
+      t("Sites that run on your own network, like BitMagnet, take your own address when you add or edit them."),
+    ],
+  },
+  {
+    version: '3.2.9',
+    items: [
+      t("Set a minimum number of seeders on each torrent indexer, so releases that would stall are skipped."),
+      t("The indexer cards in a row are the same height, with the test result and limits in short lines and the buttons at the bottom."),
+    ],
+  },
+  {
+    version: '3.2.8',
+    items: [
+      t("Custom formats from the TRaSH Guides come in with TRaSH's score in your default profile, and you can add several formats to several profiles at once."),
+      t("Keep TRaSH formats up to date with one button or a daily switch, and see the best release first in a manual search."),
+    ],
+  },
+  {
+    version: '3.2.7',
+    items: [
+      t("SubDL subtitles are no longer dropped for a download link of a shape Mediarium did not know, and the Details line shows what the link looked like."),
+    ],
+  },
+  {
+    version: '3.2.6',
+    items: [
+      t("The Indexers & Search page is one full-width card per section, with your indexers in up to three columns."),
+      t("When a subtitle search finds nothing, a Details line shows what each site was asked and what came back."),
+    ],
+  },
+  {
+    version: '3.2.5',
+    items: [
+      t("Pick the country for a movie's release dates under Settings > Info, lists and subtitles."),
+      t("The Indexers & Search page no longer slides one card over another when you scroll."),
+    ],
+  },
+  {
+    version: '3.2.4',
+    items: [
+      t("An indexer's seeding rules now reach your torrent client, and the Category box stays empty when you clear it."),
+      t("Stopping or removing a download also removes the torrent Mediarium sent to qBittorrent or Transmission (you can switch this off)."),
+    ],
+  },
+  {
     version: '3.2.3',
     items: [
       t("A movie's page shows when it is in cinemas and when it comes out digitally, and the calendar marks both days."),

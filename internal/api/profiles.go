@@ -162,15 +162,47 @@ func (ps profileSet) resolveWith(id int64, def quality.Profile) quality.Profile 
 	return p
 }
 
+// qualityItemPayload is one rank of a profile's own quality order: a quality,
+// or a named group of them.
+type qualityItemPayload struct {
+	Name  string   `json:"name,omitempty"`
+	Tiers []string `json:"tiers"`
+}
+
+func toQualityItems(in []qualityItemPayload) []quality.QualityItem {
+	out := make([]quality.QualityItem, len(in))
+	for i, it := range in {
+		out[i].Name = it.Name
+		for _, t := range it.Tiers {
+			out[i].Tiers = append(out[i].Tiers, quality.Tier(t))
+		}
+	}
+	return out
+}
+
+func toQualityItemPayloads(in []quality.QualityItem) []qualityItemPayload {
+	out := make([]qualityItemPayload, len(in))
+	for i, it := range in {
+		out[i] = qualityItemPayload{Name: it.Name, Tiers: make([]string, len(it.Tiers))}
+		for j, t := range it.Tiers {
+			out[i].Tiers[j] = string(t)
+		}
+	}
+	return out
+}
+
 type profilePayload struct {
-	ID             int64              `json:"id"`
-	Name           string             `json:"name"`
-	Allowed        []string           `json:"allowed"`
-	Cutoff         string             `json:"cutoff"`
-	UpgradeAllowed bool               `json:"upgradeAllowed"`
-	MustContain    []string           `json:"mustContain"`
-	MustNotContain []string           `json:"mustNotContain"`
-	Preferred      []preferredPayload `json:"preferred"`
+	ID      int64    `json:"id"`
+	Name    string   `json:"name"`
+	Allowed []string `json:"allowed"`
+	Cutoff  string   `json:"cutoff"`
+	// QualityOrder is the profile's own order of qualities and groups, best
+	// first; [] means the built-in order.
+	QualityOrder   []qualityItemPayload `json:"qualityOrder"`
+	UpgradeAllowed bool                 `json:"upgradeAllowed"`
+	MustContain    []string             `json:"mustContain"`
+	MustNotContain []string             `json:"mustNotContain"`
+	Preferred      []preferredPayload   `json:"preferred"`
 	// Fallback is the ordered list of profile ids an automatic search tries
 	// when nothing is acceptable to this profile ([] = none).
 	Fallback []int64 `json:"fallback"`
@@ -239,7 +271,7 @@ func toProfilePayload(p quality.Profile, inUse int) profilePayload {
 	return profilePayload{ID: p.ID, Name: p.Name, Allowed: allowed, Cutoff: string(p.Cutoff), UpgradeAllowed: p.UpgradeAllowed,
 		MustContain: must, MustNotContain: mustNot, Preferred: prefs, Fallback: fallback, InUse: inUse, MaxSizeGB: p.MaxSizeGB,
 		FormatScores: scores, MinFormatScore: p.MinFormatScore, CutoffFormatScore: p.CutoffFormatScore, NoSeasonPacks: p.NoSeasonPacks,
-		SkipBadReleases: p.SkipBadReleases}
+		SkipBadReleases: p.SkipBadReleases, QualityOrder: toQualityItemPayloads(p.QualityOrder)}
 }
 
 type profileRequest struct {
@@ -250,6 +282,10 @@ type profileRequest struct {
 	MustContain    []string           `json:"mustContain"`
 	MustNotContain []string           `json:"mustNotContain"`
 	Preferred      []preferredPayload `json:"preferred"`
+	// QualityOrder is the profile's own order of qualities and groups, best
+	// first. [] goes back to the built-in order; left out (null), an update
+	// keeps the saved one. When it is set it decides Allowed.
+	QualityOrder *[]qualityItemPayload `json:"qualityOrder"`
 	// Fallback replaces the profile's fallback list; left out (null), an
 	// update keeps the saved one. Ids that do not exist, or the profile's
 	// own id, are ignored.
@@ -279,13 +315,16 @@ func (req profileRequest) toProfile(id int64) quality.Profile {
 		ID: id, Name: req.Name, Allowed: allowed, Cutoff: quality.Tier(req.Cutoff), UpgradeAllowed: req.UpgradeAllowed,
 		MustContain: req.MustContain, MustNotContain: req.MustNotContain, Preferred: prefs, Fallback: req.Fallback,
 	}
+	if req.QualityOrder != nil {
+		p.QualityOrder = toQualityItems(*req.QualityOrder)
+	}
 	if req.MaxSizeGB != nil {
 		p.MaxSizeGB = *req.MaxSizeGB
 	}
 	if req.FormatScores != nil {
 		p.FormatScores = map[int64]int{}
 		for _, fs := range req.FormatScores {
-			if fs.FormatID > 0 && fs.Score != 0 {
+			if fs.FormatID > 0 {
 				p.FormatScores[fs.FormatID] = fs.Score
 			}
 		}
@@ -361,11 +400,14 @@ func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := req.toProfile(id)
-	if req.Fallback == nil || req.MaxSizeGB == nil || req.FormatScores == nil || req.MinFormatScore == nil || req.CutoffFormatScore == nil || req.NoSeasonPacks == nil || req.SkipBadReleases == nil {
+	if req.QualityOrder == nil || req.Fallback == nil || req.MaxSizeGB == nil || req.FormatScores == nil || req.MinFormatScore == nil || req.CutoffFormatScore == nil || req.NoSeasonPacks == nil || req.SkipBadReleases == nil {
 		saved, err := s.QualityRepo.Get(id)
 		if err != nil {
 			writeProfileError(w, err)
 			return
+		}
+		if req.QualityOrder == nil {
+			p.QualityOrder = saved.QualityOrder
 		}
 		if req.Fallback == nil {
 			p.Fallback = saved.Fallback

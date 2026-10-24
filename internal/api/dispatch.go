@@ -29,7 +29,10 @@ import (
 
 const (
 	minDownloadsAtOnce = 1
-	maxDownloadsAtOnce = 5
+	// maxDownloadsAtOnce is high so a download client that runs many torrents
+	// side by side (qBittorrent, 500 active by default) isn't held to a few.
+	// With the built-in clients more places mostly share the same bandwidth.
+	maxDownloadsAtOnce = 500
 
 	// downloadLineCheck is how often the line is looked at even when nothing
 	// has happened, in case a wake-up was missed. The first check also starts

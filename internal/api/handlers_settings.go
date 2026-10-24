@@ -40,13 +40,20 @@ type settingsPayload struct {
 	MovieNameFormat   string  `json:"movieNameFormat"`
 	// EpisodeNameFormat is the custom file name format for episodes.
 	EpisodeNameFormat string `json:"episodeNameFormat"`
+	// MovieFolderFormat and SeriesFolderFormat name the folder a new movie or
+	// show gets (Custom style only); empty keeps the usual "Title (Year)".
+	MovieFolderFormat  string `json:"movieFolderFormat"`
+	SeriesFolderFormat string `json:"seriesFolderFormat"`
 	// KeepOriginalNames keeps the file name an imported video came with
 	// (folders are still named by the preset). A pointer so an omitted field
 	// leaves it alone.
-	KeepOriginalNames *bool  `json:"keepOriginalNames,omitempty"`
-	TMDBAPIKey        string `json:"tmdbApiKey,omitempty"`
-	HasTMDBAPIKey     bool   `json:"hasTmdbApiKey"`
-	OnboardingDone    bool   `json:"onboardingDone"`
+	KeepOriginalNames *bool `json:"keepOriginalNames,omitempty"`
+	// CheckDuration is the check that a video is about as long as its episode
+	// or movie before it is imported (on unless switched off).
+	CheckDuration  *bool  `json:"checkDuration,omitempty"`
+	TMDBAPIKey     string `json:"tmdbApiKey,omitempty"`
+	HasTMDBAPIKey  bool   `json:"hasTmdbApiKey"`
+	OnboardingDone bool   `json:"onboardingDone"`
 
 	// TorrentEnabled is the torrent on/off switch. A pointer so a partial PUT
 	// that leaves it out doesn't switch torrents off (or on).
@@ -71,9 +78,12 @@ type settingsPayload struct {
 	LegalAcknowledged   *bool  `json:"legalAcknowledged,omitempty"`
 
 	// Phase 2 torrent engine settings.
-	TorrentListenPort     string `json:"torrentListenPort,omitempty"`
-	TorrentSeedRatioLimit string `json:"torrentSeedRatioLimit,omitempty"`
-	TorrentSeedTimeLimitH string `json:"torrentSeedTimeLimitH,omitempty"`
+	TorrentListenPort string `json:"torrentListenPort,omitempty"`
+	// The seeding limits are pointers because empty is a value: it means
+	// unlimited ("0" is do not seed). A request that leaves the field out
+	// leaves the limit alone.
+	TorrentSeedRatioLimit *string `json:"torrentSeedRatioLimit,omitempty"`
+	TorrentSeedTimeLimitH *string `json:"torrentSeedTimeLimitH,omitempty"`
 
 	// Phase 2 automation + quality profile settings.
 	// AutomationEnabled is a pointer in requests so "field omitted" (leave
@@ -98,6 +108,8 @@ type settingsPayload struct {
 	SubtitleProfiles     map[string]subtitles.Profile `json:"subtitleProfiles,omitempty"`
 	SubtitleAutoDownload *bool                        `json:"subtitleAutoDownload,omitempty"`
 	SubtitleUpgrade      *bool                        `json:"subtitleUpgrade,omitempty"`
+	// NotifyTrashSyncAlways also sends the TRaSH Guides message when nothing changed.
+	NotifyTrashSyncAlways *bool `json:"notifyTrashSyncAlways,omitempty"`
 	// SubtitlesEnabled is the master switch. While it is off nothing searches
 	// for or downloads subtitles and the app stops mentioning them.
 	SubtitlesEnabled *bool `json:"subtitlesEnabled,omitempty"`
@@ -133,6 +145,12 @@ type settingsPayload struct {
 	UnmonitorDownloaded *bool `json:"unmonitorDownloaded,omitempty"`
 	// ShowAdvanced shows custom formats and format scores on the Quality page.
 	ShowAdvanced *bool `json:"showAdvanced,omitempty"`
+	// TrashFormatsAuto keeps the custom formats that came from the TRaSH Guides
+	// up to date: the guides are read once a day (off by default).
+	TrashFormatsAuto *bool `json:"trashFormatsAuto,omitempty"`
+	// TrashFormatsEveryDays is how often that update reads the guides: 1 (every
+	// day, the default) or 7 (every week).
+	TrashFormatsEveryDays *int `json:"trashFormatsEveryDays,omitempty"`
 	// TrailerBackground plays the trailer behind movie and show pages for every
 	// account (a browser can still switch it off for itself).
 	TrailerBackground *bool `json:"trailerBackground,omitempty"`
@@ -143,6 +161,9 @@ type settingsPayload struct {
 	// SeasonPacks looks for a season pack once a season has ended (off unless
 	// switched on; a show can say otherwise for itself).
 	SeasonPacks *bool `json:"seasonPacks,omitempty"`
+	// TVmazeAirTimes looks up the time episodes air on TVmaze (on unless
+	// switched off; off means TVmaze is never contacted).
+	TVmazeAirTimes *bool `json:"tvmazeAirTimes,omitempty"`
 
 	// Optional OpenSubtitles.com account (raises the daily download limit).
 	OpenSubtitlesUsername    *string `json:"openSubtitlesUsername,omitempty"`
@@ -182,6 +203,13 @@ type settingsPayload struct {
 	InfoLanguage  string              `json:"infoLanguage,omitempty"`
 	InfoLanguages []metadata.Language `json:"infoLanguages,omitempty"`
 
+	// The country release dates are read for, like "IN". "" (or unset) means
+	// the country of the info language; a pointer so "" clears it. The
+	// countries offered come with every read.
+	ReleaseCountry          *string  `json:"releaseCountry,omitempty"`
+	ReleaseCountries        []string `json:"releaseCountries,omitempty"`
+	ReleaseCountryEffective string   `json:"releaseCountryEffective,omitempty"`
+
 	// Manual-import naming-collision conflict policy.
 	ImportConflictPolicy string `json:"importConflictPolicy,omitempty"` // "skip" | "overwrite" | "overwrite_if_better" | "ask"
 
@@ -192,6 +220,10 @@ type settingsPayload struct {
 
 	// Indexer traffic through the VPN. A pointer for the same reason.
 	RouteIndexersThroughVPN *bool `json:"routeIndexersThroughVpn,omitempty"`
+
+	// The person said their torrent client is already behind a VPN, so the
+	// "Torrenting without a VPN" notice stays away.
+	VPNNoticeAcknowledged *bool `json:"vpnNoticeAcknowledged,omitempty"`
 
 	// Curated/public list import — Trakt's public
 	// list-items endpoint only needs an app client ID, no user OAuth.
@@ -324,7 +356,10 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	namingPreset, _ := s.Settings.Get(settings.KeyNamingPreset)
 	movieFormat, _ := s.Settings.Get(settings.KeyMovieNameFormat)
 	episodeFormat, _ := s.Settings.Get(settings.KeyEpisodeNameFormat)
+	movieFolderFormat, _ := s.Settings.Get(settings.KeyMovieFolderFormat)
+	seriesFolderFormat, _ := s.Settings.Get(settings.KeySeriesFolderFormat)
 	keepOriginalNames := s.keepOriginalNames()
+	checkDuration := s.checkDurationOn()
 	onboardingDone, _ := s.Settings.GetBool(settings.KeyOnboardingDone)
 	torrentPort := strconv.Itoa(s.torrentListenPort()) // the port in use, 58264 unless changed
 	torrentRatio, _ := s.Settings.Get(settings.KeyTorrentSeedRatioLimit)
@@ -335,6 +370,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	legalAt, _ := s.Settings.Get(settings.KeyLegalAcknowledgedAt)
 	subtitleAuto := s.autoSubtitleSetting()
 	subtitleUpgrade := s.subtitleUpgradeSetting()
+	trashSyncAlways := s.settingOn(settings.KeyTrashSyncAlways, false)
 	numberingLookup := s.numberingLookupOn()
 	countEmbedded := s.countEmbeddedSubtitles()
 	subtitleWizdom := s.wizdomOn()
@@ -342,8 +378,11 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	osEnabled, subdlEnabled, addonsEnabled := sources.OpenSubtitles.Switch, sources.SubDL.Switch, sources.Addons.Switch
 	unmonitorDownloaded, unmonitorFinished := s.unmonitorDownloaded(), s.unmonitorFinished()
 	seasonPacks := s.seasonPackDefault()
+	tvmazeAirTimes := s.tvmazeOn()
 	qualityLanguageOnly := s.languageOnly()
 	showAdvanced := s.showAdvanced()
+	trashFormatsAuto := s.trashAutoUpdate()
+	trashFormatsEveryDays := s.trashEveryDays()
 	trailerBackground := s.trailerBackground()
 	trailerSound := s.trailerSound()
 	subtitlesOn := s.subtitlesEnabled()
@@ -355,6 +394,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	illegalCharReplacement, _ := s.Settings.Get(settings.KeyIllegalCharReplacement)
 	requireVPNForTorrents := s.vpnRequiredForTorrents()
 	routeIndexersThroughVPN := s.vpnForIndexers()
+	vpnNoticeAcknowledged := s.vpnNoticeAcknowledged()
 	importConflictPolicy, _ := s.Settings.Get(settings.KeyImportConflictPolicy)
 	if importConflictPolicy == "" {
 		importConflictPolicy = "skip"
@@ -403,12 +443,15 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		NamingPreset:             namingPreset,
 		MovieNameFormat:          movieFormat,
 		EpisodeNameFormat:        episodeFormat,
+		MovieFolderFormat:        movieFolderFormat,
+		SeriesFolderFormat:       seriesFolderFormat,
 		KeepOriginalNames:        &keepOriginalNames,
+		CheckDuration:            &checkDuration,
 		HasTMDBAPIKey:            s.TMDB().HasAPIKey(),
 		OnboardingDone:           onboardingDone,
 		TorrentListenPort:        torrentPort,
-		TorrentSeedRatioLimit:    torrentRatio,
-		TorrentSeedTimeLimitH:    torrentTime,
+		TorrentSeedRatioLimit:    &torrentRatio,
+		TorrentSeedTimeLimitH:    &torrentTime,
 		AutomationEnabled:        &automationEnabled,
 		TorrentEnabled:           &torrentEnabled,
 		MonitorIntervalMinutes:   &monitorMinutes,
@@ -422,6 +465,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		SubtitleProfiles:         s.subtitleProfiles(),
 		SubtitleAutoDownload:     &subtitleAuto,
 		SubtitleUpgrade:          &subtitleUpgrade,
+		NotifyTrashSyncAlways:    &trashSyncAlways,
 		SubtitlesEnabled:         &subtitlesOn,
 		HasOpenSubtitlesAPIKey:   s.Subtitles().HasAPIKey(),
 		HasSubDLAPIKey:           s.SubDL().HasAPIKey(),
@@ -435,10 +479,13 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		NumberingLookup:          &numberingLookup,
 		UnmonitorDownloaded:      &unmonitorDownloaded,
 		ShowAdvanced:             &showAdvanced,
+		TrashFormatsAuto:         &trashFormatsAuto,
+		TrashFormatsEveryDays:    &trashFormatsEveryDays,
 		TrailerBackground:        &trailerBackground,
 		TrailerSound:             &trailerSound,
 		UnmonitorFinished:        &unmonitorFinished,
 		SeasonPacks:              &seasonPacks,
+		TVmazeAirTimes:           &tvmazeAirTimes,
 		HasOpenSubtitlesAccount:  s.Subtitles().HasCredentials(),
 		OpenSubtitlesAccountName: osUser,
 		TMDBKeyBuiltIn:           s.builtin.TMDB != "",
@@ -455,8 +502,12 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		QualityLanguageOnly:      &qualityLanguageOnly,
 		InfoLanguage:             s.infoLanguage(),
 		InfoLanguages:            metadata.InfoLanguages,
+		ReleaseCountry:           ptr(s.releaseCountrySetting()),
+		ReleaseCountries:         metadata.ReleaseCountries,
+		ReleaseCountryEffective:  s.releaseRegion(),
 		RequireVPNForTorrents:    &requireVPNForTorrents,
 		RouteIndexersThroughVPN:  &routeIndexersThroughVPN,
+		VPNNoticeAcknowledged:    &vpnNoticeAcknowledged,
 		ImportConflictPolicy:     importConflictPolicy,
 		HasTraktClientID:         s.Trakt().HasClientID(),
 		HasSimklClientID:         s.Simkl().HasClientID(),
@@ -665,7 +716,15 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if req.ReleaseCountry != nil {
+		if err := tx.Set(settings.KeyReleaseCountry, strings.ToUpper(strings.TrimSpace(*req.ReleaseCountry)), false); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+
 	languagesBefore := s.audioLanguageList()
+	regionBefore := s.releaseRegion()
 	sets := []struct {
 		key, value string
 	}{
@@ -675,9 +734,9 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		{settings.KeyNamingPreset, req.NamingPreset},
 		{settings.KeyMovieNameFormat, req.MovieNameFormat},
 		{settings.KeyEpisodeNameFormat, req.EpisodeNameFormat},
+		{settings.KeyMovieFolderFormat, req.MovieFolderFormat},
+		{settings.KeySeriesFolderFormat, req.SeriesFolderFormat},
 		{settings.KeyTorrentListenPort, req.TorrentListenPort},
-		{settings.KeyTorrentSeedRatioLimit, req.TorrentSeedRatioLimit},
-		{settings.KeyTorrentSeedTimeLimitH, req.TorrentSeedTimeLimitH},
 		{settings.KeyIllegalCharMode, req.IllegalCharMode},
 		{settings.KeyIllegalCharReplacement, req.IllegalCharReplacement},
 		{settings.KeyImportConflictPolicy, req.ImportConflictPolicy},
@@ -696,8 +755,32 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// The seeding limits: empty is unlimited, so empty is saved too.
+	for _, lim := range []struct {
+		key   string
+		value *string
+	}{
+		{settings.KeyTorrentSeedRatioLimit, req.TorrentSeedRatioLimit},
+		{settings.KeyTorrentSeedTimeLimitH, req.TorrentSeedTimeLimitH},
+	} {
+		if lim.value == nil {
+			continue
+		}
+		if err := tx.Set(lim.key, *lim.value, false); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
 	// The other titles kept for each movie and show were picked for the old
 	// languages: they are picked again as titles are searched for.
+	// The calendar's saved digital dates were read for the old country.
+	tx.then(func() {
+		if s.releaseRegion() != regionBefore {
+			if err := s.MovieRepo.ClearMovieReleaseDates(); err != nil {
+				slog.Warn("settings: couldn't forget the saved release dates after the country changed", "err", err)
+			}
+		}
+	})
 	tx.then(func() {
 		if s.audioLanguageList() != languagesBefore {
 			if err := s.MovieRepo.ClearTitleNames(); err != nil {
@@ -738,6 +821,16 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if req.NotifyTrashSyncAlways != nil {
+		value := "0"
+		if *req.NotifyTrashSyncAlways {
+			value = "1"
+		}
+		if err := tx.Set(settings.KeyTrashSyncAlways, value, false); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
 	if req.SubtitleUpgrade != nil {
 		value := "1"
 		if !*req.SubtitleUpgrade {
@@ -750,6 +843,12 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.KeepOriginalNames != nil {
 		if err := setBool(tx, settings.KeyKeepOriginalNames, *req.KeepOriginalNames); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	if req.CheckDuration != nil {
+		if err := setBool(tx, settings.KeyImportCheckDuration, *req.CheckDuration); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -794,6 +893,22 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if req.TrashFormatsAuto != nil {
+		if err := setBool(tx, settings.KeyTrashFormatsAuto, *req.TrashFormatsAuto); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	if req.TrashFormatsEveryDays != nil {
+		if *req.TrashFormatsEveryDays != 1 && *req.TrashFormatsEveryDays != 7 {
+			writeError(w, http.StatusBadRequest, "Choose to check the TRaSH Guides every day or every week.")
+			return
+		}
+		if err := tx.Set(settings.KeyTrashFormatsEvery, strconv.Itoa(*req.TrashFormatsEveryDays), false); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
 	if req.QualityLanguageOnly != nil {
 		if err := setBool(tx, settings.KeyQualityLanguageOnly, *req.QualityLanguageOnly); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -802,6 +917,12 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.UnmonitorDownloaded != nil {
 		if err := setBool(tx, settings.KeyUnmonitorDownloaded, *req.UnmonitorDownloaded); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	if req.TVmazeAirTimes != nil {
+		if err := setBool(tx, settings.KeyTVmazeAirTimes, *req.TVmazeAirTimes); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -906,6 +1027,16 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 			value = "0"
 		}
 		if err := tx.Set(settings.KeyVPNRequireForTorrents, value, false); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	if req.VPNNoticeAcknowledged != nil {
+		value := "1"
+		if !*req.VPNNoticeAcknowledged {
+			value = "0"
+		}
+		if err := tx.Set(settings.KeyVPNNoticeAcknowledged, value, false); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -1221,6 +1352,15 @@ func (s *Server) handleNamingPreview(w http.ResponseWriter, r *http.Request) {
 	}
 	format := r.URL.Query().Get("format")
 	problem := ""
+	folderFormat := r.URL.Query().Get("folder")
+	if folderFormat == "" {
+		folderFormat = organizer.DefaultMovieFolder
+		if tv {
+			folderFormat = organizer.DefaultSeriesFolder
+		}
+	} else {
+		problem = organizer.CheckFolderFormat(folderFormat, kind)
+	}
 	if format == "" {
 		if preset, ok := presets[r.URL.Query().Get("preset")]; ok {
 			format = preset
@@ -1228,11 +1368,13 @@ func (s *Server) handleNamingPreview(w http.ResponseWriter, r *http.Request) {
 			format = presets["plex"]
 		}
 	} else {
-		problem = organizer.CheckFormat(format, kind)
+		if m := organizer.CheckFormat(format, kind); m != "" {
+			problem = m
+		}
 	}
 	mode, replacement := s.illegalCharSettings()
 	clean := func(f string) string { return organizer.Sanitize(organizer.Render(f, sample), mode, replacement) }
-	out := namingPreviewPayload{Folder: clean(organizer.Presets["plex"]), Filename: clean(format) + ".mkv", Problem: problem}
+	out := namingPreviewPayload{Folder: clean(folderFormat), Filename: clean(format) + ".mkv", Problem: problem}
 	if r.URL.Query().Get("keep") == "1" {
 		// "Keep the original file names": the sample file keeps its own name.
 		if name, ok := organizer.OriginalName(sample.OriginalFilename+".mkv", mode, replacement); ok {
@@ -1240,7 +1382,7 @@ func (s *Server) handleNamingPreview(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if tv {
-		out.Folder = clean(organizer.TVSeriesFolder) + "/" + clean(organizer.TVSeasonFolder)
+		out.Folder = clean(folderFormat) + "/" + clean(organizer.TVSeasonFolder)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -1248,7 +1390,7 @@ func (s *Server) handleNamingPreview(w http.ResponseWriter, r *http.Request) {
 // handleNamingTokens lists the tokens a custom format can use and the
 // ready-made formats to start from, for the builder in Settings.
 func (s *Server) handleNamingTokens(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"tokens": organizer.Tokens(), "schemes": organizer.Schemes})
+	writeJSON(w, http.StatusOK, map[string]any{"tokens": organizer.Tokens(), "schemes": organizer.Schemes, "folderSchemes": organizer.FolderSchemes})
 }
 
 // nearestExisting walks up from path to the closest folder that exists, and

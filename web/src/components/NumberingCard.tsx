@@ -3,6 +3,7 @@ import { api, can, type SeriesNumbering, type SeriesType } from '../api'
 import { useAuth } from '../AuthContext'
 import { locale, t, st } from '../i18n'
 import { useToast } from './Toast'
+import CustomNumbering from './CustomNumbering'
 
 // What the numbering services say about a show: its AniList, AniDB and
 // MyAnimeList pages, the other numbering releases use, and the other names it
@@ -41,7 +42,19 @@ function listsLine(n: SeriesNumbering): string {
   }
 }
 
-export default function NumberingCard({ id, seriesType }: { id: number; seriesType: SeriesType }) {
+export default function NumberingCard({
+  id,
+  seriesType,
+  seasons = [],
+  monitored = true,
+  onRescanned,
+}: {
+  id: number
+  seriesType: SeriesType
+  seasons?: number[]
+  monitored?: boolean
+  onRescanned?: () => void
+}) {
   const toast = useToast()
   const me = useAuth().user
   const [n, setN] = useState<SeriesNumbering | null>(null)
@@ -91,6 +104,7 @@ export default function NumberingCard({ id, seriesType }: { id: number; seriesTy
               {busy ? t('Refreshing…') : t('Refresh mapping')}
             </button>
           )}
+          <CustomNumbering id={id} seasons={seasons} monitored={monitored} onRescanned={onRescanned} />
         </div>
       </details>
     )
@@ -169,6 +183,7 @@ export default function NumberingCard({ id, seriesType }: { id: number; seriesTy
           </table>
         </details>
       )}
+      <CustomNumbering id={id} seasons={seasons} monitored={monitored} onRescanned={onRescanned} />
       {n.note && <p className="numbering-note">{st(n.note)}</p>}
       <p className="numbering-foot">
         {n.checkedAt ? t('Last looked up {date}.', { date: when(n.checkedAt) }) : t('Not looked up yet.')}{' '}

@@ -20,7 +20,7 @@ import (
 	"github.com/rdborg/mediarium/internal/torrentclient"
 )
 
-// Debrid: torrent releases go to Real-Debrid or TorBox instead of the
+// Debrid: torrent releases go to Real-Debrid, TorBox or Premiumize instead of the
 // built-in torrent client. The service downloads the torrent; Mediarium then
 // downloads the finished files over HTTPS into the download's own folder,
 // and the usual unpacking and import take over. See internal/debrid.
@@ -48,7 +48,7 @@ func (s *Server) debridConfig() (service, key string) {
 // debridOn reports whether torrent releases go to a debrid service.
 func (s *Server) debridOn() bool {
 	service, key := s.debridConfig()
-	return (service == debrid.RealDebrid || service == debrid.TorBox) && key != ""
+	return (service == debrid.RealDebrid || service == debrid.TorBox || service == debrid.Premiumize) && key != ""
 }
 
 func debridHTTP() *http.Client {
@@ -243,10 +243,10 @@ func (s *Server) debridError(label string, err error) error {
 }
 
 type debridPayload struct {
-	Service string `json:"service"` // "" (off), realdebrid or torbox
+	Service string `json:"service"` // "" (off), realdebrid, torbox or premiumize
 	HasKey  bool   `json:"hasKey"`
 	// CanCheck is true when the service can say which releases it already has
-	// (TorBox; Real-Debrid has no such check). PreferCached is the setting that
+	// (TorBox and Premiumize; Real-Debrid has no such check). PreferCached is the setting that
 	// asks it, and ranks a cached release ahead of an equal one that is not;
 	// CachedLowerScore lets the cached one win even when its score is lower.
 	CanCheck         bool `json:"canCheck"`
@@ -257,7 +257,7 @@ type debridPayload struct {
 // GET /api/debrid
 func (s *Server) handleGetDebrid(w http.ResponseWriter, r *http.Request) {
 	service, key := s.debridConfig()
-	p := debridPayload{Service: service, HasKey: key != "", CanCheck: service == debrid.TorBox}
+	p := debridPayload{Service: service, HasKey: key != "", CanCheck: service == debrid.TorBox || service == debrid.Premiumize}
 	prefer, _ := s.Settings.Get(settings.KeyDebridPreferCached)
 	p.PreferCached = prefer != "0" // on unless switched off
 	lower, _ := s.Settings.Get(settings.KeyDebridCachedLower)
@@ -275,9 +275,9 @@ type debridRequest struct {
 
 func (req debridRequest) check() string {
 	switch req.Service {
-	case "", debrid.RealDebrid, debrid.TorBox:
+	case "", debrid.RealDebrid, debrid.TorBox, debrid.Premiumize:
 	default:
-		return "Choose Real-Debrid, TorBox or none."
+		return "Choose Real-Debrid, TorBox, Premiumize or none."
 	}
 	return firstProblem(checkAPIKey(req.APIKey), checkMaxLen(req.APIKey, "API key", 200))
 }
@@ -348,7 +348,7 @@ func (s *Server) handleTestDebrid(w http.ResponseWriter, r *http.Request) {
 	}
 	if msg := req.check(); msg != "" || req.Service == "" {
 		if msg == "" {
-			msg = "Choose Real-Debrid or TorBox."
+			msg = "Choose Real-Debrid, TorBox or Premiumize."
 		}
 		writeError(w, http.StatusBadRequest, msg)
 		return

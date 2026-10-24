@@ -39,6 +39,16 @@ type Event struct {
 	PosterURL   string   // a hosted poster image, or empty
 	LinkURL     string   // where the title is in Mediarium, or empty
 	SettingsURL string   // the notification settings in Mediarium, or empty
+	Subtitles   string   // for an import: where the subtitles stand, or empty when subtitles are off
+
+	// What is known about the release of a grab or an import. Each part is
+	// left empty (or false) when unknown and then not shown anywhere.
+	ScoreKnown   bool     // the profile has custom formats, so Score means something
+	Score        int      // the custom format score
+	Formats      []string // the custom formats it matched, best first
+	ReleaseGroup string
+	Indexer      string
+	SizeBytes    int64
 }
 
 // rich reports whether the event carries the structure Compose adds.
@@ -234,8 +244,9 @@ func redactURLError(err error) error {
 type WebhookSender struct {
 	URL    string
 	Client *http.Client
-	// Template, when set, is a JSON body with {{event}}, {{title}}, {{message}}
-	// and {{at}} placeholders; empty sends the fixed {event,title,message,at}.
+	// Template, when set, is a JSON body with {{event}}, {{title}}, {{message}},
+	// {{at}} and the release placeholders (see renderTemplate); empty sends the
+	// fixed {event,title,message,at} with the release details added when known.
 	Template string
 }
 
@@ -268,6 +279,24 @@ func (s *WebhookSender) Send(ctx context.Context, event Event) error {
 		if event.PosterURL != "" {
 			payload["poster"] = event.PosterURL
 		}
+		if event.Subtitles != "" {
+			payload["subtitles"] = event.Subtitles
+		}
+	}
+	if event.ScoreKnown {
+		payload["customFormatScore"] = event.Score
+	}
+	if len(event.Formats) > 0 {
+		payload["customFormats"] = event.Formats
+	}
+	if event.ReleaseGroup != "" {
+		payload["releaseGroup"] = event.ReleaseGroup
+	}
+	if event.Indexer != "" {
+		payload["indexer"] = event.Indexer
+	}
+	if event.SizeBytes > 0 {
+		payload["size"] = event.SizeBytes
 	}
 	return doJSONPost(ctx, s.Client, s.URL, payload)
 }

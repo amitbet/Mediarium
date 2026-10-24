@@ -250,6 +250,17 @@ The images install these from Alpine Linux (the standard image) or Debian (the `
 The ` + "`-full`" + ` image is built on the official FlareSolverr image (MIT), which brings Python, Chromium and their own licences: see https://github.com/FlareSolverr/FlareSolverr.
 `
 
+// dataSources are services whose data the program shows. They are not code, so
+// they bring no files into the build; the licence of the data is credited here.
+const dataSources = `## Data from other services
+
+| Service | What Mediarium uses it for | Licence |
+|---|---|---|
+| [TVmaze](https://www.tvmaze.com) | the time episodes air, shown on the calendar | CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/) |
+
+Air times from TVmaze. Only a show's TheTVDB or IMDb id, or its name and year, is sent to it, and it can be switched off under Settings > Metadata.
+`
+
 func render(goMods, npm, fonts []component) []byte {
 	var b strings.Builder
 	b.WriteString("# Third-party notices\n\n")
@@ -258,8 +269,10 @@ func render(goMods, npm, fonts []component) []byte {
 	fmt.Fprintf(&b, "- [Go modules compiled into the program](#go-modules) (%d)\n", len(goMods))
 	fmt.Fprintf(&b, "- [Packages bundled into the web app](#web-app-packages) (%d)\n", len(npm))
 	fmt.Fprintf(&b, "- [Fonts](#fonts) (%d)\n", len(fonts))
-	b.WriteString("- [Tools in the Docker images](#tools-in-the-docker-images)\n\n")
+	b.WriteString("- [Tools in the Docker images](#tools-in-the-docker-images)\n")
+	b.WriteString("- [Data from other services](#data-from-other-services)\n\n")
 	b.WriteString(imageTools)
+	b.WriteString("\n" + dataSources)
 	section := func(title, anchor string, list []component) {
 		fmt.Fprintf(&b, "\n## %s\n\n<a id=\"%s\"></a>\n\n| Name | Version | Licence |\n|---|---|---|\n", title, anchor)
 		for _, c := range list {

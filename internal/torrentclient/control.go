@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/anacrolix/torrent"
+
+	"github.com/rdborg/mediarium/internal/speed"
 )
 
 // FileState is one file of a torrent, for the list a person can tick.
@@ -341,7 +343,10 @@ func (c *Control) step(dt time.Duration) time.Duration {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.stepOrderLocked()
-	if c.downLimit == 0 && c.upLimit == 0 && !c.downHeld && !c.upHeld {
+	if c.downLimit == 0 && c.upLimit == 0 && !c.downHeld {
+		// No limit of its own; the only thing left to follow is the switch
+		// that turns uploading off for every torrent.
+		c.holdUploadLocked(speed.UploadOff())
 		return controlTick
 	}
 	c.stepLimitsLocked(dt)
@@ -351,7 +356,7 @@ func (c *Control) step(dt time.Duration) time.Duration {
 func (c *Control) stepLimitsLocked(dt time.Duration) {
 	st := c.t.Stats()
 	c.holdDownloadLocked(c.down.update(c.downLimit, st.BytesReadData.Int64(), dt))
-	c.holdUploadLocked(c.up.update(c.upLimit, st.BytesWrittenData.Int64(), dt))
+	c.holdUploadLocked(speed.UploadOff() || c.up.update(c.upLimit, st.BytesWrittenData.Int64(), dt))
 }
 
 func (c *Control) holdDownloadLocked(hold bool) {

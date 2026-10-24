@@ -1,8 +1,11 @@
 package fsinfo
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // RootMarker is the name of the small hidden file Mediarium keeps in a library
@@ -21,6 +24,25 @@ func RootReachable(root string) bool {
 func HasRootMarker(root string) bool {
 	_, err := os.Lstat(filepath.Join(root, RootMarker))
 	return err == nil
+}
+
+// RootMarkerState looks for the marker. missing is true when the file is not
+// there; err is set when the folder could not be read to tell (a network drive
+// that stumbled), in which case nothing can be said about the marker. A
+// failed read is tried again a few times first.
+func RootMarkerState(root string) (missing bool, err error) {
+	path := filepath.Join(root, RootMarker)
+	for try := 0; try < 3; try++ {
+		_, err = os.Lstat(path)
+		switch {
+		case err == nil:
+			return false, nil
+		case errors.Is(err, fs.ErrNotExist):
+			return true, nil
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+	return false, err
 }
 
 // WriteRootMarker puts the marker in root. A folder that can't be written to

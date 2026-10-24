@@ -32,6 +32,60 @@ type DiscoverQuery struct {
 	YearTo   int
 	Sort     string
 	Page     int
+
+	// Language is the original language of the title (a code like "ko"), not
+	// the language its name and summary are shown in.
+	Language string
+	// MinRating is the lowest average vote to list (6, 7, 8 or 9); 0 is any.
+	MinRating int
+	// Runtime is one of the Runtime* buckets; empty is any. For shows it
+	// counts the length of an episode.
+	Runtime string
+}
+
+// Runtime buckets accepted by DiscoverQuery.Runtime.
+const (
+	RuntimeShort  = "under90" // less than 90 minutes
+	RuntimeMedium = "90to120" // 90 to 120 minutes
+	RuntimeLong   = "over120" // more than 120 minutes
+)
+
+// votesFloorMovie and votesFloorTV keep titles nobody has rated from filling a
+// "rated 7+" list: a single ten-star vote would put them first.
+const (
+	votesFloorMovie = 100
+	votesFloorTV    = 50
+)
+
+// ValidLanguage reports whether code is empty or looks like an ISO 639 code:
+// two or three lower case letters.
+func ValidLanguage(code string) bool {
+	if code == "" {
+		return true
+	}
+	if len(code) < 2 || len(code) > 3 {
+		return false
+	}
+	for _, r := range code {
+		if r < 'a' || r > 'z' {
+			return false
+		}
+	}
+	return true
+}
+
+// ValidMinRating reports whether n is 0 (any) or one of the ratings offered.
+func ValidMinRating(n int) bool {
+	return n == 0 || (n >= 6 && n <= 9)
+}
+
+// ValidRuntime reports whether runtime is empty or one of the Runtime* buckets.
+func ValidRuntime(runtime string) bool {
+	switch runtime {
+	case "", RuntimeShort, RuntimeMedium, RuntimeLong:
+		return true
+	}
+	return false
 }
 
 // ValidSort reports whether sort is empty or one of the Sort* constants.
@@ -64,7 +118,7 @@ type ShowPage struct {
 // name ("primary_release_date" for movies, "first_air_date" for TV) and
 // yearParam the exact-year filter ("primary_release_year" or
 // "first_air_date_year").
-func (q DiscoverQuery) params(dateField, yearParam string) url.Values {
+func (q DiscoverQuery) params(dateField, yearParam string, votesFloor int) url.Values {
 	v := url.Values{"include_adult": {"false"}}
 	if q.Genre > 0 {
 		v.Set("with_genres", strconv.Itoa(q.Genre))
@@ -80,16 +134,36 @@ func (q DiscoverQuery) params(dateField, yearParam string) url.Values {
 			v.Set(dateField+".lte", fmt.Sprintf("%04d-12-31", q.YearTo))
 		}
 	}
+	if q.Language != "" {
+		v.Set("with_original_language", q.Language)
+	}
+	minVotes := 0
+	if q.MinRating > 0 {
+		v.Set("vote_average.gte", strconv.Itoa(q.MinRating))
+		minVotes = votesFloor
+	}
+	switch q.Runtime {
+	case RuntimeShort:
+		v.Set("with_runtime.lte", "89")
+	case RuntimeMedium:
+		v.Set("with_runtime.gte", "90")
+		v.Set("with_runtime.lte", "120")
+	case RuntimeLong:
+		v.Set("with_runtime.gte", "121")
+	}
 	switch q.Sort {
 	case SortRating:
 		v.Set("sort_by", "vote_average.desc")
-		v.Set("vote_count.gte", strconv.Itoa(minVotesForRating))
+		minVotes = max(minVotes, minVotesForRating)
 	case SortNewest:
 		v.Set("sort_by", dateField+".desc")
 	case SortOldest:
 		v.Set("sort_by", dateField+".asc")
 	default:
 		v.Set("sort_by", "popularity.desc")
+	}
+	if minVotes > 0 {
+		v.Set("vote_count.gte", strconv.Itoa(minVotes))
 	}
 	v.Set("page", strconv.Itoa(ClampPage(q.Page)))
 	return v
@@ -175,12 +249,12 @@ func (c *Client) showPage(ctx context.Context, path string, params url.Values) (
 
 // DiscoverMovies browses TMDB's movies by genre, year and sort order.
 func (c *Client) DiscoverMovies(ctx context.Context, q DiscoverQuery) (*MoviePage, error) {
-	return c.moviePage(ctx, "/discover/movie", q.params("primary_release_date", "primary_release_year"))
+	return c.moviePage(ctx, "/discover/movie", q.params("primary_release_date", "primary_release_year", votesFloorMovie))
 }
 
 // DiscoverTV is DiscoverMovies for shows.
 func (c *Client) DiscoverTV(ctx context.Context, q DiscoverQuery) (*ShowPage, error) {
-	return c.showPage(ctx, "/discover/tv", q.params("first_air_date", "first_air_date_year"))
+	return c.showPage(ctx, "/discover/tv", q.params("first_air_date", "first_air_date_year", votesFloorTV))
 }
 
 // Discover list names accepted by MovieList and TVList.

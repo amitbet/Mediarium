@@ -52,6 +52,23 @@ func TestRetryReplacesTheFailedEntry(t *testing.T) {
 	postJSON[map[string]any](t, client, fmt.Sprintf("%s/api/queue/9999/retry", base), nil, http.StatusNotFound)
 }
 
+// Retry from the bar for picked downloads does what Retry does on each one,
+// and one that can't be retried is named without stopping the rest.
+func TestBulkRetryReplacesEachFailedEntry(t *testing.T) {
+	base, client, _, item, _ := failedGrab(t)
+	oldID := int64(item["id"].(float64))
+
+	resp := postJSON[map[string]any](t, client, base+"/api/queue/bulk", map[string]any{"ids": []int64{oldID, 99999}, "action": "retry"}, http.StatusOK)
+	failed := resp["failed"].([]any)
+	if resp["done"].(float64) != 1 || len(failed) != 1 || int64(failed[0].(map[string]any)["id"].(float64)) != 99999 {
+		t.Fatalf("one retried and the missing one named, got %v", resp)
+	}
+	items := waitForQueue(t, client, base, 1)
+	if len(items) != 1 || int64(items[0]["id"].(float64)) == oldID {
+		t.Fatalf("the failed entry should be replaced by a new attempt, got %+v", items)
+	}
+}
+
 func TestRemoveAndClearOnlyTouchFinishedEntries(t *testing.T) {
 	server, base, client := loginNewServer(t)
 	m, err := server.MovieRepo.Add(library.Movie{TMDBID: 5, Title: "Fixture Movie", Monitored: true})

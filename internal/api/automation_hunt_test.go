@@ -57,7 +57,7 @@ func newTwoQualityIndexerServer(t *testing.T) *httptest.Server {
 
 func newHuntTestServer(t *testing.T) (*api.Server, *httptest.Server, *http.Client) {
 	t.Helper()
-	dir := t.TempDir()
+	dir := settledTempDir(t)
 	cfg := config.Config{
 		ConfigDir:           filepath.Join(dir, "config"),
 		DownloadsDir:        filepath.Join(dir, "downloads"),
@@ -84,7 +84,7 @@ func newHuntTestServer(t *testing.T) (*api.Server, *httptest.Server, *http.Clien
 		t.Fatalf("new api server: %v", err)
 	}
 	// Runs before the database closes (cleanups run last-registered first).
-	t.Cleanup(func() { waitBackground(t, server) })
+	t.Cleanup(func() { settleDownloads(t, server) })
 
 	httpSrv := httptest.NewServer(server.Routes())
 	t.Cleanup(httpSrv.Close)
@@ -92,6 +92,45 @@ func newHuntTestServer(t *testing.T) (*api.Server, *httptest.Server, *http.Clien
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{Jar: jar}
 	return server, httpSrv, client
+}
+
+// settleDownloads is the end of a test that grabbed releases: the download line
+// stops starting more, the downloads still running (the ones aimed at an address
+// nothing listens on are in the middle of a connect or a clean-up) are asked to
+// end, and everything the server started in the background is waited for. After
+// it nothing touches the config and download folders any more, so the folders
+// can be removed.
+func settleDownloads(t *testing.T, server *api.Server) {
+	t.Helper()
+	server.Shutdown(10 * time.Second)
+	waitBackground(t, server)
+}
+
+// settledTempDir is t.TempDir for tests whose server has background work: the
+// folder is removed with a few more tries when something is still closing a
+// file in it, instead of failing the test on "directory not empty". It is
+// registered first, so it is removed after the server has been settled.
+func settledTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "mediarium-hunt-*")
+	if err != nil {
+		t.Fatalf("make temp dir: %v", err)
+	}
+	t.Cleanup(func() {
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			err := os.RemoveAll(dir)
+			if err == nil {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Errorf("remove temp dir: %v", err)
+				return
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	})
+	return dir
 }
 
 // waitBackground waits for every download pipeline and automatic retry the

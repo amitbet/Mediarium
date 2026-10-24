@@ -102,7 +102,7 @@
 
 .activity-page .qthumb { width: 50px; height: 74px; border-radius: 4px 8px 8px 8px; box-shadow: 0 0 0 1px color-mix(in srgb, var(--qc) 55%, transparent), 0 8px 16px -6px var(--lift); }
 .activity-page .qrow.failed .qthumb img, .activity-page .qrow.st-stopped .qthumb img { filter: grayscale(0.7) brightness(0.7); }
-.activity-page .qmain { gap: 6px; }
+.activity-page .qmain { gap: 6px; min-width: 0; }
 .activity-page .qtitle { gap: 8px; font-size: 1.02rem; font-weight: 700; letter-spacing: -0.01em; }
 .activity-page .qtitle a:hover { color: var(--qc); text-decoration: none; }
 .activity-page .qtitle .badge { font-family: var(--font-body); font-size: 0.72rem; font-weight: 600; padding: 2px 8px; border-radius: 3px 8px 8px 8px; }
@@ -137,6 +137,8 @@
 .activity-page .qnote, .activity-page .qwhen { font-size: 0.82rem; }
 .activity-page .qwhen { font-family: var(--font-mono); font-size: 0.74rem; color: var(--text-faint); }
 .activity-page .qerror { font-weight: 600; }
+/* A release or file name has no spaces to break at, so every text in a download's row may break anywhere instead of running off the card. */
+.activity-page .qmain, .activity-page .qrelease, .activity-page .qnote, .activity-page .qerror, .activity-page .qwhen, .activity-page .qhelp, .activity-page .qtitle, .activity-page .qsteps li { overflow-wrap: anywhere; }
 .activity-page .qhelp summary { color: var(--qc); }
 
 @media (max-width: 760px) {
@@ -231,14 +233,16 @@
 .qdetails { margin-top: 6px; font-size: 0.85rem; }
 .qdetails summary { cursor: pointer; color: var(--text-dim); width: max-content; border-radius: 4px; padding: 1px 4px; margin-left: -4px; }
 .qdetails summary:hover { color: var(--text); }
-.qdetails dl { display: grid; grid-template-columns: max-content 1fr; gap: 3px 14px; margin: 8px 0 4px; }
+.qdetails { min-width: 0; }
+.qdetails dl { display: grid; grid-template-columns: minmax(4.5rem, max-content) minmax(0, 1fr); gap: 4px 14px; margin: 8px 0 4px; align-items: baseline; }
 .qdetails dt { color: var(--text-dim); }
 .qdetails dd { margin: 0; min-width: 0; overflow-wrap: anywhere; color: var(--text); }
 .qdetails dd.mono { font-family: var(--font-mono); font-size: 0.78rem; }
 .qsteps { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 2px; color: var(--text-dim); }
+.qsteps li { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0 8px; align-items: baseline; overflow-wrap: anywhere; }
 .qsteps li.warn { color: var(--warning); }
 .qsteps li.error { color: var(--error, #ff6b6b); }
-.qsteps time { font: 500 0.74rem var(--font-mono); margin-right: 6px; }
+.qsteps time { font: 500 0.74rem var(--font-mono); }
 
 /* ---- picking several downloads ----------------------------------------- */
 .activity-page .qthumb { position: relative; }

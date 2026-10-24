@@ -1031,6 +1031,7 @@ a:hover .ico .ln, button:hover .ico .ln, .tile:hover .tile-ico .ico .ln, .mod-ca
 .state-chips .chip.st-downloading.live::after { content: ''; position: absolute; left: 0; bottom: 0; height: 2px; width: 40%; background: var(--sc); box-shadow: 0 0 8px var(--sc); animation: pc-live 1.6s var(--ease) infinite alternate; }
 .state-chips .chip.st-pending, .state-chips .chip.st-searching, .state-chips .chip.st-partial { --sc: var(--sec); border-style: dashed; border-color: color-mix(in srgb, var(--sc) 55%, transparent); }
 .state-chips .chip.st-failed { --sc: #f87171; border-style: dashed; border-color: color-mix(in srgb, #f87171 55%, transparent); }
+.state-chips .chip.st-incomplete { --sc: var(--warning); border-style: dashed; border-color: color-mix(in srgb, var(--warning) 55%, transparent); }
 .state-chips .chip.st-added { --sc: var(--text-faint); }
 .state-chips .chip:hover { color: var(--text); background: color-mix(in srgb, var(--sc, var(--text)) 10%, transparent); }
 .state-chips .chip.active { color: var(--text); background: color-mix(in srgb, var(--sc, var(--accent)) 18%, var(--surface)); border-color: var(--sc, var(--accent)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--sc, var(--accent)) 30%, transparent), 0 6px 18px -8px var(--sc, var(--accent)); }
@@ -1602,3 +1603,6 @@ fieldset.group { border-radius: 6px 26px 26px 26px; }
   .info-disk { grid-template-columns: minmax(0, 1fr); }
   .info-disk small { text-align: left; }
 }
+
+/* An open menu is always on top. Every card is its own layer (the rise-in animation, container queries), so a menu that drops out of a card used to be drawn under the card below it. The card that holds an open menu is lifted above its neighbours while the menu is open, which moves nothing. */
+:is(.qrow, .client-card, .card, .ncard, .info-card, .request-row, .target-row, .wrow):has(.dropdown.open) { position: relative; z-index: 30; }

@@ -244,6 +244,20 @@ func TestMovieSearchDetailNamesTheIndexersThatDidNotAnswer(t *testing.T) {
 		t.Fatalf("the source that answered still gives its releases: %v", got)
 	}
 
+	// Every indexer is listed with what became of it, so "no releases from
+	// this one" can be told from "it is down".
+	searched, _ := got["searched"].([]any)
+	if len(searched) != 2 {
+		t.Fatalf("searched = %v, want both indexers", searched)
+	}
+	ok, bad := searched[0].(map[string]any), searched[1].(map[string]any)
+	if ok["name"] != "TV Indexer" || ok["status"] != "found" || ok["count"] != float64(1) || ok["kind"] != "usenet" {
+		t.Fatalf("the indexer that answered: %v", ok)
+	}
+	if bad["name"] != "Broken Site" || bad["status"] != "failed" || bad["code"] != "unreachable" || bad["reason"] != "Could not reach Broken Site." {
+		t.Fatalf("the indexer that is down: %v", bad)
+	}
+
 	// Without detail the answer is still the bare list.
 	if plain := getJSON[[]map[string]any](t, env.client, url); len(plain) != 1 {
 		t.Fatalf("plain list = %v", plain)

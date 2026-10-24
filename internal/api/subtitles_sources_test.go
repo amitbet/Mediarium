@@ -92,7 +92,7 @@ func TestSubDLOnItsOwnAndChosenByHand(t *testing.T) {
 	os.WriteFile(video, []byte("v"), 0o644)
 	m := addDownloadedMovie(t, env, video)
 
-	list := getJSON[[]map[string]any](t, env.client, fmt.Sprintf("%s/api/movies/%d/subtitles?lang=en", env.baseURL, m.ID))
+	list := subtitleSearchResults(t, env.client, fmt.Sprintf("%s/api/movies/%d/subtitles?lang=en", env.baseURL, m.ID))
 	if len(list) != 1 || list[0]["source"] != "subdl" || list[0]["link"] != "/subtitle/11-22.zip" {
 		t.Fatalf("list: %+v", list)
 	}

@@ -42,7 +42,7 @@ test('the dialog names the running version, not the newest note', () => {
   assert.equal(titleVersion('dev'), 'dev')
 })
 
-test('every release has at most four highlights, and 3.1.2 to 3.2.3 have some', () => {
+test('every release has at most four highlights, and 3.1.2 to 3.7.0 have some', () => {
   for (const n of WHATS_NEW) assert.ok(n.items.length > 0 && n.items.length <= 15, n.version)
-  for (const v of ['3.1.2', '3.1.3', '3.2.0', '3.2.1', '3.2.2', '3.2.3']) assert.ok(WHATS_NEW.some((n) => n.version === v && n.items.length <= 4), v)
+  for (const v of ['3.1.2', '3.1.3', '3.2.0', '3.2.1', '3.2.2', '3.2.3', '3.2.4', '3.2.5', '3.2.6', '3.2.7', '3.2.8', '3.2.9', '3.2.11', '3.3.0', '3.4.0', '3.5.0', '3.6.0', '3.7.0']) assert.ok(WHATS_NEW.some((n) => n.version === v && n.items.length <= 4), v)
 })

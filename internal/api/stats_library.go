@@ -8,8 +8,10 @@ import (
 )
 
 // The Statistics page: what is in the library, at which quality, how much
-// space it takes, and how downloads went over the last months (as far back
-// as the history is kept).
+// space it takes, and how downloads went over the last months. The download
+// numbers come from download_stats, which counts downloads as they happen, so
+// clearing the history (or letting it expire) does not change them; only
+// "Reset statistics" does.
 
 type statCount struct {
 	Label string `json:"label"`
@@ -22,6 +24,15 @@ type statMonth struct {
 	Completed int    `json:"completed"`
 	Failed    int    `json:"failed"`
 	Bytes     int64  `json:"bytes"` // of the completed ones
+}
+
+// statTotals is every download counted since the statistics began (or were
+// reset).
+type statTotals struct {
+	Grabs     int   `json:"grabs"`
+	Completed int   `json:"completed"`
+	Failed    int   `json:"failed"`
+	Bytes     int64 `json:"bytes"` // of the completed ones
 }
 
 type libraryStatsPayload struct {
@@ -37,6 +48,7 @@ type libraryStatsPayload struct {
 	Quality         []statCount `json:"quality"` // movies and episodes together, by quality
 	Months          []statMonth `json:"months"`
 	UsenetShare     int         `json:"usenetShare"` // % of completed downloads that came from Usenet
+	Totals          statTotals  `json:"totals"`
 	HistoryKeptDays int         `json:"historyKeptDays"`
 	// What gets watched; only while "Read what's been watched" is on.
 	Watched *watchStatsPayload `json:"watched,omitempty"`
@@ -149,11 +161,8 @@ func (s *Server) computeLibraryStats() (libraryStatsPayload, error) {
 	}
 	sort.Slice(out.Quality, func(i, j int) bool { return out.Quality[i].Count > out.Quality[j].Count })
 
-	rows, err := s.db.Query(`SELECT substr(COALESCE(completed_at, added_at), 1, 7) AS month,
-			SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END),
-			SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END),
-			COALESCE(SUM(CASE WHEN status = 'completed' THEN size_bytes ELSE 0 END), 0)
-		FROM download_queue GROUP BY month ORDER BY month DESC LIMIT 12`)
+	rows, err := s.db.Query(`SELECT substr(day, 1, 7) AS month, SUM(completed), SUM(failed), SUM(bytes)
+		FROM download_stats GROUP BY month ORDER BY month DESC LIMIT 12`)
 	if err == nil {
 		for rows.Next() {
 			var m statMonth
@@ -163,8 +172,11 @@ func (s *Server) computeLibraryStats() (libraryStatsPayload, error) {
 		}
 		rows.Close()
 	}
+	_ = s.db.QueryRow(`SELECT COALESCE(SUM(grabs), 0), COALESCE(SUM(completed), 0), COALESCE(SUM(failed), 0), COALESCE(SUM(bytes), 0) FROM download_stats`).
+		Scan(&out.Totals.Grabs, &out.Totals.Completed, &out.Totals.Failed, &out.Totals.Bytes)
+	// The share is among downloads whose protocol is known.
 	var usenet, total int
-	_ = s.db.QueryRow(`SELECT COALESCE(SUM(CASE WHEN protocol = 'usenet' THEN 1 ELSE 0 END), 0), COUNT(*) FROM download_queue WHERE status = 'completed'`).Scan(&usenet, &total)
+	_ = s.db.QueryRow(`SELECT COALESCE(SUM(CASE WHEN protocol = 'usenet' THEN completed ELSE 0 END), 0), COALESCE(SUM(completed), 0) FROM download_stats WHERE protocol IN ('usenet', 'torrent')`).Scan(&usenet, &total)
 	if total > 0 {
 		out.UsenetShare = usenet * 100 / total
 	}

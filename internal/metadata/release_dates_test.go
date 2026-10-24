@@ -80,15 +80,15 @@ func TestReleaseDatesFor(t *testing.T) {
 }
 
 func TestReleaseDatesForMissingTypes(t *testing.T) {
-	// No US entry: an unlisted region takes the earliest date anywhere.
+	// No US entry: an unlisted region has no date, never one from another country.
 	d := releaseDatesFixture(t, `{"id": 7, "release_dates": {"results": [
 		{"iso_3166_1": "GB", "release_dates": [{"type": 3, "release_date": "2025-04-02T00:00:00.000Z"}, {"type": 5, "release_date": "2025-07-01T00:00:00.000Z"}]},
 		{"iso_3166_1": "IT", "release_dates": [{"type": 3, "release_date": "2025-04-01T00:00:00.000Z"}]}
 	]}}`)
 	got := d.ReleaseDatesFor("FR")
-	want := metadata.MovieReleaseDates{Cinema: "2025-04-01", CinemaRegion: "IT", Region: "FR"}
+	want := metadata.MovieReleaseDates{Region: "FR"}
 	if got != want {
-		t.Fatalf("got %+v, want %+v (no digital date anywhere stays empty)", got, want)
+		t.Fatalf("got %+v, want %+v (dates only in other countries stay empty)", got, want)
 	}
 
 	empty := releaseDatesFixture(t, `{"id": 7}`)
@@ -106,6 +106,42 @@ func TestRegionOfLanguage(t *testing.T) {
 	for tag, want := range map[string]string{"en-US": "US", "de-DE": "DE", "pt-BR": "BR", "es-MX": "MX", "": "US", "en": "US"} {
 		if got := metadata.RegionOfLanguage(tag); got != want {
 			t.Errorf("RegionOfLanguage(%q) = %q, want %q", tag, got, want)
+		}
+	}
+}
+
+// With no US dates and none in the person's country there is no date at all:
+// a date from some other country (here BR and IN) is never shown.
+func TestReleaseDatesForNeverUsesAnotherCountry(t *testing.T) {
+	d := releaseDatesFixture(t, `{
+		"id": 7, "title": "Far away",
+		"release_dates": {"results": [
+			{"iso_3166_1": "BR", "release_dates": [{"type": 3, "release_date": "2026-10-27T00:00:00.000Z"}]},
+			{"iso_3166_1": "IN", "release_dates": [{"type": 4, "release_date": "2019-05-21T00:00:00.000Z"}]}
+		]}
+	}`)
+	tests := []struct {
+		name   string
+		region string
+		want   metadata.MovieReleaseDates
+	}{
+		{"own country has it, no tag", "IN", metadata.MovieReleaseDates{Digital: "2019-05-21", Region: "IN"}},
+		{"neither the country nor the US has a date", "DE", metadata.MovieReleaseDates{Region: "DE"}},
+		{"the US has nothing either", "US", metadata.MovieReleaseDates{Region: "US"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := d.ReleaseDatesFor(tc.region); got != tc.want {
+				t.Fatalf("got %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestIsReleaseCountry(t *testing.T) {
+	for code, want := range map[string]bool{"IN": true, "US": true, "in": false, "": false, "ZZ": false, "USA": false} {
+		if got := metadata.IsReleaseCountry(code); got != want {
+			t.Errorf("IsReleaseCountry(%q) = %v, want %v", code, got, want)
 		}
 	}
 }

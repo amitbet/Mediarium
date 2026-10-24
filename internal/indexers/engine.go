@@ -67,6 +67,9 @@ type Instance struct {
 	// RequestsPerDay is the daily limit a person set for the indexer; 0 = none
 	// set, so what the indexer itself reported (if anything) is used.
 	RequestsPerDay int
+	// MinSeeders is the fewest seeders a torrent release from this indexer needs
+	// to be picked by itself; 0 = off. Usenet indexers ignore it.
+	MinSeeders int
 	// SecretError is set when the saved key or password of this indexer could
 	// not be read (usually a secret.key that does not belong to the database).
 	// The indexer is still listed, so it can be fixed, but it is never searched.
@@ -121,6 +124,14 @@ func ParsePriority(v any) (int, bool) {
 	return 0, false
 }
 
+// MinSeedersMax is the largest minimum a person can set.
+const MinSeedersMax = 1000
+
+// ClampMinSeeders keeps a stored minimum inside 0 to MinSeedersMax.
+func ClampMinSeeders(n int) int {
+	return min(max(n, 0), MinSeedersMax)
+}
+
 // ClampPriority returns p, or PriorityDefault when p is outside 1 to 50
 // (nothing chosen).
 func ClampPriority(p int) int {
@@ -138,8 +149,14 @@ func (inst Instance) IsCardigann() bool { return inst.Kind == KindCardigann }
 // never stalls the others.
 type Outcome struct {
 	IndexerName string
-	Results     []Result
-	Err         error
+	// IndexerID, Protocol and Elapsed say which indexer it was, whether it is a
+	// torrent or Usenet one, and how long its search took (zero when it was
+	// not asked).
+	IndexerID int64
+	Protocol  Protocol
+	Elapsed   time.Duration
+	Results   []Result
+	Err       error
 	// Skipped is set when the indexer was not asked because it is paused after
 	// repeated failures (see Tracker); PausedUntil says until when. Err is nil
 	// then: a paused indexer is not a new problem.
@@ -197,6 +214,8 @@ func SearchAll(ctx context.Context, instances []Instance, query string, categori
 		wg.Add(1)
 		go func(i int, inst Instance, limitNote string) {
 			defer wg.Done()
+			started := time.Now()
+			defer func() { outcomes[i].Elapsed = time.Since(started) }()
 			// A bug, or a site that finds one, must cost this indexer's
 			// results only, not the whole program.
 			defer func() {
@@ -207,7 +226,7 @@ func SearchAll(ctx context.Context, instances []Instance, query string, categori
 			}()
 			timeout := FeedWait(inst.BaseURL)
 			if inst.IsCardigann() {
-				timeout = cardigannTimeout
+				timeout = inst.Cardigann.SearchBudget()
 			}
 			// One search after another on an indexer, never a burst.
 			if err := inst.Tracker.Pace(ctx, inst.ID, inst.Tracker.SearchGap(inst.ID)); err != nil {
@@ -241,6 +260,9 @@ func SearchAll(ctx context.Context, instances []Instance, query string, categori
 					results[j].Protocol = ProtocolTorrent
 				}
 				results[j].Priority = inst.Priority
+				if results[j].Protocol == ProtocolTorrent {
+					results[j].MinSeeders = inst.MinSeeders
+				}
 			}
 			outcomes[i] = Outcome{IndexerName: inst.Name, Results: results, Err: err, LimitNote: limitNote}
 			// A search cut short by the caller, or waiting for the VPN, says
@@ -251,6 +273,9 @@ func SearchAll(ctx context.Context, instances []Instance, query string, categori
 		}(i, inst, limitNote)
 	}
 	wg.Wait()
+	for i, inst := range enabled {
+		outcomes[i].IndexerID, outcomes[i].Protocol = inst.ID, inst.Protocol
+	}
 	if ctx.Err() == nil {
 		for _, o := range outcomes {
 			noteSearchProblem(o)

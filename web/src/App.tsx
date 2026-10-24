@@ -99,6 +99,7 @@ const NotificationSettings = lazy(() => import('./pages/settings/NotificationSet
 const QualitySettings = lazy(() => import('./pages/settings/QualitySettings'))
 const SubtitleSettings = lazy(() => import('./pages/settings/SubtitleSettings'))
 const VPNSettings = lazy(() => import('./pages/settings/VPNSettings'))
+const ConnectApp = lazy(() => import('./pages/ConnectApp'))
 
 // Pages only an administrator can use. A member who opens one (for example
 // by typing its address) is sent somewhere they can use instead.
@@ -156,6 +157,14 @@ function Gate() {
         }
       />
       <Route path="/music-player" element={<MusicPopout />} />
+      <Route
+        path="/connect-app"
+        element={
+          <Suspense fallback={<Splash label={t('Loading')} />}>
+            <ConnectApp />
+          </Suspense>
+        }
+      />
       <Route element={<AppShell />}>
         <Route index element={<Dashboard />} />
         <Route path="/search" element={<Search />} />

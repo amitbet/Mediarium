@@ -130,7 +130,7 @@ func TestUsersOwnKeysOverrideTheBuiltInOnes(t *testing.T) {
 		return s["tmdbUsingOwnKey"].(bool), s["openSubtitlesUsingOwnKey"].(bool), s["traktUsingOwnKey"].(bool)
 	}
 	searchSubtitles := func() string {
-		getJSON[[]map[string]any](t, env.client, fmt.Sprintf("%s/api/movies/%d/subtitles?lang=en", env.baseURL, m.ID))
+		subtitleSearchResults(t, env.client, fmt.Sprintf("%s/api/movies/%d/subtitles?lang=en", env.baseURL, m.ID))
 		return subs.lastKey()
 	}
 

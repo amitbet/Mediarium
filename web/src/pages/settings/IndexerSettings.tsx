@@ -122,7 +122,7 @@ export default function IndexerSettings() {
         <legend>
           <Icon name="list" size={14} /> {t('Your indexers')} {list && <small>({list.length})</small>}
         </legend>
-        {list && list.length === 0 && <p style={{ margin: 0, color: 'var(--text-dim)' }}>{t('None yet. Pick a site from the list on the left, or paste a link.')}</p>}
+        {list && list.length === 0 && <p style={{ margin: 0, color: 'var(--text-dim)' }}>{t('None yet. Pick a site from the list above, or paste a link.')}</p>}
         {list && list.length > 1 && (
           <div className="indexer-toolbar">
             {list.length > FILTER_FROM && <input type="search" className="indexer-filter" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t('Filter by name')} aria-label={t('Filter by name')} />}

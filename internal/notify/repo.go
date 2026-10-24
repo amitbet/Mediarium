@@ -55,7 +55,7 @@ type Target struct {
 // Subscribed reports whether the target wants events of the given kind.
 func (t Target) Subscribed(kind string) bool {
 	if len(t.Events) == 0 {
-		return true
+		return !OptIn(kind)
 	}
 	for _, e := range t.Events {
 		if e == kind {

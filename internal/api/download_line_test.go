@@ -437,19 +437,19 @@ func TestPauseAllAndResumeAllKeepTheOrder(t *testing.T) {
 	e.waitAllDone(t, []int64{a, b, c})
 }
 
-func TestTheLimitIsASettingFromOneToFive(t *testing.T) {
+func TestTheLimitIsASettingFromOneTo500(t *testing.T) {
 	server, base, client := newControlServer(t, false)
 	_ = server
 	if got := getJSON[map[string]any](t, client, base+"/api/settings")["downloadsAtOnce"]; got != float64(1) {
 		t.Fatalf("the default is %v, want 1", got)
 	}
-	for _, bad := range []int{0, -1, 6, 100} {
+	for _, bad := range []int{0, -1, 501, 1000} {
 		putJSONStatus(t, client, base+"/api/settings", map[string]any{"downloadsAtOnce": bad}, http.StatusBadRequest)
 	}
 	if got := getJSON[map[string]any](t, client, base+"/api/settings")["downloadsAtOnce"]; got != float64(1) {
 		t.Fatalf("a refused value must not be saved, it is %v", got)
 	}
-	for _, good := range []int{3, 5, 1} {
+	for _, good := range []int{3, 5, 100, 500, 1} {
 		putJSONStatus(t, client, base+"/api/settings", map[string]any{"downloadsAtOnce": good}, http.StatusOK)
 		if got := getJSON[map[string]any](t, client, base+"/api/settings")["downloadsAtOnce"]; got != float64(good) {
 			t.Fatalf("saved %d, it reads back as %v", good, got)

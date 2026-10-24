@@ -4,6 +4,7 @@ Mediarium gets better because people who use it say what's missing or what broke
 
 | Who | Where | What came of it |
 |---|---|---|
+| [u/troelsdk](https://www.reddit.com/user/troelsdk) | Reddit | Finding that the Sonarr-compatible episode list ignored the season asked for |
 | [u/Embyverse](https://www.reddit.com/user/Embyverse) | Reddit | Custom formats with TRaSH Guides import; keeping two qualities of one title (second copies) |
 | [u/12_nick_12](https://www.reddit.com/user/12_nick_12) | Reddit | Never download season packs; a webhook for media servers without their own support; the Radarr, Sonarr and Lidarr-compatible API |
 | [u/paulojf](https://www.reddit.com/user/paulojf) | Reddit | Real-Debrid and TorBox |

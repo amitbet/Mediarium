@@ -67,6 +67,10 @@ type CustomFormat struct {
 	App     FormatApp    `json:"app"`
 	TrashID string       `json:"trashId,omitempty"`
 	Specs   []FormatSpec `json:"specifications"`
+	// TrashScore is the score the TRaSH Guides gave the format when it was last
+	// read from them; nil for a format that was pasted or made by hand, which
+	// is never updated from the guides.
+	TrashScore *int `json:"-"`
 
 	compiled map[int]*regexp2.Regexp // by spec index, filled by Compile
 	problems []string

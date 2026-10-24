@@ -59,11 +59,11 @@ var languageSplit = regexp.MustCompile(`[\s._\-\[\]()+,{}]+`)
 // detectLanguages reads the language tags out of the part of a release name
 // that follows the title. It returns the audio languages named (each once, in
 // the order they appear), whether the release says it holds several audio
-// languages (MULTI, DUAL, or "DL" after a language, as in German releases),
+// languages (MULTI, DUAL, or "DL" next to a language, as in German releases),
 // and whether it is subtitled.
 func detectLanguages(tail string) (langs []string, multi, subbed bool) {
 	seen := map[string]bool{}
-	prevWasLanguage := false
+	dual, prev := false, ""
 	for _, raw := range languageSplit.Split(tail, -1) {
 		if raw == "" {
 			continue
@@ -72,23 +72,26 @@ func detectLanguages(tail string) (langs []string, multi, subbed bool) {
 		switch {
 		case subbedTags[tag]:
 			subbed = true
-			prevWasLanguage = false
 		case multiTags[tag]:
 			multi = true
-			prevWasLanguage = false
-		case tag == "DL" && prevWasLanguage:
-			multi = true
-			prevWasLanguage = false
+		case tag == "DL":
+			// WEB-DL is a source, not "dual language".
+			if prev != "WEB" && prev != "WEBDL" {
+				dual = true
+			}
 		case languageTags[tag] != "":
 			name := languageTags[tag]
 			if !seen[name] {
 				seen[name] = true
 				langs = append(langs, name)
 			}
-			prevWasLanguage = true
-		default:
-			prevWasLanguage = false
 		}
+		prev = tag
+	}
+	// "DL" is dual language: the named language plus the original one, wherever
+	// it sits in the name (German.DL.AC3, German.BDRip.DL, DL.German).
+	if dual && len(langs) > 0 {
+		multi = true
 	}
 	return langs, multi, subbed
 }

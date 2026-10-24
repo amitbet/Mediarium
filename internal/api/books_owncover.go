@@ -58,7 +58,7 @@ func coverProblemOf(err error) *coverProblem {
 	case errors.Is(err, books.ErrCoverTooBig):
 		return &coverProblem{http.StatusRequestEntityTooLarge, fmt.Sprintf("That picture is bigger than %d MB. Use a smaller one.", books.MaxOwnCoverBytes>>20)}
 	case errors.Is(err, books.ErrCoverFormat):
-		return &coverProblem{http.StatusUnsupportedMediaType, "That isn't a JPEG or PNG picture. Save it as one of those and try again."}
+		return &coverProblem{http.StatusUnsupportedMediaType, "That isn't a JPEG, PNG or WebP picture. Save it as one of those and try again."}
 	case errors.Is(err, books.ErrCoverUnreadable):
 		return &coverProblem{http.StatusUnprocessableEntity, "That picture couldn't be read. It may be damaged, so try another one."}
 	}

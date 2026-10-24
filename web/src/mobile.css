@@ -171,6 +171,9 @@
   .title-hero .title-info > * { grid-column: 1 / -1; }
   .title-hero .title-info > .title-kicker { grid-column: 2; grid-row: 1; align-self: end; }
   .title-hero .title-kicker > * { white-space: nowrap; max-width: 100%; }
+  .title-hero .title-kicker > .state-tag[class*='st-mon-'] { white-space: normal; border-radius: 14px; }
+  .chip-row.state-chips > .lib-total { display: none; }
+  .lib-total-line { display: flex; margin: 0 0 8px; }
   .title-hero .title-info > h1 { grid-column: 2; grid-row: 2; align-self: start; font-size: clamp(1.5rem, 7.4vw, 2rem); line-height: 1; text-wrap: balance; }
   .title-hero > .title-side, .title-hero > .title-sleeve, .title-hero > .release-sleeve, .title-hero > .title-poster { grid-column: 1; grid-row: 1 / span 2; }
 }
@@ -230,7 +233,8 @@
   .sidebar { width: min(340px, 62vw); }
 }
 @media (min-width: 640px) and (max-width: 1180px) and (hover: none) and (pointer: coarse) {
-  .btn-sm, .seg > button, .prog-views button, .prog-today { min-height: 40px; }
+  .btn-sm, .seg > button, .prog-views button { min-height: 40px; }
+  .prog-today { min-height: 44px; }
   .content select, .content input:not([type='checkbox']):not([type='radio']):not([type='range']) { min-height: 42px; }
   .sidebar a { padding-top: 10px; padding-bottom: 10px; }
 }
@@ -252,9 +256,9 @@
 }
 
 /* More fingers: the calendar's month arrows and the "Browse more" links in the
-   Discover rows are 40px to tap. The link keeps its look and its place: the
+   Discover rows are 44px to tap. The link keeps its look and its place: the
    extra height is padding that a negative margin takes back. */
 @media (max-width: 700px) {
-  .prog-round { width: 40px; height: 40px; }
+  .prog-round { width: 44px; height: 44px; }
   .rail-head .rail-more { padding-block: 10px; margin-block: -6px; }
 }

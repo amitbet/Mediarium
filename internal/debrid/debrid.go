@@ -1,4 +1,4 @@
-// Package debrid sends torrents to a debrid service (Real-Debrid, TorBox) and
+// Package debrid sends torrents to a debrid service (Real-Debrid, TorBox, Premiumize) and
 // brings the finished files home over HTTPS. The service downloads the
 // torrent on its own servers; Mediarium then downloads plain files from it
 // into the downloads folder, where the usual unpacking and import take over.
@@ -28,6 +28,7 @@ import (
 const (
 	RealDebrid = "realdebrid"
 	TorBox     = "torbox"
+	Premiumize = "premiumize"
 )
 
 // Label is a service's name as people know it.
@@ -37,6 +38,8 @@ func Label(service string) string {
 		return "Real-Debrid"
 	case TorBox:
 		return "TorBox"
+	case Premiumize:
+		return "Premiumize"
 	}
 	return service
 }
@@ -46,6 +49,9 @@ type Account struct {
 	Name    string    `json:"name"`
 	Premium bool      `json:"premium"`
 	Expires time.Time `json:"expires,omitzero"`
+	// FairUse is how much of the monthly fair-use limit is used (0..1), for the
+	// services that say (Premiumize).
+	FairUse float64 `json:"fairUse,omitempty"`
 }
 
 // State is where a torrent is on the service.
@@ -103,7 +109,8 @@ type Service interface {
 // CacheChecker is a service that can say which torrents it already has, so a
 // release that is ready at once can be told from one that has to be downloaded
 // first. Not every service can: Real-Debrid switched its availability check
-// off in late 2024 and has no replacement, so only TorBox implements this.
+// off in late 2024 and has no replacement, so TorBox and Premiumize implement
+// this and Real-Debrid does not.
 type CacheChecker interface {
 	// Cached answers for each info hash (40 hex characters, any case) whether
 	// the service has the torrent. The map is keyed by the lower-case hash and
@@ -127,6 +134,8 @@ func New(service, apiKey string, hc *http.Client) (Service, error) {
 		return &realDebrid{key: apiKey, http: hc, base: RealDebridURL}, nil
 	case TorBox:
 		return &torBox{key: apiKey, http: hc, base: TorBoxURL}, nil
+	case Premiumize:
+		return &premiumize{key: apiKey, http: hc, base: PremiumizeURL, listFor: premiumizeListFor}, nil
 	}
 	return nil, fmt.Errorf("unknown debrid service %q", service)
 }
@@ -138,6 +147,8 @@ func WithBaseURL(s Service, base string) Service {
 		v.base = base
 	case *torBox:
 		v.base = base
+	case *premiumize:
+		v.base, v.listFor = base, 0
 	}
 	return s
 }

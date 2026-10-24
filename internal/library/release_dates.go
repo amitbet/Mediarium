@@ -104,3 +104,12 @@ func (r *Repo) SaveMovieReleaseDates(tmdbID int, region, cinema, digital string,
 	}
 	return nil
 }
+
+// ClearMovieReleaseDates forgets every saved date, so the calendar reads them
+// again (for another country, after the setting changed).
+func (r *Repo) ClearMovieReleaseDates() error {
+	if _, err := r.db.Exec(`DELETE FROM movie_release_dates`); err != nil {
+		return fmt.Errorf("clear movie release dates: %w", err)
+	}
+	return nil
+}

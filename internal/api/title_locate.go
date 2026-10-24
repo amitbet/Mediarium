@@ -562,3 +562,58 @@ func isRoot(roots []string, path string) bool {
 	}
 	return false
 }
+
+// handleLocateEpisodeFile points one episode at a video file a person picked
+// in the library folders (in the show's own folder or elsewhere). Like a
+// movie's file it is not moved, renamed or copied: the episode only learns
+// where its file is, and is marked downloaded.
+func (s *Server) handleLocateEpisodeFile(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "That isn't a valid episode ID.")
+		return
+	}
+	var req locateRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "Couldn't read that request. Reload the page and try again.")
+		return
+	}
+	ep, err := s.MovieRepo.GetEpisodeByID(id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "That episode isn't in your library.")
+		return
+	}
+	sr, err := s.MovieRepo.GetSeries(ep.SeriesID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "That show isn't in your library.")
+		return
+	}
+	if ep.Status == library.StatusDownloading {
+		writeError(w, http.StatusConflict, "This episode is being downloaded right now. Wait for the download to finish, or cancel it, and try again.")
+		return
+	}
+	file, problem := s.checkLocateFile(0, req.Path)
+	if problem != nil && !(problem.status == http.StatusConflict && sameFile(req.Path, ep.FilePath)) {
+		writeError(w, problem.status, problem.msg)
+		return
+	}
+	if problem != nil {
+		writeError(w, http.StatusConflict, "That file is already this episode's file.")
+		return
+	}
+	tierName := string(libimport.TierFromPath(file))
+	if tierName == string(quality.TierUnknown) {
+		tierName = ""
+	}
+	if err := s.MovieRepo.SetEpisodeStatus(ep.ID, library.StatusDownloaded, tierName, file); err != nil {
+		slog.Warn("locate: couldn't save an episode's file", "series", sr.Title, "err", err)
+		writeError(w, http.StatusInternalServerError, "Couldn't save the file to the library. Check the Mediarium log for details.")
+		return
+	}
+	s.afterEpisodeImported(ep.ID, filepath.Base(file))
+	s.forgetHeldEpisode(ep.SeriesID, ep.Season, ep.Episode)
+	slog.Info("locate: an episode was pointed at a file", "series", sr.Title, "season", ep.Season, "episode", ep.Episode, "file", filepath.Base(file))
+	_ = s.QueueRepo.LogSeriesActivity(sr.ID, "imported", fmt.Sprintf("%s S%02dE%02d: the file was set to %s by hand.", seriesLabel(sr), ep.Season, ep.Episode, filepath.Base(file)))
+	s.episodesImported(file)
+	writeJSON(w, http.StatusOK, rescanReport{Added: filepath.Base(file)})
+}

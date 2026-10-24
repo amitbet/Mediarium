@@ -16,9 +16,10 @@ import (
 // musicState is the music module's in-memory state.
 type musicState struct {
 	mu         sync.Mutex
-	huntOffset int        // where the next scheduled album search starts (see huntMusic)
-	covers     coverLocks // one cover download per album at a time (music_cover.go)
-	scans      musicScans // existing-library scans (music_import.go)
+	huntOffset int         // where the next scheduled album search starts (see huntMusic)
+	covers     coverLocks  // one cover download per album at a time (music_cover.go)
+	scans      musicScans  // existing-library scans (music_import.go)
+	checks     groupChecks // bootleg look-ups waiting to run (music_filters.go)
 
 	lbMu sync.Mutex
 	lb   *listenbrainz.Client // Discover lists (music_discover.go); created on first use

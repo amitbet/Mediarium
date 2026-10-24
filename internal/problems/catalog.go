@@ -93,6 +93,7 @@ const (
 	CodeMediaServerRefresh   = "mediaserver.refresh_failed"
 	CodeImportMoveFailed     = "import.move_failed"
 	CodeImportNoVideo        = "import.no_video"
+	CodeImportIncomplete     = "import.incomplete_file"
 	CodeImportFileExists     = "import.file_exists"
 	CodeImportFailed         = "import.failed"
 	CodeDiskFull             = "disk.full"
@@ -262,6 +263,11 @@ var catalog = []Help{
 		"The download had no movie or episode file inside.",
 		"Nothing to fix. Mediarium tries another release.",
 		"", ""},
+	{CodeImportIncomplete, LevelError, AreaImport,
+		"A download was too short to be real",
+		"The video in the download is much shorter than the episode or movie should be, so it is a fake, a sample or a cut-off file.",
+		"Nothing to fix. Mediarium blocklists the release and tries another one. To turn this check off, go to Settings > Library > File names and importing.",
+		"Open File names and importing", pathNaming},
 	{CodeImportFileExists, LevelError, AreaImport,
 		"A file is already there",
 		"A file is already in the place this one should go.",

@@ -572,7 +572,7 @@ func (s *Server) acceptFile(data []byte, fileName, typedName string) (manualSour
 			return manualSource{}, http.StatusConflict, errTorrentsDisabled
 		}
 	default:
-		if servers, err := s.ClientRepo.List(); err == nil && len(servers) == 0 {
+		if servers, err := s.ClientRepo.List(); err == nil && len(servers) == 0 && !s.usenetClientOn() {
 			return manualSource{}, http.StatusPreconditionFailed, errors.New("Add your Usenet provider first (Settings > Downloading > Usenet).")
 		}
 	}

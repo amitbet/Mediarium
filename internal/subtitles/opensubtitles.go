@@ -276,7 +276,11 @@ type Query struct {
 // id of every title, so when that finds nothing the IMDb id and then the
 // title are tried, and the first lookup that finds something wins.
 func (c *Client) Find(ctx context.Context, q Query) ([]Result, error) {
-	var lookups []url.Values
+	type lookup struct {
+		kind, value string
+		v           url.Values
+	}
+	var lookups []lookup
 	ids := url.Values{}
 	if q.TMDBID != 0 {
 		ids.Set("tmdb_id", strconv.Itoa(q.TMDBID))
@@ -285,7 +289,11 @@ func (c *Client) Find(ctx context.Context, q Query) ([]Result, error) {
 		ids.Set("parent_tmdb_id", strconv.Itoa(q.ParentTMDBID))
 	}
 	if len(ids) > 0 {
-		lookups = append(lookups, ids)
+		id := q.TMDBID
+		if id == 0 {
+			id = q.ParentTMDBID
+		}
+		lookups = append(lookups, lookup{"tmdb", strconv.Itoa(id), ids})
 	}
 	if q.IMDBID != "" {
 		v := url.Values{}
@@ -294,25 +302,32 @@ func (c *Client) Find(ctx context.Context, q Query) ([]Result, error) {
 		} else {
 			v.Set("imdb_id", q.IMDBID)
 		}
-		lookups = append(lookups, v)
+		lookups = append(lookups, lookup{"imdb", q.IMDBID, v})
 	}
 	switch {
 	case q.Text != "":
-		lookups = append(lookups, url.Values{"query": {q.Text}})
+		lookups = append(lookups, lookup{"title", q.Text, url.Values{"query": {q.Text}}})
 	case q.Title != "":
 		v := url.Values{"query": {q.Title}}
+		value := q.Title
 		if q.Year > 0 && q.ParentTMDBID == 0 {
 			v.Set("year", strconv.Itoa(q.Year))
+			value += " (" + strconv.Itoa(q.Year) + ")"
 		}
-		lookups = append(lookups, v)
+		lookups = append(lookups, lookup{"title", value, v})
 	}
 	if len(lookups) == 0 {
 		return nil, nil
 	}
 	var out []Result
-	for _, v := range lookups {
-		c.applyFilters(v, q)
-		res, err := c.searchPages(ctx, v)
+	for _, l := range lookups {
+		c.applyFilters(l.v, q)
+		res, err := c.searchPages(ctx, l.v)
+		line := Diagnostic{Source: "OpenSubtitles", Lookup: l.kind, Value: l.value, Count: len(res), Found: len(res)}
+		if err != nil {
+			line.Note, line.Detail = "error", err.Error()
+		}
+		Report(ctx, line)
 		if err != nil {
 			return nil, err
 		}

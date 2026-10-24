@@ -431,13 +431,11 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 	// Coming up.
 	out.Upcoming = []calendarEntryPayload{}
-	today := time.Now().UTC().Format("2006-01-02")
-	if entries, err := s.calendarEntriesSince(today); err == nil {
-		for _, e := range entries {
-			if len(out.Upcoming) < 6 {
-				out.Upcoming = append(out.Upcoming, e)
-			}
-		}
+	// One day back as well: an episode dated yesterday can air today, on
+	// the viewer's clock, once its exact time is known.
+	now := time.Now().UTC()
+	if entries, err := s.calendarEntriesSince(now.AddDate(0, 0, -1).Format("2006-01-02")); err == nil {
+		out.Upcoming = upcomingEntries(entries, now, 6)
 	}
 
 	// Members see the library, downloads and what is coming up, but not setup
@@ -465,6 +463,9 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	if servers, err := s.ClientRepo.List(); err == nil {
 		out.Setup.Servers = len(servers)
+	}
+	if s.usenetClientOn() {
+		out.Setup.Servers = max(out.Setup.Servers, 1) // the downloader stands in for a provider
 	}
 	out.Setup.VPN = s.VPNManager.Status().Connected
 	out.Setup.Torrents = torrentSource && s.torrentReleasesOn()

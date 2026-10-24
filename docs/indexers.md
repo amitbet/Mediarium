@@ -22,6 +22,11 @@ The list on this page is sorted by that number, lowest first, and by name when t
 
 Under the address, each card says how its last test went ("Last test passed 2 hours ago", or why it failed). **Test all** above the list tests every enabled indexer, one after another, and says which did not answer.
 
+### Why some indexers are missing from a release list
+
+A release list (**Choose a release**) starts with a line like *Searched 8 indexers: 2 had releases, 5 had nothing for this title, 1 did not answer.* Press it to see every indexer in a table: its type, what it found (*12 releases*, *Nothing found*, *Did not answer: daily limit used up*, *Skipped: does not list this kind of release*) and how long it took. Seeing only a few indexers in the **Any indexer** list is normal when the others simply have nothing for that title. A movie site has no shows, and a Usenet indexer may not carry a new or small release. An indexer that did not answer is marked with a warning sign, and the table says why.
+
+
 ## When an indexer keeps failing
 
 An indexer that is down, blocks you or limits your requests would otherwise slow every search and fill the Health page with the same error. After **3 failures in a row** (a site that cannot be reached, an HTTP 5xx error, a Cloudflare page, a refused key) Mediarium leaves it out of searches for a while: 5 minutes first, then 10, 20, 40 and so on, up to 6 hours. An indexer that says you made too many requests is paused at once, for as long as it asks with its `Retry-After` header (and at least 5 minutes, at most 6 hours).
@@ -41,6 +46,17 @@ An indexer whose saved key or password can't be read (usually because the `secre
 When the error on an indexer card (the pause reason, the last test or a test you just ran) is one that a newer version already fixed, and you run an older one, a line under it says "This is fixed in 3.2.1. Update Mediarium and press Try again." The list of known errors is in `web/src/knownFixes.ts`.
 
 Scripts: `POST /api/indexers/{id}/resume` is **Try again now**; `GET /api/indexers` adds `failures`, `pausedUntil`, `pausedNote` and `pausedWhy` to a paused indexer.
+
+## Minimum seeders
+
+A torrent with few or no seeders can sit in the download client for days. Each torrent indexer card has a **Minimum seeders** box next to the priority. Put in a number such as 5 and Mediarium skips the releases from that indexer that have fewer seeders than that. 0 means off, which is how every indexer starts, and 1000 is the highest you can set. Each indexer has its own number, so a private tracker can be left at 0 while a public one asks for 5. The box saves when you leave it or press Enter.
+
+- **What it covers.** Everything Mediarium grabs by itself: the scheduled searches for movies, shows, albums and books, the regular check for new releases, upgrades and replacing a file with a smaller one, and the hunt for season packs. A skipped release is counted in the note of the search ("3 with fewer seeders than the indexer's minimum") that shows on the item's activity.
+- **What it does not skip.** A release whose indexer did not say how many seeders it has, a release your debrid service already has cached (see [Downloads](./downloads.md)), Usenet releases, and releases announced over IRC, which come without a seeder count.
+- **Searching by hand.** The list still shows every release. One that is under the minimum gets a **Below minimum seeders** label, its seeders are dimmed, and it is never marked as the best match. You can still grab it yourself.
+- **From Prowlarr.** When you import from Prowlarr, a minimum seeders number set on a torrent indexer there comes along.
+
+Scripts: `GET /api/indexers` has `minSeeders`; `PUT /api/indexers/{id}` takes `minSeeders` (a whole number from 0 to 1000) and a search result has `belowMinSeeders` and `minSeeders` when it is under the minimum. In a settings file an indexer can have `minSeeders: 5`.
 
 ## Daily limits
 
@@ -92,8 +108,9 @@ On the **Torrent** tab of Settings > Indexers & Search, **Pick a site from the l
 - **Built in: Knaben.** Knaben (knaben.org) is a public torrent search engine that collects results from many sites. It isn't in the community list (Prowlarr runs it from its own code), so Mediarium brings its own definition. It shows in the list as **Knaben**, needs no login, and searches through Knaben's public search service. Results come most-seeded first (up to 100 per search) with Knaben's own filters for risky and adult results switched on, and they come as magnet links. Knaben's categories are matched to movies, TV, anime, music, audiobooks, books, games and software; a result in a category Mediarium doesn't know is kept without one. Like every site on the list it follows your VPN setting and the waits between requests.
 - **Public sites** usually need nothing: pick one and save. Some let you choose sorting or filters.
 - **Private sites** need your account. Depending on the site, the form asks for a username and password (Mediarium signs in for you and signs in again when the site logs it out), an API key or passkey, or the **cookie** from your browser (for sites whose login has a CAPTCHA). To copy a cookie: sign in to the site in your browser, open the developer tools (F12), reload a page of the site, open the request in the Network tab and copy the whole `Cookie` request header. Some sites also want your browser's User-Agent; when a site has a **User-Agent** field, Mediarium sends what you type there with every request to that site. When the site signs you out, copy a fresh cookie.
-- Passwords, cookies, API keys and passkeys are stored encrypted and never sent back to the browser. **Edit** on a site added from the list only renames it. To change its login or cookie, remove the site and add it again.
+- Passwords, cookies, API keys and passkeys are stored encrypted and never sent back to the browser. **Edit** on a site added from the list renames it and sets its requests per day (and, for a site on your own network, its address: see the next point). To change its login or cookie, remove the site and add it again.
 - **Addresses**: sites often have several mirrors. The form lets you choose one of the addresses in the definition, and the first is used unless you pick another.
+- **Sites that run on your own network** (BitMagnet, for example) list an address such as `http://127.0.0.1:3333` in their definition, which is only an example: the real server is wherever you run it. When every address in a definition is local (localhost, a name without a dot, or a private address such as `192.168.x.x`, `10.x.x.x` or `172.16.x.x` to `172.31.x.x`), the form shows an **Address** field, filled in with the first one. Type the address of your own server, for example `http://192.168.1.10:3333`, and change it later with **Edit**. It has to be an `http` or `https` address with a server name, up to 200 characters, with no user name or password in it and nothing after a `?` or `#`; the port is optional. Inside Docker, `127.0.0.1` is the Mediarium container itself, so a server on another machine (or on the Docker host) needs that machine's address. If **Test** gets *connection refused* on a `127.0.0.1` address, it says so. Sites on the public internet keep to the addresses in their definition.
 - **Test** signs in (if needed), runs a search and reports how many releases came back. If a test fails, the dashboard shows it until a later test passes.
 - Mediarium waits between requests to the same site (at least one second, longer if the definition asks, up to ten seconds) and keeps each site's sign-in between searches, so it doesn't hammer sites.
 
@@ -198,4 +215,4 @@ The compose file in this repository has an optional `flaresolverr` service. Star
 docker compose --profile cloudflare up -d
 ```
 
-Then enter `http://flaresolverr:8191` under Settings > Indexers & Search. The first request to a protected site can take up to a minute while FlareSolverr passes the check. Later requests reuse its cookies and are fast.
+Then enter `http://flaresolverr:8191` under Settings > Indexers & Search. The first request to a protected site can take up to a minute while FlareSolverr passes the check. Later requests reuse its cookies and are fast. The Test button on a site waits up to 100 seconds when FlareSolverr is set up, and shows "Solving the Cloudflare check" while it waits. If it still runs out, the message says how long it waited: check that FlareSolverr is running and has internet access, then try again.

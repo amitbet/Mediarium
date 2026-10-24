@@ -27,6 +27,7 @@ func (s *Server) unmonitorFinished() bool { return s.settingOn(settings.KeyUnmon
 // when that switch is on, stops monitoring the movie.
 func (s *Server) afterMovieImported(movieID int64, release string) {
 	s.forgetHeldMovie(movieID) // downloaded: nothing is waiting for it any more
+	s.kickMediaInfo()          // read what the new file holds
 	if err := s.MovieRepo.SetReleaseTitle(movieID, release); err != nil {
 		log.Printf("library: %v", err)
 	}
@@ -46,6 +47,7 @@ func (s *Server) afterMovieImported(movieID int64, release string) {
 
 // afterEpisodeImported records the release an episode's new file came from.
 func (s *Server) afterEpisodeImported(episodeID int64, release string) {
+	s.kickMediaInfo()
 	if err := s.MovieRepo.SetEpisodeReleaseTitle(episodeID, release); err != nil {
 		log.Printf("library: %v", err)
 	}

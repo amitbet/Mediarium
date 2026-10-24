@@ -14,11 +14,13 @@ import { useConfirm } from '../components/ConfirmProvider'
 import AddDownloadDialog from '../components/AddDownloadDialog'
 import BuiltInClients from '../components/BuiltInClients'
 import TorrentControls from '../components/TorrentControls'
-import DownloadClients from '../components/DownloadClients'
+import DownloadClients, { UsenetClients } from '../components/DownloadClients'
 import RecycleBin from '../components/RecycleBin'
 import RequestsList from '../components/RequestsList'
 import IssuesList from '../components/IssuesList'
 import { failureHelp } from '../failureHelp'
+import RootMarkerFix from '../components/RootMarkerFix'
+import { lostMarkerFolder } from '../rootMarker'
 import { useModules } from '../ModulesContext'
 import { bulkState, groupQueue, RUNNING, stateNote, statusLabel, stillWaiting, unpackLine } from '../queueView'
 import { useLive } from '../useLive'
@@ -40,6 +42,7 @@ const EVENT: Record<string, { icon: IconName; tone: string; group: string }> = {
   conflict: { icon: 'warning', tone: 'warning', group: 'Problems' },
   subtitle: { icon: 'chat', tone: 'info', group: 'Subtitles' },
   added: { icon: 'plus', tone: 'success', group: 'Library' },
+  library: { icon: 'check', tone: 'info', group: 'Library' },
   removed: { icon: 'trash', tone: 'muted', group: 'Library' },
 }
 
@@ -132,6 +135,9 @@ function groupWanted(wanted: WantedRow[]): Waiting[] {
 // How many waiting titles Activity reads: enough for the 20 it lists, with
 // room for the ones that are downloading already and so are left out.
 const WAITING_READ = 60
+
+// The most downloads one bulk action may name (bulkQueueMax on the server).
+const BULK_QUEUE_MAX = 200
 
 const itemLink = (q: QueueItem) => (q.bookId ? `/book/${q.bookId}` : q.albumId ? `/music/album/${q.albumId}` : q.seriesId ? `/series/${q.seriesId}` : q.tmdbId ? `/title/${q.tmdbId}` : undefined)
 
@@ -272,7 +278,8 @@ function QueueDetails({ q, admin }: { q: QueueItem; admin: boolean }) {
         <ol className="qsteps">
           {[...events].reverse().map((e, i) => (
             <li key={i} className={e.level !== 'info' ? e.level : undefined}>
-              <time>{new Date(e.at).toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit' })}</time> {e.message}
+              <time>{new Date(e.at).toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit' })}</time>
+              <span>{e.message}</span>
             </li>
           ))}
         </ol>
@@ -349,6 +356,7 @@ function QueueRow({ q, admin, busy, act, stop, remove, picked, onPick }: RowProp
         {note && <div className="qnote">{note}</div>}
         {q.note && <div className="qnote">{st(q.note)}</div>}
         {q.error && (q.status === 'completed' ? <div className="qnote">{st(q.error)}</div> : <div className="error-text qerror">{st(q.error)}</div>)}
+        {q.status === 'failed' && admin && lostMarkerFolder(q.error) && <RootMarkerFix path={lostMarkerFolder(q.error)!} />}
         {q.status === 'failed' && <FailureTips q={q} link={link} />}
         {q.status === 'conflict' && q.destPath && <div className="qrelease">{t('A file already exists at {path}', { path: q.destPath })}</div>}
         <QueueDetails q={q} admin={admin} />
@@ -702,9 +710,13 @@ export default function Queue() {
       return next
     })
   }, [])
-  async function pickedDo(action: 'pause' | 'resume' | 'stop' | 'front' | 'remove') {
+  async function pickedDo(action: 'pause' | 'resume' | 'stop' | 'retry' | 'front' | 'remove') {
     // In the order they are shown, so "to the front" keeps the line's own order.
-    const ids = pickable.filter((q) => livePicked.has(q.id)).map((q) => q.id)
+    // Retry only goes to the failed and stopped ones, so "Pick all" then Retry
+    // leaves what is running alone instead of reporting it as refused.
+    const ids = pickable
+      .filter((q) => livePicked.has(q.id) && (action !== 'retry' || q.status === 'failed' || q.status === 'stopped'))
+      .map((q) => q.id)
     if (ids.length === 0 || pickBusy) return
     let deleteFiles = false
     if (action === 'stop' || action === 'remove') {
@@ -722,10 +734,22 @@ export default function Queue() {
     }
     setPickBusy(true)
     try {
-      const r = await api.bulkQueue(ids, action, deleteFiles)
-      const failed = r.failed ?? []
-      if (failed.length > 0) toast.error(`${t('{done} done.', { done: r.done ?? 0 })} ${t('{n} could not be changed: {why}', { n: failed.length, why: failed[0].error })}`)
-      else toast.success(plural(r.done ?? ids.length, '{n} download changed.', '{n} downloads changed.'))
+      // The server takes at most BULK_QUEUE_MAX at a time (bulkQueueMax in
+      // internal/api/queue_control.go), so a bigger pick goes in batches. For
+      // "to the front" the last batch goes first: each batch lands in front of
+      // the one before, which keeps the order of the whole pick.
+      const batches: number[][] = []
+      for (let i = 0; i < ids.length; i += BULK_QUEUE_MAX) batches.push(ids.slice(i, i + BULK_QUEUE_MAX))
+      if (action === 'front') batches.reverse()
+      let done = 0
+      const failed: { id: number; error: string }[] = []
+      for (const batch of batches) {
+        const r = await api.bulkQueue(batch, action, deleteFiles)
+        done += r.done ?? 0
+        failed.push(...(r.failed ?? []))
+      }
+      if (failed.length > 0) toast.error(`${t('{done} done.', { done })} ${t('{n} could not be changed: {why}', { n: failed.length, why: failed[0].error })}`)
+      else toast.success(plural(done, '{n} download changed.', '{n} downloads changed.'))
       setPicked(new Set())
       await load()
     } catch (e) {
@@ -879,6 +903,9 @@ export default function Queue() {
               </button>
               <button className="btn-sm btn-with-icon" disabled={pickBusy} onClick={() => void pickedDo('stop')}>
                 <Icon name="stop" size={14} /> {t('Stop')}
+              </button>
+              <button className="btn-sm btn-with-icon" disabled={pickBusy} onClick={() => void pickedDo('retry')}>
+                <Icon name="refresh" size={14} /> {t('Retry')}
               </button>
               <button className="btn-sm btn-with-icon danger-ghost" disabled={pickBusy} onClick={() => void pickedDo('remove')}>
                 <Icon name="trash" size={14} /> {t('Remove')}
@@ -1044,7 +1071,7 @@ export default function Queue() {
         <>
           {!loaded && <Loading height={96} onRetry={() => void load()} />}
           {loaded && (
-            <BuiltInClients items={queue} renderRows={rows} onChanged={load}>
+            <BuiltInClients items={queue} renderRows={rows} onChanged={load} usenetChildren={<UsenetClients />}>
               <DownloadClients />
             </BuiltInClients>
           )}
@@ -1141,3 +1168,4 @@ export default function Queue() {
     </div>
   )
 }
+

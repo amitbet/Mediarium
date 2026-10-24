@@ -145,14 +145,24 @@ func TestSeedRules(t *testing.T) {
 	if r != 1.5 || h != 48 {
 		t.Fatalf("goal = %v, %v; want ratio 1.5 from the rule and 48 hours from the global limit", r, h)
 	}
-	// Zero means no limit, not "follow".
-	zero := 0.0
+	// Zero means do not seed, not "follow"; -1 is no limit even under a global one.
+	zero, none := 0.0, torrentopts.Unlimited
 	r, h = torrentopts.SeedRule{Hours: &zero}.Goal(2, 48)
 	if r != 2 || h != 0 {
 		t.Fatalf("goal = %v, %v", r, h)
 	}
+	r, h = torrentopts.SeedRule{Hours: &none}.Goal(2, 48)
+	if r != 2 || h != torrentopts.Unlimited {
+		t.Fatalf("goal = %v, %v", r, h)
+	}
+	if err := repo.SetSeedRule(inst.ID, torrentopts.SeedRule{Ratio: &zero, Hours: &none}); err != nil {
+		t.Fatalf("0 and -1 are rules: %v", err)
+	}
+	if rule, _ := repo.SeedRule(inst.ID); rule.Ratio == nil || *rule.Ratio != 0 || rule.Hours == nil || *rule.Hours != torrentopts.Unlimited {
+		t.Fatalf("rule read back = %+v", rule)
+	}
 
-	bad := -1.0
+	bad := -2.0
 	if err := repo.SetSeedRule(inst.ID, torrentopts.SeedRule{Ratio: &bad}); err == nil {
 		t.Fatal("a negative ratio must be refused")
 	}

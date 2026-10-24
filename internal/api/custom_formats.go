@@ -93,6 +93,8 @@ type formatImportResult struct {
 	Formats []customFormatPayload `json:"formats"`
 	// Missing lists TRaSH ids that weren't found (the guides changed).
 	Missing []string `json:"missing,omitempty"`
+	// Profile says what happened to the scores in the chosen quality profile.
+	Profile *profileScoreChange `json:"profile,omitempty"`
 }
 
 func (s *Server) saveFormat(f quality.CustomFormat, res *formatImportResult) (quality.CustomFormat, error) {

@@ -30,6 +30,9 @@ type healthItem struct {
 	Title  string        `json:"title"`
 	Impact string        `json:"impact"`
 	Action *healthAction `json:"action,omitempty"`
+	// Dismiss is the label of a button that hides the item for good (the
+	// dashboard sends the matching setting), for a notice that doesn't apply.
+	Dismiss string `json:"dismiss,omitempty"`
 }
 
 var healthRank = map[string]int{"error": 0, "warn": 1, "info": 2}
@@ -135,7 +138,7 @@ func (s *Server) collectHealth() []healthItem {
 	}
 
 	servers, _ := s.ClientRepo.ListAll() // a server with an unreadable password is named on its own Health item
-	if usenetIndexers > 0 && len(servers) == 0 {
+	if usenetIndexers > 0 && len(servers) == 0 && !s.usenetClientOn() {
 		addHealth("no-usenet-server", "warn", "No Usenet provider added",
 			"Your Usenet indexer finds releases but there's nowhere to download them from. Add your provider's news server.",
 			"Add your provider", "/settings/usenet")
@@ -174,10 +177,13 @@ func (s *Server) collectHealth() []healthItem {
 		addHealth("vpn-required", "error", "Torrents are blocked until a VPN is connected",
 			"The VPN kill switch is on, so torrents wait for a VPN. Usenet isn't affected.",
 			"Open VPN settings", "/settings/vpn")
-	case torrentIndexers > 0 && !vpnConnected:
+	case torrentIndexers > 0 && !vpnConnected && s.torrentsEnabled() && !s.vpnNoticeAcknowledged():
+		// Without the built-in client, torrents run in another program (or a
+		// debrid service) and this notice is not Mediarium's to give.
 		addHealth("no-vpn", "warn", "Torrenting without a VPN",
 			"Other peers can see your home IP address and your internet provider can see you're torrenting. A VPN hides both. Nothing is blocked.",
 			"Set up a VPN", "/settings/vpn")
+		items[len(items)-1].Dismiss = "My download client is already behind a VPN"
 	}
 
 	if !organizer.NewExtractor().Available() {

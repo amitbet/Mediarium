@@ -582,6 +582,9 @@ func (im *Importer) planIndexer(ctx context.Context, x prowlarrIndexer, d *prowl
 		}
 		item.Reason = strings.Join(notes, "; ")
 	}
+	if item.Action == ActionAdd && ipl.inst.Protocol == indexers.ProtocolTorrent {
+		ipl.inst.MinSeeders = x.minSeeders()
+	}
 	ipl.item = item
 	skipBadIndexer(&ipl)
 	return ipl

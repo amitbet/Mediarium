@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -136,6 +137,33 @@ func fetch(t *testing.T, client *http.Client, url string) (*http.Response, []byt
 
 // ---- upload
 
+// 16x24, lossy WebP, solid red (made with libwebp; Go can only read WebP).
+const coverFixtureWebPB64 = "UklGRkIAAABXRUJQVlA4IDYAAAAQAwCdASoQABgAPrVInkmnJCKhMAgA4BaJQBOl0AAQNgAA/upl/xC72H3/84l/JH6BdrxuMAA="
+
+// A WebP picture is accepted, kept as a JPEG and served as one.
+func TestChangeBookCoverByWebPUpload(t *testing.T) {
+	_, base, admin, _, id := coverBookServer(t)
+	webp, err := base64.StdEncoding.DecodeString(coverFixtureWebPB64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, body := sendCover(t, admin, fmt.Sprintf("%s/api/books/%.0f/cover", base, id), "file", "cover.webp", webp)
+	if status != http.StatusOK {
+		t.Fatalf("upload: %d %v", status, body)
+	}
+	url, chosen := bookCoverURL(t, admin, base, id)
+	if !chosen {
+		t.Fatalf("the cover was not kept: %q", url)
+	}
+	resp, img := fetch(t, admin, base+url)
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "image/jpeg" {
+		t.Fatalf("serve: %d %q", resp.StatusCode, resp.Header.Get("Content-Type"))
+	}
+	if cfg, format, err := image.DecodeConfig(bytes.NewReader(img)); err != nil || format != "jpeg" || cfg.Width != 16 || cfg.Height != 24 {
+		t.Errorf("served picture: %v %v %+v", err, format, cfg)
+	}
+}
+
 func TestChangeBookCoverByUpload(t *testing.T) {
 	_, base, admin, member, id := coverBookServer(t)
 	upload := fmt.Sprintf("%s/api/books/%.0f/cover", base, id)
@@ -150,9 +178,9 @@ func TestChangeBookCoverByUpload(t *testing.T) {
 		status int
 		text   string // part of the sentence the person reads
 	}{
-		{"a GIF is refused", "file", coverFixtureGIF(t), http.StatusUnsupportedMediaType, "JPEG or PNG"},
-		{"a web page is refused", "file", []byte("<html>not a picture</html>"), http.StatusUnsupportedMediaType, "JPEG or PNG"},
-		{"a WebP picture is refused", "file", append([]byte("RIFF\x24\x00\x00\x00WEBPVP8 "), make([]byte, 40)...), http.StatusUnsupportedMediaType, "JPEG or PNG"},
+		{"a GIF is refused", "file", coverFixtureGIF(t), http.StatusUnsupportedMediaType, "JPEG, PNG or WebP"},
+		{"a web page is refused", "file", []byte("<html>not a picture</html>"), http.StatusUnsupportedMediaType, "JPEG, PNG or WebP"},
+		{"a broken WebP picture is refused", "file", append([]byte("RIFF\x24\x00\x00\x00WEBPVP8 "), make([]byte, 40)...), http.StatusUnprocessableEntity, "couldn't be read"},
 		{"a broken PNG is refused", "file", coverFixturePNG(t, 50, 80)[:100], http.StatusUnprocessableEntity, "couldn't be read"},
 		{"a picture over 8 MB is refused", "file", append(coverFixturePNG(t, 10, 10), make([]byte, 8<<20)...), http.StatusRequestEntityTooLarge, "8 MB"},
 		{"an empty file is refused", "file", nil, http.StatusBadRequest, "Choose a picture"},
@@ -266,8 +294,8 @@ func TestChangeBookCoverByLink(t *testing.T) {
 		{"a PNG", srv.URL + "/ok.png", http.StatusOK, ""},
 		{"a JPEG with the wrong type header", srv.URL + "/ok-wrong-type.jpg", http.StatusOK, ""},
 		{"a redirect to a picture", srv.URL + "/moved", http.StatusOK, ""},
-		{"a page that says it is a picture", srv.URL + "/page", http.StatusUnsupportedMediaType, "JPEG or PNG"},
-		{"a GIF", srv.URL + "/gif", http.StatusUnsupportedMediaType, "JPEG or PNG"},
+		{"a page that says it is a picture", srv.URL + "/page", http.StatusUnsupportedMediaType, "JPEG, PNG or WebP"},
+		{"a GIF", srv.URL + "/gif", http.StatusUnsupportedMediaType, "JPEG, PNG or WebP"},
 		{"a picture over 8 MB", srv.URL + "/big", http.StatusRequestEntityTooLarge, "8 MB"},
 		{"a site that refuses", srv.URL + "/forbidden", http.StatusBadGateway, "status 403"},
 		{"a link that goes nowhere", "http://127.0.0.1:1/x.png", http.StatusBadGateway, "Couldn't download"},

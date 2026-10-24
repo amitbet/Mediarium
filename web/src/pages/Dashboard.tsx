@@ -17,6 +17,7 @@ import { ServerInfoCard, useServerStats } from '../components/ServerStats'
 import { useModules } from '../ModulesContext'
 import SetupGaps from '../components/SetupGaps'
 import { DashboardUpdate } from '../components/UpdateCards'
+import { entryDay, entryTime, readZonePref, resolveZone } from '../airTime'
 import { dismiss, factsFromDashboard, isDismissed, setupGaps } from '../setupStatus'
 import { useGridColumns } from '../useGridColumns'
 import { useLive } from '../useLive'
@@ -92,7 +93,7 @@ function ModuleCard({ icon, glyph, label, value, unit, sub, to, color, off, soon
 
 const LEVEL_ICON: Record<HealthItem['level'], IconName> = { error: 'warning', warn: 'warning', info: 'info' }
 
-function Health({ items, showOptional, errors = 0 }: { items: HealthItem[]; showOptional: boolean; errors?: number }) {
+function Health({ items, showOptional, errors = 0, onChanged }: { items: HealthItem[]; showOptional: boolean; errors?: number; onChanged?: () => void }) {
   const problems = items.filter((i) => i.level !== 'info')
   const optional = items.filter((i) => i.level === 'info')
   if (problems.length === 0 && errors === 0 && (!showOptional || optional.length === 0)) return null
@@ -109,6 +110,15 @@ function Health({ items, showOptional, errors = 0 }: { items: HealthItem[]; show
         <Link to={it.action.path} className="health-action">
           {st(it.action.label)} <Icon name="open" size={14} />
         </Link>
+      )}
+      {it.dismiss && it.id === 'no-vpn' && (
+        <button
+          type="button"
+          className="health-action"
+          onClick={() => api.putSettings({ vpnNoticeAcknowledged: true }).then(() => onChanged?.()).catch(() => undefined)}
+        >
+          {t('My download client is already behind a VPN')}
+        </button>
       )}
     </li>
   )
@@ -279,6 +289,11 @@ function ActiveDownloads({ items }: { items: QueueItem[] }) {
 
 // Where a recently added or downloaded entry opens: a movie, a show, or the
 // artist page of an album.
+// The day an item in "Coming up" sits on: an episode with a known air time goes by the viewer's own day.
+function chipDay(e: CalendarEntry): Date {
+  return new Date(`${entryDay(e, resolveZone(readZonePref()))}T00:00:00`)
+}
+
 function recentLink(r: DashRecent): string {
   if (r.kind === 'movie') return `/title/${r.tmdbId}`
   if (r.kind === 'album') return `/music/album/${r.albumId ?? r.id}`
@@ -532,7 +547,7 @@ export default function Dashboard() {
 
       {admin && (
         <div id="attention">
-          <Health items={data.health} showOptional={showOptional} errors={unreadErrors} />
+          <Health items={data.health} showOptional={showOptional} errors={unreadErrors} onChanged={loadDashboard} />
         </div>
       )}
 
@@ -613,13 +628,18 @@ export default function Dashboard() {
                 <li key={`${e.kind}-${e.id}`}>
                   <Link className="mini-link" to={e.kind === 'movie' ? `/title/${e.tmdbId}` : e.kind === 'episode' ? `/series/${e.seriesId}` : `/music/artist/${e.artistId}`}>
                   <span className="date-chip">
-                    <b>{new Date(`${e.releaseDate}T00:00:00`).getDate()}</b>
-                    {new Date(`${e.releaseDate}T00:00:00`).toLocaleString(locale(), { month: 'short' })}
+                    <b>{chipDay(e).getDate()}</b>
+                    {chipDay(e).toLocaleString(locale(), { month: 'short' })}
                   </span>
                   <KindBadge kind={e.kind} subtitle={e.subtitle} />
                   <div className="mini-main">
                     <strong>{e.title}</strong>
-                    {e.subtitle && <small className="qwhen">{e.subtitle.split(' · ')[0]}</small>}
+                    {e.subtitle && (
+                      <small className="qwhen">
+                        {e.subtitle.split(' · ')[0]}
+                        {entryTime(e, resolveZone(readZonePref())) ? ` · ${entryTime(e, resolveZone(readZonePref()))}` : ''}
+                      </small>
+                    )}
                   </div>
                   <span className={`badge ${e.status}`}>{e.status === 'missing' ? t('Waiting') : e.status === 'downloaded' ? t('Have it') : e.status === 'downloading' ? t('Downloading') : e.status}</span>
                   </Link>

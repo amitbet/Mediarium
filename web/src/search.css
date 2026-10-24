@@ -3,7 +3,7 @@
    .search-page. */
 
 .search-modes { display: inline-flex; gap: 3px; padding: 3px; margin: 0 0 14px; border-radius: 13px; background: color-mix(in srgb, var(--text) 6%, transparent); box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25); }
-.search-modes a { display: inline-flex; align-items: center; gap: 8px; padding: 7px 14px; border-radius: 4px 10px 10px 10px; color: var(--text-dim); font-weight: 600; text-decoration: none; transition: background 0.2s var(--ease), color 0.2s var(--ease); }
+.search-modes a { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; padding: 7px 14px; border-radius: 4px 10px 10px 10px; color: var(--text-dim); font-weight: 600; text-decoration: none; transition: background 0.2s var(--ease), color 0.2s var(--ease); }
 .search-modes a:hover { color: var(--text); background: color-mix(in srgb, var(--text) 6%, transparent); text-decoration: none; }
 .search-modes a.active { color: var(--text); background: var(--surface); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 0 0 1px var(--rim), 0 4px 12px -4px var(--lift); }
 .search-modes a.active .ico, .search-modes a.active svg { color: var(--sec, var(--accent)); }

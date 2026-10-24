@@ -298,14 +298,15 @@ func (e *controlEnv) workDirFor(id int64) string { return e.server.TestWorkDirFo
 // waitFor polls until cond is true.
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(60 * time.Second)
+	start := time.Now()
+	deadline := start.Add(150 * time.Second) // only reached when something is wrong; a loaded race-detector run is slow
 	for time.Now().Before(deadline) {
 		if cond() {
 			return
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-	t.Fatalf("timed out waiting for %s", what)
+	t.Fatalf("timed out after %s waiting for %s", time.Since(start).Round(time.Second), what)
 }
 
 // downloadHeld starts a download and waits until it is stuck on its third

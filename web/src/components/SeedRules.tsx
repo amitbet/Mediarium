@@ -4,17 +4,13 @@ import { t } from '../i18n'
 import { useToast } from './Toast'
 import '../torrentcontrols.css'
 import TipLabel from './TipLabel'
+import { isZeroLimit, parseRuleLimit, ruleLimitText } from '../seedLimits'
 
-const text = (n: number | null | undefined) => (n === null || n === undefined ? '' : String(n))
-
-// An empty box follows the global limit (null); a number, including 0, is this
-// indexer's own. Anything else is no number.
-function parse(s: string): number | null | undefined {
-  const v = s.trim().replace(',', '.')
-  if (v === '') return null
-  const n = Number(v)
-  return Number.isFinite(n) && n >= 0 ? n : undefined
-}
+// An empty box follows the global limit (null); a number, including 0 (don't
+// seed), is this indexer's own, and the word for unlimited means no limit of
+// that kind even when the global one has one. Anything else is no number.
+const text = (n: number | null | undefined) => ruleLimitText(n, t('unlimited'))
+const parse = (s: string) => parseRuleLimit(s, t('unlimited'))
 
 // How long the built-in torrent client seeds what came from one torrent
 // indexer. Private trackers set their own rules, so the global limit in
@@ -78,7 +74,8 @@ export default function SeedRules({ indexerId }: { indexerId: number }) {
           {t('Save')}
         </button>
       </div>
-      <small className="seed-rule">{t('Torrents from this indexer stop seeding at the first one reached. Leave a box empty to use the limit in Settings, or type 0 for no limit of that kind. It applies to torrents that start downloading from now on. An external client gets these limits when the torrent is added (Transmission only the ratio). What it does when they are met, such as pausing or removing the torrent, is set in the client itself.')}</small>
+      {(isZeroLimit(ratio) || isZeroLimit(hours)) && <small className="seed-rule">{t("Some trackers need you to share. Private trackers may ban accounts that don't seed.")}</small>}
+      <small className="seed-rule">{t('Torrents from this indexer stop seeding at the first one reached. Leave a box empty to use the limit in Settings, type 0 to not seed at all, or type unlimited for no limit of that kind even when Settings has one. It applies to torrents that start downloading from now on. An external client gets these limits when the torrent is added (Transmission only the ratio). What it does when they are met, such as pausing or removing the torrent, is set in the client itself.')}</small>
     </details>
   )
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/rdborg/mediarium/internal/download"
+	"github.com/rdborg/mediarium/internal/usenetclient"
 )
 
 // A "Usenet server" is the news-server account from a Usenet provider
@@ -297,6 +298,10 @@ type downloadsStatusPayload struct {
 		Servers        int  `json:"servers"`
 		EnabledServers int  `json:"enabledServers"`
 		Ready          bool `json:"ready"`
+		// External is "sabnzbd" or "nzbget" when Usenet releases go to that
+		// downloader instead of the built-in one.
+		External      string `json:"external,omitempty"`
+		ExternalLabel string `json:"externalLabel,omitempty"`
 	} `json:"usenet"`
 	Torrent struct {
 		// State is "disabled" (switched off in Settings), "blocked" (on, but the
@@ -349,7 +354,10 @@ func (s *Server) handleDownloadsStatus(w http.ResponseWriter, r *http.Request) {
 			out.Usenet.EnabledServers++
 		}
 	}
-	out.Usenet.Ready = out.Usenet.EnabledServers > 0
+	if s.usenetClientOn() {
+		out.Usenet.External, out.Usenet.ExternalLabel = s.usenetClientConfig().Kind, usenetclient.Label(s.usenetClientConfig().Kind)
+	}
+	out.Usenet.Ready = out.Usenet.EnabledServers > 0 || out.Usenet.External != ""
 
 	out.Torrent.ListenPort = s.torrentListenPort()
 	engine := s.torrents.status()

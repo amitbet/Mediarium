@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -141,5 +142,149 @@ func TestSubDLLanguageCodes(t *testing.T) {
 		if got := subdlLanguage(in); got != want {
 			t.Errorf("%s: %s, want %s", in, got, want)
 		}
+	}
+}
+
+func TestSubDLSameLanguage(t *testing.T) {
+	for _, c := range []struct {
+		wanted, got string
+		want        bool
+	}{
+		{"en", "EN", true},
+		{"en", "en", true},
+		{"en", "english", true},
+		{"en", "English", true},
+		{"en", "FR", false},
+		{"en", "french", false},
+		{"en", "", true},
+		{"en", "Klingon", true}, // not recognised: shown, not hidden
+		{"pt-BR", "BR_PT", true},
+		{"pt-BR", "PT", true},
+		{"pt-PT", "brazilian_portuguese", true},
+		{"pt-BR", "ES", false},
+		{"zh-CN", "ZH", true},
+	} {
+		if got := sameLanguage(c.wanted, c.got); got != c.want {
+			t.Errorf("sameLanguage(%q, %q) = %v, want %v", c.wanted, c.got, got, c.want)
+		}
+	}
+}
+
+// SubDL answers "status true" with nothing for the TMDB id, with other
+// languages for the IMDb id, and has the English ones under the title. Every
+// lookup is tried, and each one is explained.
+func TestSubDLTriesTheNextLookupAndExplainsEachOne(t *testing.T) {
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		got = append(got, r.URL.RawQuery)
+		switch {
+		case q.Get("tmdb_id") != "":
+			w.Write([]byte(`{"status":true,"results":[],"subtitles":[]}`))
+		case q.Get("imdb_id") != "":
+			w.Write([]byte(`{"status":true,"results":[{"sd_id":1,"type":"movie","name":"The Sixth Sense","imdb_id":"tt0167404","tmdb_id":661,"year":1999}],"subtitles":[
+			 {"release_name":"a","name":"a.zip","lang":"french","language":"FR","url":"/subtitle/1-1.zip"},
+			 {"release_name":"b","name":"b.zip","lang":"german","language":"DE","url":"/subtitle/1-2.zip"}]}`))
+		default:
+			w.Write([]byte(`{"status":true,"results":[],"subtitles":[
+			 {"release_name":"The.Sixth.Sense.1999.1080p.BluRay.x264-YIFY","name":"a.zip","lang":"english","language":"EN","url":"/subtitle/10-20.zip","hi":false},
+			 {"release_name":"The.Sixth.Sense.1999.SDH","name":"b.zip","lang":"english","language":"EN","url":"/subtitle/10-21.zip","hi":true},
+			 {"release_name":"lowercase spelling","name":"c.zip","lang":"English","url":"/subtitle/10-22.zip"},
+			 {"release_name":"full url","name":"d.zip","language":"EN","url":"https://dl.subdl.com/subtitle/10-23.zip"},
+			 {"release_name":"not a link","name":"e.zip","language":"EN","url":"https://elsewhere.example/x.zip"},
+			 {"release_name":"portuguese","name":"f.zip","language":"PT","url":"/subtitle/10-24.zip"}]}`))
+		}
+	}))
+	defer srv.Close()
+
+	ctx, diag := WithDiagnostics(context.Background())
+	c := NewSubDLWithBaseURL("secret-key", srv.URL, srv.URL)
+	res, err := c.Find(ctx, Query{TMDBID: 661, IMDBID: "tt0167404", Title: "The Sixth Sense", Year: 1999, Language: "en", Type: "movie"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var links []string
+	for _, r := range res {
+		links = append(links, r.Link)
+	}
+	if want := "/subtitle/10-20.zip /subtitle/10-21.zip /subtitle/10-22.zip /subtitle/10-23.zip"; strings.Join(links, " ") != want {
+		t.Fatalf("links: %v", links)
+	}
+	if !res[1].HearingImpaired || res[0].HearingImpaired {
+		t.Fatalf("hearing impaired flags: %+v", res)
+	}
+	if Score(res[1], "x.mkv") >= Score(res[0], "x.mkv") {
+		t.Fatalf("hearing-impaired should rank below the plain one: %v vs %v", Score(res[1], "x.mkv"), Score(res[0], "x.mkv"))
+	}
+
+	lines := diag.List()
+	if len(lines) != 3 {
+		t.Fatalf("lines: %+v", lines)
+	}
+	if l := lines[0]; l.Source != "SubDL" || l.Lookup != "tmdb" || l.Value != "661" || l.Count != 0 || l.Found != 0 || l.Note != "" {
+		t.Fatalf("tmdb line: %+v", l)
+	}
+	if l := lines[1]; l.Lookup != "imdb" || l.Found != 2 || l.Count != 0 || l.Note != "wrong-language" || l.Detail != "DE, FR" {
+		t.Fatalf("imdb line: %+v", l)
+	}
+	if l := lines[2]; l.Lookup != "title" || l.Value != "The Sixth Sense (1999)" || l.Count != 4 || l.Found != 6 {
+		t.Fatalf("title line: %+v", l)
+	}
+	for _, q := range got {
+		if strings.Contains(q, "film_name") && strings.Contains(q, "tmdb_id") {
+			t.Fatalf("the title and the id were sent together: %s", q)
+		}
+	}
+	for _, l := range lines {
+		if strings.Contains(fmt.Sprint(l), "secret-key") {
+			t.Fatalf("a key is in %+v", l)
+		}
+	}
+}
+
+// With nothing found by any lookup, each is tried again without the language
+// and the extras; the language is then judged here.
+func TestSubDLFallsBackToFewerFilters(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if q.Get("languages") != "" || q.Get("hi") != "" || q.Get("comment") != "" {
+			// A server that is picky about those: finds nothing.
+			w.Write([]byte(`{"status":true,"results":[],"subtitles":[]}`))
+			return
+		}
+		w.Write([]byte(`{"status":true,"subtitles":[
+		 {"release_name":"fits","name":"a.zip","lang":"english","language":"EN","url":"/subtitle/1-1.zip"},
+		 {"release_name":"no language given","name":"b.zip","url":"/subtitle/1-2.zip"},
+		 {"release_name":"other","name":"c.zip","language":"FR","url":"/subtitle/1-3.zip"}]}`))
+	}))
+	defer srv.Close()
+	ctx, diag := WithDiagnostics(context.Background())
+	res, err := NewSubDLWithBaseURL("k", srv.URL, srv.URL).Find(ctx, Query{TMDBID: 5, Language: "en"})
+	if err != nil || len(res) != 1 || res[0].Release != "fits" {
+		t.Fatalf("results: %+v %v", res, err)
+	}
+	lines := diag.List()
+	if len(lines) != 2 || lines[0].Bare || !lines[1].Bare || lines[1].Count != 1 || lines[1].Found != 3 {
+		t.Fatalf("lines: %+v", lines)
+	}
+}
+
+func TestSubDLDownloadPath(t *testing.T) {
+	for in, want := range map[string]string{
+		"/subtitle/1-2.zip":                     "/subtitle/1-2.zip",
+		" /subtitle/1-2.zip ":                   "/subtitle/1-2.zip",
+		"https://dl.subdl.com/subtitle/1-2.zip": "/subtitle/1-2.zip",
+		"https://elsewhere.example/x.zip":       "https://elsewhere.example/x.zip",
+	} {
+		if got := downloadPath(in); got != want {
+			t.Errorf("downloadPath(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestRedactSecrets(t *testing.T) {
+	got := redactSecrets(`Get "https://api.subdl.com/api/v1/subtitles?api_key=abc123&tmdb_id=1": dial tcp: no such host`)
+	if strings.Contains(got, "abc123") || !strings.Contains(got, "tmdb_id=1") {
+		t.Fatalf("redacted: %s", got)
 	}
 }

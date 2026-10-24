@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import CopyBox from '../../components/CopyBox'
 import { useToast } from '../../components/Toast'
 import { api } from '../../api'
@@ -7,6 +7,9 @@ import { BASE_PATH } from '../../base'
 import { DOCS_URL } from '../../docs'
 import { t, tx } from '../../i18n'
 import TipLabel from '../../components/TipLabel'
+import Switch from '../../components/Switch'
+import Loading from '../../components/Loading'
+import McpAppsCard from '../../components/McpAppsCard'
 
 // Apps made for Radarr, Sonarr and Lidarr (request apps, dashboards, phone
 // apps) connect to Mediarium as if it were those apps: each has its own
@@ -40,6 +43,22 @@ export default function OtherAppsSettings() {
 
   const apps = APPS.filter((a) => on(a.module))
 
+  // The MCP address for AI assistants: off until an administrator switches it on.
+  const [mcp, setMcp] = useState<boolean | null>(null)
+  useEffect(() => {
+    api.mcpSettings().then((m) => setMcp(m.enabled)).catch(() => setMcp(false))
+  }, [])
+
+  async function switchMcp(next: boolean) {
+    try {
+      const m = await api.putMcpSettings(next)
+      setMcp(m.enabled)
+      toast.success(m.enabled ? t('AI assistants can connect now.') : t('AI assistants can no longer connect.'))
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    }
+  }
+
   return (
     <div className="settings-stack">
       <section className="card wide">
@@ -68,6 +87,44 @@ export default function OtherAppsSettings() {
             </fieldset>
           ))}
         </div>
+      </section>
+
+      <section className="card wide">
+        <h2>{t('Let AI assistants connect (MCP)')}</h2>
+        <p style={{ color: 'var(--text-dim)' }}>
+          {t("Chat programs and voice assistants that support MCP can then ask about your library, and, once you say yes, change a few things. They sign in with an administrator's API key.")}
+        </p>
+        {mcp === null ? (
+          <Loading height={60} />
+        ) : (
+          <>
+            <Switch
+              checked={mcp}
+              onChange={(v) => void switchMcp(v)}
+              label={t('Let AI assistants connect (MCP)')}
+              showState
+              description={t("It only works with an administrator's API key. You can switch it off here at any time.")}
+            />
+            {mcp && (
+              <dl className="other-app-fields">
+                <dt>{t('MCP address')}</dt>
+                <dd>
+                  <CopyBox text={`${origin}${BASE_PATH}/mcp`} />
+                </dd>
+                <dt>{t('What it can do')}</dt>
+                <dd>
+                  {t("Questions are answered straight away. Adding titles or changing a profile is shown first and only happens after you confirm in the chat. A read-only key can only ask questions.")}
+                </dd>
+              </dl>
+            )}
+            {mcp && <McpAppsCard />}
+            <p>
+              <a href={`${DOCS_URL}/mcp.md`} target="_blank" rel="noreferrer">
+                {t('How to connect your assistant')}
+              </a>
+            </p>
+          </>
+        )}
       </section>
 
       <section className="card wide">

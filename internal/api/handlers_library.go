@@ -41,6 +41,11 @@ type searchResultPayload struct {
 	// (debrid_cache.go).
 	Cached bool   `json:"cached,omitempty"`
 	hash   string // the info hash from the indexer or the magnet link, for the cache check
+	// BelowMinSeeders is set on a torrent with fewer seeders than the minimum set
+	// on its indexer (MinSeeders): automatic searches skip it, a grab by hand is
+	// still allowed. A cached release is never marked.
+	BelowMinSeeders bool `json:"belowMinSeeders,omitempty"`
+	MinSeeders      int  `json:"minSeeders,omitempty"`
 	// Season/Episodes are set for TV releases (Episodes empty = a season
 	// pack), so the unified search UI can label them and route the grab.
 	Season   int   `json:"season,omitempty"`
@@ -55,8 +60,26 @@ type searchResultPayload struct {
 	// FormatScore is the release's custom-format score in the item's
 	// profile, and Formats the formats it matched; left out when the profile
 	// scores no formats.
-	FormatScore *int     `json:"formatScore,omitempty"`
-	Formats     []string `json:"formats,omitempty"`
+	// Best marks the release automatic search would take; the list puts it first.
+	Best        bool                `json:"best,omitempty"`
+	FormatScore *int                `json:"formatScore,omitempty"`
+	Formats     []quality.FormatHit `json:"formats,omitempty"`
+	// MinScore and UpgradeUntil are the profile's minimum custom-format score
+	// and the score it stops upgrading at (0 is left out), for the "why this
+	// score" details. Reasons lists, in plain words and by kind, everything that
+	// makes an automatic search skip the release (see release_why.go).
+	MinScore     int             `json:"minScore,omitempty"`
+	UpgradeUntil int             `json:"upgradeUntil,omitempty"`
+	Reasons      []releaseReason `json:"reasons,omitempty"`
+	// Terms are the profile's preferred terms the release matched, each with
+	// its score; they add to the score next to the custom formats.
+	Terms []preferredHit `json:"terms,omitempty"`
+	// Score is the whole score the pick compares (Profile.Score): the custom
+	// formats, the preferred terms and FixScore added up. It is what the
+	// Score column shows, and equals the parts listed in the details. Left
+	// out when the profile scores nothing.
+	Score    *int `json:"score,omitempty"`
+	FixScore int  `json:"fixScore,omitempty"` // the bonus of a PROPER or REPACK when bad releases are skipped
 	// AcceptedBy names the profile that accepts this release: the item's own
 	// profile, or one of its fallbacks (fallback true). Left out when none
 	// does. Only set for a search on a library item.
@@ -101,6 +124,9 @@ func (s *Server) toSearchResultPayload(res indexers.Result) searchResultPayload 
 	if !res.PublishDate.IsZero() {
 		payload.PublishDate = res.PublishDate.Format("2006-01-02T15:04:05Z07:00")
 	}
+	if belowMinSeeders(res) {
+		payload.BelowMinSeeders, payload.MinSeeders = true, res.MinSeeders
+	}
 	fit := quality.FitLanguageOnly(release, s.preferredLanguage(), s.languageOnly())
 	payload.Language = fit.Label
 	if fit.Label == "" && fit.Rank < 3 {
@@ -117,7 +143,7 @@ func (s *Server) toSearchResultPayload(res indexers.Result) searchResultPayload 
 	// A Usenet post older than the retention is shown with the reason; the
 	// automatic searches leave it out.
 	if why := s.retentionRejection(res); why != "" {
-		payload.Rejections = append(payload.Rejections, why)
+		payload.addReasons("age", []string{why})
 	}
 	return payload
 }
@@ -190,6 +216,14 @@ type moviePayload struct {
 	// FolderPath is the full folder the movie's files are in, or go to when it
 	// has none (as Mediarium sees it). Only filled in for a single movie.
 	FolderPath string `json:"folderPath,omitempty"`
+	// Media is what the file holds, short lists the Library filters on (the
+	// list); FileInfo is the full details of the file (a single movie). Both
+	// are left out until the file has been read (media_info.go).
+	Media    *mediaSummaryPayload `json:"media,omitempty"`
+	FileInfo *fileInfoPayload     `json:"fileInfo,omitempty"`
+	// ShortFile is set when the file is far shorter than the movie should be
+	// (a fake or cut-off file).
+	ShortFile *shortFileNote `json:"shortFile,omitempty"`
 }
 
 // toMoviePayload builds a library movie's JSON; who resolves the account
@@ -223,8 +257,17 @@ func (s *Server) handleListMovies(w http.ResponseWriter, r *http.Request) {
 	out := make([]moviePayload, len(list))
 	now := time.Now()
 	movieFolders := s.movieFolders()
+	media := s.mediaSummaryNow(true).movies
+	short := s.incompleteNow().movies
 	for i, m := range list {
 		out[i] = toMoviePayload(m, who)
+		if e, ok := short[m.ID]; ok && e.Path == m.FilePath {
+			n := e.note
+			out[i].ShortFile = &n
+		}
+		if ms, ok := media[m.ID]; ok {
+			out[i].Media = mediaSummaryOf(ms)
+		}
 		out[i].FilePath = fileLabel(r, m.FilePath)
 		out[i].RootPath = folderShown(r, movieFolders, m.RootPath)
 		if brief {
@@ -258,6 +301,8 @@ func (s *Server) handleGetMovie(w http.ResponseWriter, r *http.Request) {
 	out.FilePath = fileLabel(r, m.FilePath)
 	out.RootPath = folderShown(r, s.movieFolders(), m.RootPath)
 	out.SizeBytes = fileSize(m.FilePath)
+	out.FileInfo = s.movieFileInfo(m.FilePath)
+	out.ShortFile = s.shortFileOf(m.FilePath)
 	if isAdminRequest(r) { // only administrators see where the files lie
 		out.FolderPath = s.movieFolderFor(m)
 	}

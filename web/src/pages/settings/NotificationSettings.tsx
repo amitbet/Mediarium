@@ -14,6 +14,7 @@ import { FieldError, FormProblem, useValidation, type Validation } from '../../u
 import PushDevice from '../../components/PushDevice'
 import { plural, t, tx, st } from '../../i18n'
 import TipLabel from '../../components/TipLabel'
+import { useAutosaveSetting } from '../../useAutosave'
 
 const EVENTS: { key: string; label: string; hint: string }[] = [
   { key: 'added', label: t('Download started'), hint: t('A release was found and sent to the downloader') },
@@ -24,7 +25,27 @@ const EVENTS: { key: string; label: string; hint: string }[] = [
   { key: 'health', label: t('Something is wrong'), hint: t('Your Usenet provider or an indexer stopped working, for example because a subscription expired') },
   { key: 'update', label: t('New version'), hint: t('A new version of Mediarium is available') },
   { key: 'digest', label: t('Weekly summary'), hint: t('A short summary once a week of what arrived, what failed and what is still missing') },
+  { key: 'clientdown', label: t('Download client down'), hint: t('A download client cannot be reached, for example because it stopped or the network is down') },
+  { key: 'clientup', label: t('Download client back'), hint: t('A download client that was down can be reached again') },
+  { key: 'trashsync', label: t('TRaSH Guides sync applied'), hint: t('The update from the TRaSH Guides changed custom formats or profile scores. Tick the box under it to also hear when a check found nothing to change. A check that failed is always sent') },
 ]
+
+// Under the TRaSH Guides event: one switch for all notifications, so a check
+// that changed nothing is reported as well.
+function TrashSyncAlways() {
+  const always = useAutosaveSetting<boolean>(
+    (s) => s.notifyTrashSyncAlways ?? false,
+    (v) => ({ notifyTrashSyncAlways: v }),
+    (v) => (v ? t('Saved: you also hear when the TRaSH Guides check changed nothing.') : t('Saved: you only hear when the TRaSH Guides check changed something.')),
+    false,
+  )
+  return (
+    <label className="check-row event-pick event-sub">
+      <input type="checkbox" checked={always.value} disabled={!always.loaded || always.saving} onChange={(e) => void always.change(e.target.checked)} />
+      <span>{t('Also tell me when nothing changed')}</span>
+    </label>
+  )
+}
 
 const FALLBACK_TYPES: NotifyType[] = [
   { type: 'discord', label: 'Discord', fields: [{ name: 'url', label: t('Webhook URL'), kind: 'text', required: true, help: t('In Discord: channel settings, Integrations, Webhooks, New Webhook, Copy Webhook URL.') }] },
@@ -250,22 +271,25 @@ function MethodForm({
         <strong className="method-sub"><TipLabel text={t('Pick the events this notification should message you about. You can add several notifications, each with its own events.')}>{t('Tell me when')}</TipLabel></strong>
         <div className="event-grid">
           {EVENTS.map((e) => (
-            <label key={e.key} className="check-row event-pick" title={e.hint}>
-              <input
-                type="checkbox"
-                checked={state.events.has(e.key)}
-                onChange={(ev) => {
-                  const next = new Set(state.events)
-                  if (ev.target.checked) next.add(e.key)
-                  else next.delete(e.key)
-                  onChange({ ...state, events: next })
-                }}
-              />
-              <span>
-                {e.label}
-                <small>{e.hint}</small>
-              </span>
-            </label>
+            <div key={e.key} className="event-cell">
+              <label className="check-row event-pick" title={e.hint}>
+                <input
+                  type="checkbox"
+                  checked={state.events.has(e.key)}
+                  onChange={(ev) => {
+                    const next = new Set(state.events)
+                    if (ev.target.checked) next.add(e.key)
+                    else next.delete(e.key)
+                    onChange({ ...state, events: next })
+                  }}
+                />
+                <span>
+                  {e.label}
+                  <small>{e.hint}</small>
+                </span>
+              </label>
+              {e.key === 'trashsync' && state.events.has('trashsync') && <TrashSyncAlways />}
+            </div>
           ))}
         </div>
         <FieldError v={v} name="events" />

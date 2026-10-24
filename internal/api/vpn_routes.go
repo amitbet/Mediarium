@@ -25,6 +25,13 @@ func (r vpnRoute) Selected() (label, reason string) {
 }
 
 // vpnForIndexers reports whether indexer traffic is set to go through the VPN.
+// vpnNoticeAcknowledged reports that the person said their torrent client is
+// already behind a VPN.
+func (s *Server) vpnNoticeAcknowledged() bool {
+	v, _ := s.Settings.GetBool(settings.KeyVPNNoticeAcknowledged)
+	return v
+}
+
 func (s *Server) vpnForIndexers() bool {
 	v, _ := s.Settings.GetBool(settings.KeyVPNRouteIndexers)
 	return v

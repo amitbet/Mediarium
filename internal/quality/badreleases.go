@@ -93,3 +93,7 @@ func (p Profile) fixScore(title string) int {
 	}
 	return 0
 }
+
+// FixScore is the bonus a PROPER or REPACK title earns when the profile skips
+// bad releases (0 otherwise); it is part of Score.
+func (p Profile) FixScore(title string) int { return p.fixScore(title) }

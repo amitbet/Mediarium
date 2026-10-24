@@ -7,6 +7,9 @@ import TitleTags from '../components/Tags'
 import WatchedLine from '../components/WatchedLine'
 import NumberingCard from '../components/NumberingCard'
 import SeriesTypePicker from '../components/SeriesTypePicker'
+import FileChips from '../components/FileChips'
+import ShortFile from '../components/ShortFile'
+import { redoAnswerText } from '../shortFile'
 import Switch from '../components/Switch'
 import MonitorModePicker from '../components/MonitorModePicker'
 import TitleHero from '../components/TitleHero'
@@ -16,6 +19,8 @@ import LocateDialog from '../components/LocateDialog'
 import TitleEvents from '../components/TitleEvents'
 import { useToast } from '../components/Toast'
 import ReleaseTable from '../components/ReleaseTable'
+import GrabBlocked from '../components/GrabBlocked'
+import { blockingOf, type BlockingDownload } from '../grabBlocked'
 import CopiesCard from '../components/CopiesCard'
 import TitleRequestActions from '../components/TitleRequestActions'
 import FilesPanel from '../components/FilesPanel'
@@ -34,9 +39,13 @@ import { useConfirm } from '../components/ConfirmProvider'
 import { removeOption } from '../diskUsage'
 import ReleaseNotice from '../components/ReleaseNotice'
 import type { Unanswered } from '../releaseHint'
+import type { Searched } from '../searched'
 import { useDocumentTitle } from '../documentTitle'
 import { localDate } from '../bookSeries'
+import { entryDay, entryTime, readZonePref, resolveZone } from '../airTime'
 import { locale, plural, t } from '../i18n'
+import { monitoringSummary, readSeasonsOpen, rememberSeasonsOpen, seasonStartsOpen, type SeasonsOpen } from '../seriesView'
+import { sumBytes } from '../diskTotals'
 
 // A target for interactive search: one episode, or a whole season (no
 // episode set) which only offers season packs.
@@ -83,7 +92,7 @@ function SeriesPage() {
   const [message, setMessage] = useState('')
   const [target, setTarget] = useState<SearchTarget | null>(null)
   const [results, setResults] = useState<SearchResult[] | null>(null)
-  const [answered, setAnswered] = useState<{ sources: number; unanswered: Unanswered[]; warnings?: string[] }>({ sources: 0, unanswered: [] })
+  const [answered, setAnswered] = useState<{ sources: number; unanswered: Unanswered[]; warnings?: string[]; searched?: Searched[] }>({ sources: 0, unanswered: [] })
   const [searching, setSearching] = useState(false)
   const [grabbing, setGrabbing] = useState<string | null>(null)
   const [searchingNow, setSearchingNow] = useState(false)
@@ -91,6 +100,13 @@ function SeriesPage() {
   // Which seasons are open (unset: only the one that needs attention), and the
   // "Missing episodes only" switch.
   const [openSeasons, setOpenSeasons] = useState<Record<number, boolean>>({})
+  // How the seasons start (all folded, the latest open, all open): this browser's choice.
+  const [seasonsMode, setSeasonsMode] = useState<SeasonsOpen>(() => readSeasonsOpen())
+  function chooseSeasonsMode(mode: SeasonsOpen) {
+    setSeasonsMode(mode)
+    rememberSeasonsOpen(mode)
+    setOpenSeasons({})
+  }
   const [missingOnly, setMissingOnly] = useState(false)
   const toast = useToast()
 
@@ -140,7 +156,7 @@ function SeriesPage() {
     try {
       const a = await api.seriesSearch(seriesId, st.season, st.episode)
       if (mine !== searchId.current) return
-      setAnswered({ sources: a.sources, unanswered: a.unanswered, warnings: a.warnings })
+      setAnswered({ sources: a.sources, unanswered: a.unanswered, warnings: a.warnings, searched: a.searched })
       setResults(a.results)
     } catch (e) {
       if (mine === searchId.current) setError(e instanceof Error ? e.message : String(e))
@@ -149,9 +165,14 @@ function SeriesPage() {
     }
   }
 
-  async function grab(r: SearchResult) {
+  // A grab that was refused because another download is in the way, with the
+  // release that was picked, so it can be repeated once that one is cancelled.
+  const [blocked, setBlocked] = useState<{ release: SearchResult; blocking: BlockingDownload; message: string } | null>(null)
+
+  async function grab(r: SearchResult, replaceQueueId?: number) {
     setGrabbing(r.downloadUrl)
     setError('')
+    setBlocked(null)
     try {
       await api.grabSeries(seriesId, {
         releaseTitle: r.title,
@@ -160,11 +181,14 @@ function SeriesPage() {
         protocol: r.protocol,
         season: target?.season,
         episode: target?.episode,
+        replaceQueueId,
       })
       setMessage(t('Started downloading "{title}". Follow it in Activity.', { title: r.title }))
       setTimeout(load, 500)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      const blocking = blockingOf(e)
+      if (blocking) setBlocked({ release: r, blocking, message: e instanceof Error ? e.message : String(e) })
+      else setError(e instanceof Error ? e.message : String(e))
     } finally {
       setGrabbing(null)
     }
@@ -218,6 +242,7 @@ function SeriesPage() {
   const [refreshing, setRefreshing] = useState(false)
   const [rescanning, setRescanning] = useState(false)
   const [changingFolder, setChangingFolder] = useState(false)
+  const [linking, setLinking] = useState<Episode | null>(null)
   async function rescan() {
     setError('')
     setRescanning(true)
@@ -266,6 +291,24 @@ function SeriesPage() {
     }
   }
 
+  // An episode file far shorter than the episode should be: delete it and look for another release.
+  async function redoShortFile(e: Episode) {
+    const label = `S${String(e.season).padStart(2, '0')}E${String(e.episode).padStart(2, '0')}`
+    const answer = await confirm({
+      title: t('Delete the file of {name} and search again?', { name: label }),
+      body: <p>{t('This file is much shorter than the episode should be, so it is most likely a fake or a cut-off download. It goes to the recycle bin (or is deleted, if that is switched off), the release it came from is blocklisted when Mediarium knows it, and Mediarium searches for another one.')}</p>,
+      confirmLabel: t('Delete and search again'),
+      danger: true,
+    })
+    if (!answer) return
+    try {
+      setMessage(redoAnswerText(await api.redoIncomplete({ episodeIds: [e.id] })))
+      load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
   async function remove() {
     if (!series) return
     const usage = await api.seriesDiskUsage(seriesId).catch(() => null)
@@ -302,16 +345,24 @@ function SeriesPage() {
   const isMissing = (e: { status: string; airDate?: string }) => e.status === 'missing' && !!e.airDate && e.airDate <= today
   // The next episode still to air, for the facts at the top.
   const next = series.episodes.filter((e) => e.airDate && e.airDate >= today).sort((a, b) => (a.airDate! < b.airDate! ? -1 : 1))[0]
-  const nextText = next
+  // With an exact air time the day and hour are the viewer's own; without one, the date as TMDB has it.
+  const nextZone = resolveZone(readZonePref())
+  const nextEntry = next ? { kind: 'episode', releaseDate: next.airDate!, airAt: next.airAt } : null
+  const nextText = next && nextEntry
     ? t('{episode} on {date}', {
         episode: `S${String(next.season).padStart(2, '0')}E${String(next.episode).padStart(2, '0')}`,
-        date: new Date(next.airDate + 'T12:00:00').toLocaleDateString(locale(), { day: 'numeric', month: 'short', year: 'numeric' }),
+        date:
+          new Date(entryDay(nextEntry, nextZone) + 'T12:00:00').toLocaleDateString(locale(), { day: 'numeric', month: 'short', year: 'numeric' }) +
+          (entryTime(nextEntry, nextZone) ? `, ${entryTime(nextEntry, nextZone)}` : ''),
       })
     : ''
-  // Seasons start folded, except the one that needs attention: the latest with
-  // missing episodes, or else the latest season.
+  // Unless the person chose otherwise (seasonsMode), seasons start folded,
+  // except the one that needs attention: the latest with missing episodes, or
+  // else the latest season.
   const attention = [...seasons].reverse().find(([, eps]) => eps.some(isMissing))?.[0] ?? seasons[seasons.length - 1]?.[0]
-  const isOpen = (season: number) => openSeasons[season] ?? season === attention
+  const isOpen = (season: number) => openSeasons[season] ?? seasonStartsOpen(seasonsMode, season, attention)
+  const monitoring = monitoringSummary(series.monitored, series.episodes, today)
+  const diskBytes = sumBytes(series.episodes)
   const shownSeasons = missingOnly ? seasons.filter(([, eps]) => eps.some(isMissing)) : seasons
 
   return (
@@ -336,10 +387,16 @@ function SeriesPage() {
             ...(creators.length ? [{ label: creators.length > 1 ? t('Creators') : t('Creator'), value: <PeopleLinks people={creators} /> }] : []),
             ...(series.showStatus ? [{ label: t('Status'), value: showStatusLabel(series.showStatus) }] : []),
             { label: t('Episodes'), value: t('{done} of {total} downloaded', { done: series.downloadedCount, total: series.episodeCount }) },
+            ...(diskBytes > 0 ? [{ label: t('Size on disk'), value: formatBytes(diskBytes) }] : []),
             ...(nextText ? [{ label: t('Next episode'), value: nextText }] : []),
             ...(tv?.networks?.length ? [{ label: t('Network'), value: tv.networks.join(', ') }] : []),
           ],
         }}
+        status={
+          <span className={`state-tag st-mon-${monitoring.kind === 'off' ? 'off' : 'on'}`} title={monitoring.detail}>
+            <Icon name={monitoring.kind === 'off' ? 'eye-off' : 'eye'} size={13} /> {monitoring.text}
+          </span>
+        }
         actions={
           <>
             {canManage && (
@@ -369,7 +426,7 @@ function SeriesPage() {
         }
       >
         <div className="title-controls">
-          <Switch checked={series.monitored} onChange={toggleSeries} disabled={!canManage} label={<span className="has-tip">{t('Monitored')}<InfoTip text={t('Mediarium keeps searching for the episodes of this show that are monitored and missing. Switch it off to leave the show alone; files you already have stay where they are.')} /></span>} description={series.monitored ? t('Keeps looking for missing episodes.') : t('Not looking for missing episodes. Files you already have stay where they are.')} />
+          <Switch checked={series.monitored} onChange={toggleSeries} disabled={!canManage} label={<span className="has-tip">{t('Monitored')}<InfoTip text={t('Mediarium keeps searching for the episodes of this show that are monitored and missing. Switch it off to leave the show alone; files you already have stay where they are.')} /></span>} description={[series.monitored ? t('Keeps looking for missing episodes.') : t('Not looking for missing episodes. Files you already have stay where they are.'), monitoring.detail].filter(Boolean).join(' ')} />
           <ProfilePicker kind="series" itemId={seriesId}>
             <TitleTags kind="tv" id={seriesId} />
           </ProfilePicker>
@@ -384,6 +441,16 @@ function SeriesPage() {
           </FolderLine>
         )}
         {changingFolder && <LocateDialog kind="series" id={seriesId} start={series.folderPath} onClose={() => setChangingFolder(false)} onDone={load} />}
+        {linking && (
+          <LocateDialog
+            kind="episode"
+            id={linking.id}
+            label={linking.season === 0 ? t('Special {n}', { n: linking.episode }) : `S${String(linking.season).padStart(2, '0')}E${String(linking.episode).padStart(2, '0')}`}
+            start={series.folderPath}
+            onClose={() => setLinking(null)}
+            onDone={load}
+          />
+        )}
         <WatchedLine kind="tv" id={seriesId} />
       </TitleHero>
 
@@ -394,19 +461,28 @@ function SeriesPage() {
         <section ref={releasesRef} className="card" style={{ marginBottom: 24, scrollMarginTop: 80 }}>
           <h2>{t('Releases for {target}', { target: target.label })}</h2>
           {searching && <p>{t('Looking for releases…')}</p>}
-          {results !== null && <ReleaseNotice sources={answered.sources} unanswered={answered.unanswered} warnings={answered.warnings} results={results.length} />}
+          {results !== null && <ReleaseNotice sources={answered.sources} unanswered={answered.unanswered} warnings={answered.warnings} searched={answered.searched} results={results.length} />}
           {!searching && (results === null || results.length === 0) && (
             <button className="btn-sm" onClick={() => setTarget(null)}>
               {t('Close')}
             </button>
           )}
+          {blocked && (
+            <GrabBlocked
+              message={blocked.message}
+              blocking={blocked.blocking}
+              busy={grabbing !== null}
+              onReplace={() => void grab(blocked.release, blocked.blocking.id)}
+              onDismiss={() => setBlocked(null)}
+            />
+          )}
           {results !== null && results.length > 0 && (
-            <ReleaseTable results={results} grabbing={grabbing} onGrab={grab} showPackBadge onClose={() => setTarget(null)} />
+            <ReleaseTable results={results} searched={answered.searched} grabbing={grabbing} onGrab={(r) => void grab(r)} showPackBadge onClose={() => setTarget(null)} />
           )}
         </section>
       )}
 
-      {canManage && <NumberingCard id={seriesId} seriesType={series.seriesType ?? 'standard'} />}
+      {canManage && <NumberingCard id={seriesId} seriesType={series.seriesType ?? 'standard'} seasons={seasons.map(([s]) => s).filter((s) => s > 0)} monitored={series.monitored} onRescanned={load} />}
 
       {seasons.length > 0 && (
         <div className="season-bar">
@@ -430,6 +506,15 @@ function SeriesPage() {
               <input type="checkbox" checked={missingOnly} onChange={(e) => setMissingOnly(e.target.checked)} />
               {t('Missing episodes only')}
               <InfoTip text={t('Shows only the episodes that have aired and are not downloaded yet.')} />
+            </label>
+            <label className="inline-field">
+              {t('Seasons on this page')}
+              <select value={seasonsMode} onChange={(e) => chooseSeasonsMode(e.target.value as SeasonsOpen)} aria-label={t('Seasons on this page')}>
+                <option value="collapsed">{t('Collapsed')}</option>
+                <option value="latest">{t('Latest season open')}</option>
+                <option value="all">{t('All open')}</option>
+              </select>
+              <InfoTip text={t('Which seasons are open when you visit a show. Open all and Close all change the page right now. Your choice is kept in this browser.')} />
             </label>
             <button className="btn-sm" onClick={() => setOpenSeasons(Object.fromEntries(seasons.map(([s]) => [s, true])))}>
               {t('Open all')}
@@ -519,7 +604,11 @@ function SeriesPage() {
                         />
                       </td>
                       <td>{e.episode}</td>
-                      <td>{e.title || <span style={{ color: 'var(--text-dim)' }}>{t('TBA')}</span>}</td>
+                      <td>
+                        {e.title || <span style={{ color: 'var(--text-dim)' }}>{t('TBA')}</span>}
+                        {e.status === 'downloaded' && <FileChips info={e.fileInfo} className="compact" />}
+                        {e.status === 'downloaded' && <ShortFile compact note={e.shortFile} onRedo={admin ? () => void redoShortFile(e) : undefined} />}
+                      </td>
                       <td style={{ color: 'var(--text-dim)' }}>{e.airDate || '—'}</td>
                       <td>
                         {e.status === 'missing' && unaired ? (
@@ -543,6 +632,13 @@ function SeriesPage() {
                           <>
                             <button className="danger-ghost" onClick={() => void deleteFiles({ episode: e })} title={t('Delete this episode’s file and keep the show')}>
                               {t('Delete file')}
+                            </button>{' '}
+                          </>
+                        )}
+                        {admin && e.status !== 'downloading' && (
+                          <>
+                            <button className="btn-sm" onClick={() => setLinking(e)} title={t('Point this episode at a video file you choose')}>
+                              {t('Link a file')}
                             </button>{' '}
                           </>
                         )}

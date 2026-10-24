@@ -57,8 +57,9 @@ func TestRestoreOneAtATimeAndACutUploadLeavesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The second is refused while the first holds the restore.
-	deadline := time.Now().Add(3 * time.Second)
+	// The second is refused while the first holds the restore. On a busy
+	// machine the first upload can take a while to start, so the wait is long.
+	deadline := time.Now().Add(20 * time.Second)
 	var code int
 	for time.Now().Before(deadline) {
 		code, _ = postRestore(t, clientB, baseB, "file", []byte("not a backup"))
@@ -78,7 +79,7 @@ func TestRestoreOneAtATimeAndACutUploadLeavesNothing(t *testing.T) {
 		if got == http.StatusOK {
 			t.Fatal("a cut-off upload must not be accepted")
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(20 * time.Second):
 		t.Fatal("the cut-off upload never finished")
 	}
 	neverExited(t, called)

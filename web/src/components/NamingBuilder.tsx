@@ -5,7 +5,8 @@ import { FieldError, type Validation } from '../useValidation'
 import { t } from '../i18n'
 import TipLabel from './TipLabel'
 
-type Kind = 'movie' | 'tv'
+// The box a clicked token goes into: a file name or a title's folder.
+type Kind = 'movie' | 'tv' | 'movieFolder' | 'seriesFolder'
 
 const EXAMPLES = { a: '{ - Edition Tags}', b: '{[Quality Full]}' }
 const ORIGINAL_TOKENS = { file: '{Original Filename}', release: '{Original Title}', example: 'Example.Movie.2024.1080p.BluRay-GROUP' }
@@ -27,8 +28,20 @@ function groupName(g: string): string {
 function schemeName(id: string, name: string): string {
   if (id === 'detailed') return t('Detailed, like Radarr and Sonarr')
   if (id === 'plex-editions') return t('Plex with editions')
+  if (id === 'trash') return t('TRaSH recommended')
+  if (id === 'trash-plex-tmdb') return t('TRaSH recommended, Plex with TMDb id')
+  if (id === 'trash-emby-tmdb') return t('TRaSH recommended, Emby with TMDb id')
+  if (id === 'trash-jellyfin-tmdb') return t('TRaSH recommended, Jellyfin with TMDb id')
   return name
 }
+
+function folderSchemeName(id: string, name: string): string {
+  if (id === 'default') return t('Mediarium default')
+  return schemeName(id, name)
+}
+
+// The tokens that say something about the title itself, the only ones a folder name can use.
+const FOLDER_GROUPS = ['Movie', 'Show', 'Ids']
 
 // The custom naming builder: start from a ready-made format (or paste the one
 // you use in Radarr or Sonarr), then edit it and click tokens to add them.
@@ -39,18 +52,28 @@ export default function NamingBuilder({
   setMovieFormat,
   episodeFormat,
   setEpisodeFormat,
+  movieFolder,
+  setMovieFolder,
+  seriesFolder,
+  setSeriesFolder,
   v,
 }: {
   movieFormat: string
   setMovieFormat: (s: string) => void
   episodeFormat: string
   setEpisodeFormat: (s: string) => void
+  movieFolder: string
+  setMovieFolder: (s: string) => void
+  seriesFolder: string
+  setSeriesFolder: (s: string) => void
   v: Validation
 }) {
   const [data, setData] = useState<NamingTokens | null>(null)
   const [target, setTarget] = useState<Kind>('movie')
   const movieRef = useRef<HTMLInputElement>(null)
   const episodeRef = useRef<HTMLInputElement>(null)
+  const movieFolderRef = useRef<HTMLInputElement>(null)
+  const seriesFolderRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     api
@@ -61,6 +84,17 @@ export default function NamingBuilder({
 
   const current = data?.schemes.find((s) => s.movie === movieFormat && s.episode === episodeFormat)?.id ?? ''
 
+  // An empty folder box means the usual "Title (Year)", so it matches the default.
+  const folderSchemes = data?.folderSchemes ?? []
+  const currentFolder = folderSchemes.find((s) => s.movie === (movieFolder.trim() || folderSchemes[0]?.movie) && s.series === (seriesFolder.trim() || folderSchemes[0]?.series))?.id ?? ''
+
+  function pickFolderScheme(id: string) {
+    const s = folderSchemes.find((x) => x.id === id)
+    if (!s) return
+    setMovieFolder(s.movie)
+    setSeriesFolder(s.series)
+  }
+
   function pickScheme(id: string) {
     const s = data?.schemes.find((x) => x.id === id)
     if (!s) return
@@ -70,9 +104,13 @@ export default function NamingBuilder({
 
   // Put the token where the cursor is in the box that was used last.
   function insert(token: string) {
-    const el = target === 'movie' ? movieRef.current : episodeRef.current
-    const value = target === 'movie' ? movieFormat : episodeFormat
-    const set = target === 'movie' ? setMovieFormat : setEpisodeFormat
+    const boxes = {
+      movie: { el: movieRef.current, value: movieFormat, set: setMovieFormat },
+      tv: { el: episodeRef.current, value: episodeFormat, set: setEpisodeFormat },
+      movieFolder: { el: movieFolderRef.current, value: movieFolder, set: setMovieFolder },
+      seriesFolder: { el: seriesFolderRef.current, value: seriesFolder, set: setSeriesFolder },
+    }
+    const { el, value, set } = boxes[target]
     const start = el?.selectionStart ?? value.length
     const end = el?.selectionEnd ?? value.length
     const before = value.slice(0, start)
@@ -86,7 +124,9 @@ export default function NamingBuilder({
     })
   }
 
-  const tokens = (data?.tokens ?? []).filter((t) => t.kind === 'both' || t.kind === target)
+  const forFolder = target === 'movieFolder' || target === 'seriesFolder'
+  const side = target === 'movie' || target === 'movieFolder' ? 'movie' : 'tv'
+  const tokens = (data?.tokens ?? []).filter((t) => (t.kind === 'both' || t.kind === side) && (!forFolder || (FOLDER_GROUPS.includes(t.group) && t.token !== '{Edition Tags}')))
   const groups = [...new Set(tokens.map((t) => t.group))]
 
   return (
@@ -121,7 +161,7 @@ export default function NamingBuilder({
           />
           <FieldError v={v} name="customFormat" />
         </label>
-        <NamingPreview preset="custom" format={movieFormat || undefined} />
+        <NamingPreview preset="custom" format={movieFormat || undefined} folder={movieFolder.trim() || undefined} />
         <label>
           <TipLabel text={t('The pattern each episode file is named by. Words in curly braces are swapped for the show, season and episode; click a token below to add one.')}>{t('Episode file name')}</TipLabel>
           <input
@@ -135,14 +175,55 @@ export default function NamingBuilder({
           />
           <FieldError v={v} name="episodeFormat" />
         </label>
-        <NamingPreview preset={episodeFormat ? 'custom' : 'plex'} format={episodeFormat || undefined} kind="tv" />
+        <NamingPreview preset={episodeFormat ? 'custom' : 'plex'} format={episodeFormat || undefined} kind="tv" folder={seriesFolder.trim() || undefined} />
+        <label>
+          <TipLabel text={t('Fills both folder patterns from a ready-made format that you can then change. Your own text is replaced when you pick one.')}>{t('Folders start from')}</TipLabel>
+          <select value={currentFolder} onChange={(e) => pickFolderScheme(e.target.value)}>
+            <option value="" disabled>
+              {t('Your own format')}
+            </option>
+            {folderSchemes.map((s) => (
+              <option key={s.id} value={s.id}>
+                {folderSchemeName(s.id, s.name)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="naming-folder-pair">
+          <label>
+            <TipLabel text={t("The pattern a new movie's folder is named by. A movie that already has a folder keeps it. Leave it empty for the usual Title (Year).")}>{t('Movie folder')}</TipLabel>
+            <input
+              ref={movieFolderRef}
+              value={movieFolder}
+              onChange={(e) => setMovieFolder(e.target.value)}
+              onFocus={() => setTarget('movieFolder')}
+              placeholder="{Movie CleanTitle} ({Release Year})"
+              spellCheck={false}
+              {...v.bind('movieFolder', movieFolder, setMovieFolder)}
+            />
+            <FieldError v={v} name="movieFolder" />
+          </label>
+          <label>
+            <TipLabel text={t("The pattern a new show's folder is named by. A show that already has a folder keeps it. Leave it empty for the usual Title (Year).")}>{t('Show folder')}</TipLabel>
+            <input
+              ref={seriesFolderRef}
+              value={seriesFolder}
+              onChange={(e) => setSeriesFolder(e.target.value)}
+              onFocus={() => setTarget('seriesFolder')}
+              placeholder="{Series TitleYear}"
+              spellCheck={false}
+              {...v.bind('seriesFolder', seriesFolder, setSeriesFolder)}
+            />
+            <FieldError v={v} name="seriesFolder" />
+          </label>
+        </div>
       </div>
       {data && (
         <div className="naming-tokens">
           <small style={{ color: 'var(--text-dim)' }}>
-            {target === 'movie'
-              ? t("Click a token to add it to the movie file name. Text inside the braces, like {a} or {b}, only shows up when there's a value.", EXAMPLES)
-              : t("Click a token to add it to the episode file name. Text inside the braces, like {a} or {b}, only shows up when there's a value.", EXAMPLES)}
+            {target === 'movie' && t("Click a token to add it to the movie file name. Text inside the braces, like {a} or {b}, only shows up when there's a value.", EXAMPLES)}
+            {target === 'tv' && t("Click a token to add it to the episode file name. Text inside the braces, like {a} or {b}, only shows up when there's a value.", EXAMPLES)}
+            {forFolder && t("Click a token to add it to the folder name. Only tokens about the title are listed, since a folder holds many files. Text inside the braces, like {a}, only shows up when there's a value.", { a: '{tmdb-{TmdbId}}' })}
           </small>
           <small style={{ color: 'var(--text-dim)' }}>{t('{file} is the name the file came with, without its extension, like {example}. {release} is the name of the whole release.', ORIGINAL_TOKENS)}</small>
           {groups.map((g) => (

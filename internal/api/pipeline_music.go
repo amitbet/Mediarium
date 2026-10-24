@@ -16,6 +16,7 @@ import (
 	"github.com/rdborg/mediarium/internal/notify"
 	"github.com/rdborg/mediarium/internal/organizer"
 	"github.com/rdborg/mediarium/internal/plainerror"
+	"github.com/rdborg/mediarium/internal/quality"
 	"github.com/rdborg/mediarium/internal/queue"
 	"github.com/rdborg/mediarium/internal/settings"
 )
@@ -85,10 +86,12 @@ func (s *Server) grabAlbum(artist music.Artist, album music.Album, releaseTitle,
 	label := albumLabel(artist, album)
 	grabbed := s.grabbedMessage(releaseTitle, label)
 	_ = s.QueueRepo.LogItemEvent(queue.ItemEvent{AlbumID: album.ID, Kind: "grabbed", Message: grabbed})
-	s.notifyItem("grabbed", notify.Item{
+	grabbedItem := notify.Item{
 		Media: "album", Title: label, Year: album.Year(), Quality: string(music.ParseRelease(releaseTitle).Tier()), SizeBytes: sizeBytes,
 		Release: releaseTitle, LinkPath: fmt.Sprintf("/music/artist/%d", artist.ID),
-	})
+	}
+	s.releaseDetails(&grabbedItem, quality.Profile{}, releaseTitle, downloadURL)
+	s.notifyItem("grabbed", grabbedItem)
 
 	s.dispatch.Kick()
 	return queueID, nil

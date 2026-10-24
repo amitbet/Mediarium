@@ -103,6 +103,7 @@ func libraryAvailable(root string) bool {
 // that ask by themselves (Tdarr) never get that, only a person pressing the button.
 func (s *Server) rescanMovieFiles(id int64, markMissing bool) rescanReport {
 	var rep rescanReport
+	defer s.refreshMovieMediaInfo(id) // a changed file (Tdarr and the like) is read again
 	m, err := s.MovieRepo.Get(id)
 	if err != nil || m.Status != library.StatusDownloaded || m.FilePath == "" {
 		return rep
@@ -252,6 +253,7 @@ func similarMovieFolder(root string, m library.Movie) string {
 // rescanSeriesFiles does the same for every downloaded episode of a show.
 func (s *Server) rescanSeriesFiles(id int64, markMissing bool) rescanReport {
 	var rep rescanReport
+	defer s.refreshSeriesMediaInfo(id)
 	eps, err := s.MovieRepo.ListEpisodes(id)
 	if err != nil {
 		return rep

@@ -15,6 +15,7 @@ The choice is kept per browser, so a phone and a laptop can each use their own l
 The language for movie and show information is its own choice, apart from the screen language: someone can read Mediarium in English and still want film titles in Portuguese.
 
 - Pick it under **Settings > Info, lists and subtitles > Movie and show info > Language for movie and show info**, or in the **Connect your services** step of setup. There are about thirty languages. If you've set a screen language, a button offers the matching one.
+- Release dates on a movie page and in the calendar are the ones of a country. Under **Country for release dates**, in the same card, you can pick yours (India, say, while reading in English); **Same as the info language** takes it from the language above, so English means the US.
 - It changes the titles, descriptions, genres and posters on **Discover, search results and title pages**. Where TMDB has no translation of something, you see the English text.
 - **Your files and folders always use the English title.** The name of a movie folder, the title a release is searched for on your indexers, and the matching of downloads never depend on this setting, so changing it never renames or re-searches anything.
 - Your library lists and the pages of titles already in your library still show the title they were added under (the English one) for now.

@@ -52,6 +52,7 @@ Every problem on Settings > System > Logs and errors has one of these codes. The
 |---|---|---|---|---|
 | `import.move_failed` | error | **Could not move a file into your library.** The download finished but the file couldn't be moved to your library. | Check the library folder exists, has free space and is writable. Then retry in Activity. | `/settings/media` |
 | `import.no_video` | error | **No video in a download.** The download had no movie or episode file inside. | Nothing to fix. Mediarium tries another release. |  |
+| `import.incomplete_file` | error | **A download was too short to be real.** The video in the download is much shorter than the episode or movie should be, so it is a fake, a sample or a cut-off file. | Nothing to fix. Mediarium blocklists the release and tries another one. To turn this check off, go to Settings > Library > File names and importing. | `/settings/naming` |
 | `import.file_exists` | error | **A file is already there.** A file is already in the place this one should go. | Remove the old file, or set what happens with existing files in Settings > Library > File names and importing. | `/settings/naming` |
 | `import.failed` | error | **An import failed.** This couldn't be added to your library. | Read the message on Activity and try again. | `/queue` |
 

@@ -525,8 +525,8 @@ func TestCardigannFlareSolverrFailure(t *testing.T) {
 	m.FlareSolverrURL = func() string { return fs.URL }
 	inst := Instance{ID: 1, Name: "CF Site", Kind: KindCardigann, DefinitionID: "fixturepublic", BaseURL: site.URL}
 	_, err := m.Search(context.Background(), inst, "x", []int{2000})
-	if err == nil || !strings.Contains(err.Error(), "Timeout after 60.0 seconds") {
-		t.Fatalf("expected FlareSolverr's message, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "within 60 seconds") {
+		t.Fatalf("expected a plain FlareSolverr timeout message, got %v", err)
 	}
 }
 

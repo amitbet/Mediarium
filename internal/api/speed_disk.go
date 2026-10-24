@@ -160,13 +160,15 @@ func (s *Server) applySpeedLimit(now time.Time) {
 	mb := s.speedLimitMB()
 	upKB := s.torrentUploadLimitKB()
 	if from, to, ok := s.speedLimitHours(); ok && !inHours(now.Hour(), from, to) {
-		mb, upKB = 0, 0
+		mb, upKB = 0, noUploadLimit
 	}
 	if scheduled, ok := scheduledLimit(s.speedSchedule(), now); ok {
 		mb = scheduled
 	}
 	speed.Set(int64(mb) << 20)
-	speed.SetUpload(int64(upKB) << 10)
+	// 0 is not a limit: nothing is uploaded at all.
+	speed.SetUploadOff(upKB == 0)
+	speed.SetUpload(int64(max(upKB, 0)) << 10)
 }
 
 // speedJob keeps the limit in step with the clock.

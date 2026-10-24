@@ -41,7 +41,7 @@ const (
 
 // coverLocalNames are the cover files looked for in an album folder, in
 // order of preference.
-var coverLocalNames = []string{"cover.jpg", "cover.jpeg", "cover.png", "folder.jpg", "folder.jpeg", "folder.png"}
+var coverLocalNames = []string{"cover.jpg", "cover.jpeg", "cover.png", "cover.webp", "folder.jpg", "folder.jpeg", "folder.png", "folder.webp"}
 
 // mbidPattern is what a MusicBrainz id looks like (a UUID); anything else is
 // never used to build a file name.
@@ -303,7 +303,7 @@ func serveCoverFile(w http.ResponseWriter, r *http.Request, path string) {
 	head := make([]byte, 512)
 	n, _ := f.Read(head)
 	ct := http.DetectContentType(head[:n])
-	if ct != "image/jpeg" && ct != "image/png" {
+	if ct != "image/jpeg" && ct != "image/png" && ct != "image/webp" { // browsers show all three
 		http.NotFound(w, r) // never send anything but a picture
 		return
 	}

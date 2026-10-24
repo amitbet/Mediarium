@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/rdborg/mediarium/internal/music"
+	"github.com/rdborg/mediarium/internal/musicbrainz"
 )
 
 // musicRefreshInterval is how often followed artists are checked for new
@@ -19,6 +20,11 @@ const musicRefreshInterval = 12 * time.Hour
 type updateArtistRequest struct {
 	Monitored *bool  `json:"monitored"`
 	ProfileID *int64 `json:"profileId"` // 0 = the default profile
+	// Filter is this artist's own choice of what to list and add (types,
+	// hideSecondary, hideBootlegs); useLibraryFilter true goes back to the
+	// library setting.
+	Filter           *music.Filter `json:"filter"`
+	UseLibraryFilter *bool         `json:"useLibraryFilter"`
 }
 
 // handleUpdateArtist changes an artist (administrators): whether it is
@@ -53,6 +59,24 @@ func (s *Server) handleUpdateArtist(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	var ownFilter *music.Filter
+	filterChanged := false
+	switch {
+	case req.UseLibraryFilter != nil && *req.UseLibraryFilter:
+		filterChanged = true
+	case req.Filter != nil:
+		f, ok := normalizeFilterRequest(w, *req.Filter)
+		if !ok {
+			return
+		}
+		ownFilter, filterChanged = &f, true
+	}
+	if filterChanged {
+		if err := s.MusicRepo.SetArtistFilter(id, ownFilter); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
 	if req.Monitored != nil {
 		if err := s.MusicRepo.SetArtistFollow(id, *req.Monitored); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -63,6 +87,18 @@ func (s *Server) handleUpdateArtist(w http.ResponseWriter, r *http.Request) {
 		if err := s.MusicRepo.SetArtistProfile(id, *req.ProfileID); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
+		}
+	}
+	if filterChanged {
+		// A followed artist picks up what the new choice lets in right away.
+		if artist, err := s.MusicRepo.GetArtist(id); err == nil && artist.Monitored {
+			s.background(func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+				defer cancel()
+				if _, err := s.refreshMusicArtist(ctx, artist); err != nil {
+					slog.Warn("music: refresh after a filter change", "artist", artist.Name, "err", err)
+				}
+			})
 		}
 	}
 	s.handleGetArtist(w, r)
@@ -98,7 +134,7 @@ func (s *Server) refreshMusicArtists(ctx context.Context) {
 // refreshMusicArtist is refreshMusicArtists for one artist; it returns the
 // albums it added.
 func (s *Server) refreshMusicArtist(ctx context.Context, artist music.Artist) ([]music.Album, error) {
-	groups, err := s.MusicBrainz().ArtistReleaseGroups(ctx, artist.MBID, nil, false)
+	groups, err := s.MusicBrainz().ArtistReleaseGroups(ctx, artist.MBID, nil, true)
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +146,9 @@ func (s *Server) refreshMusicArtist(ctx context.Context, artist music.Artist) ([
 	for _, a := range have {
 		known[a.MBID] = a
 	}
-	var fresh []music.Album
+	// Albums already in the library only get their date looked at, whatever
+	// the filter says; the filter decides which of the others are added.
+	var unknown []musicbrainz.ReleaseGroup
 	for _, g := range groups {
 		if a, ok := known[g.ID]; ok {
 			if g.FirstReleaseDate != "" && g.FirstReleaseDate != a.ReleaseDate {
@@ -120,6 +158,12 @@ func (s *Server) refreshMusicArtist(ctx context.Context, artist music.Artist) ([
 			}
 			continue
 		}
+		unknown = append(unknown, g)
+	}
+	filter, _ := s.artistMusicFilter(artist.ID)
+	pass, _ := s.passingGroups(ctx, filter, unknown, true)
+	var fresh []music.Album
+	for _, g := range pass {
 		fresh = append(fresh, music.Album{
 			MBID: g.ID, Title: g.Title, Type: albumType(g.PrimaryType), ReleaseDate: g.FirstReleaseDate, Monitored: artist.MonitorNew,
 		})

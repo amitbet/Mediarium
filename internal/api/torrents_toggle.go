@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/rdborg/mediarium/internal/indexers"
+	"github.com/rdborg/mediarium/internal/queue"
 	"github.com/rdborg/mediarium/internal/settings"
 )
 
@@ -87,8 +88,14 @@ func logIndexerTrouble(key, msg string) {
 // are off is a conflict with the current settings, anything else keeps
 // fallback.
 func writeGrabError(w http.ResponseWriter, err error, fallback int) {
-	if isAlreadyDownloading(err) {
-		writeError(w, http.StatusConflict, err.Error())
+	var busy alreadyDownloadingError
+	if errors.As(err, &busy) {
+		body := map[string]any{"error": err.Error()}
+		if b := busy.item; b.ID > 0 {
+			// What is in the way, so the page can offer to cancel it.
+			body["blocking"] = blockingDownload{ID: b.ID, Title: b.ReleaseTitle, Progress: b.ProgressPct, SizeBytes: b.SizeBytes, Paused: b.Status == queue.StatusPaused}
+		}
+		writeJSON(w, http.StatusConflict, body)
 		return
 	}
 	if errors.Is(err, errTorrentsDisabled) {

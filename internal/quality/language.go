@@ -18,7 +18,9 @@ type LanguageFit struct {
 	// language alone (or nothing tagged when English is wanted), 2 is the
 	// wanted language together with another one, 1 is a multi-language
 	// release that does not say it holds the wanted language. Rejected
-	// releases have rank 0.
+	// releases have rank 0. When several languages are wanted, a
+	// multi-language release that names one of them gets 4 (above the
+	// language alone), and each earlier language adds 4 more.
 	Rank int
 	// Accepted is false for a release that is clearly in another language
 	// only (ITALIAN, GERMAN, FRENCH... with nothing that includes the wanted
@@ -132,6 +134,12 @@ func FitLanguageOnly(r parser.Release, preferred string, only bool) LanguageFit 
 			continue
 		}
 		if fit := fitOneLanguage(r, l, only); fit.Accepted {
+			// Wanting several languages means wanting them together: a
+			// multi-language release that has this one also carries the
+			// others, so it goes above the release that has only this one.
+			if r.Multi && fit.Rank == 2 && hasLanguage(r, l) {
+				fit.Rank = 4
+			}
 			// Earlier languages count for more than how well the tag fits.
 			fit.Rank += (len(langs) - i) * 4
 			return fit
@@ -183,6 +191,15 @@ func fitOneLanguage(r parser.Release, preferred string, only bool) LanguageFit {
 		fit.Rank, fit.Accepted = 0, false
 	}
 	return fit
+}
+
+func hasLanguage(r parser.Release, l string) bool {
+	for _, have := range r.Languages {
+		if strings.EqualFold(have, l) {
+			return true
+		}
+	}
+	return false
 }
 
 func onlyEnglish(langs []string) bool {

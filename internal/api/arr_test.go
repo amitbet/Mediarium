@@ -19,7 +19,10 @@ func arrTMDB(t *testing.T) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/movie/701", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{"id": 701, "title": "Night Harbour", "release_date": "2021-05-14", "poster_path": "/nh.jpg", "overview": "A ferry, a storm."})
+		json.NewEncoder(w).Encode(map[string]any{"id": 701, "title": "Night Harbour", "release_date": "2021-05-14", "poster_path": "/nh.jpg", "overview": "A ferry, a storm.", "credits": map[string]any{"cast": []map[string]any{{"id": 11, "name": "Ada Reef", "character": "Captain", "profile_path": "/ada.jpg", "order": 0}}, "crew": []map[string]any{{"id": 12, "name": "Bo Quay", "job": "Director", "profile_path": "/bo.jpg"}, {"id": 13, "name": "Cy Dock", "job": "Editor", "department": "Editing"}}}})
+	})
+	mux.HandleFunc("/trending/movie/week", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"results": []map[string]any{{"id": 701, "title": "Night Harbour", "release_date": "2021-05-14"}, {"id": 702, "title": "Low Tide", "release_date": "2022-01-02", "poster_path": "/lt.jpg"}}})
 	})
 	mux.HandleFunc("/search/movie", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{"results": []map[string]any{{"id": 701, "title": "Night Harbour", "release_date": "2021-05-14"}}})
@@ -221,6 +224,23 @@ func TestArrAPIForOverseerr(t *testing.T) {
 	eps := list(arrCall(t, "GET", fmt.Sprintf("%s/episode?seriesId=%v", sonarr, seriesID), key, nil, http.StatusOK))
 	if len(eps) != 3 || obj(eps[0])["airDateUtc"] != "2019-02-01T00:00:00Z" {
 		t.Fatalf("episodes: %v", eps)
+	}
+	// One season: only that season's episodes come back (Maintainerr acts on all of them).
+	for season, want := range map[int]int{1: 2, 2: 1, 9: 0} {
+		got := list(arrCall(t, "GET", fmt.Sprintf("%s/episode?seriesId=%v&seasonNumber=%d", sonarr, seriesID, season), key, nil, http.StatusOK))
+		if len(got) != want {
+			t.Fatalf("season %d: %d episodes, want %d: %v", season, len(got), want, got)
+		}
+		for _, e := range got {
+			if obj(e)["seasonNumber"] != float64(season) {
+				t.Fatalf("season %d answer holds %v", season, obj(e))
+			}
+		}
+	}
+	arrCall(t, "GET", fmt.Sprintf("%s/episode?seriesId=%v&seasonNumber=x", sonarr, seriesID), key, nil, http.StatusBadRequest)
+	one := obj(eps[0])["id"].(float64)
+	if got := list(arrCall(t, "GET", fmt.Sprintf("%s/episode?seriesId=%v&episodeIds=%v", sonarr, seriesID, one), key, nil, http.StatusOK)); len(got) != 1 || obj(got[0])["id"] != one {
+		t.Fatalf("episodeIds filter: %v", got)
 	}
 	if cmd := obj(arrCall(t, "POST", sonarr+"/command", key, map[string]any{"name": "SeriesSearch", "seriesId": seriesID}, http.StatusCreated)); cmd["status"] == nil {
 		t.Fatalf("command: %v", cmd)

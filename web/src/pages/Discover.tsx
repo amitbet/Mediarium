@@ -10,6 +10,7 @@ import { BookAddDialog, BookBody } from '../components/BookDiscover'
 import { MusicAddDialog, MusicBody } from '../components/MusicDiscover'
 import { MUSIC_GENRES, MUSIC_TYPE_OPTIONS } from '../components/MusicRails'
 import { KIND_LABEL, useKinds, useModules, type MediaKind } from '../ModulesContext'
+import Collapsible from '../components/Collapsible'
 import Dropdown from '../components/Dropdown'
 import PagedGrid from '../components/PagedGrid'
 import Icon from '../components/Icon'
@@ -25,6 +26,7 @@ import { firstError, minMax, required, url } from '../validate'
 import { FieldError, FormProblem, useValidation } from '../useValidation'
 import FilterToggle from '../components/FilterToggle'
 import { useUrlState } from '../useUrlState'
+import { activeExtraFilters, extraFiltersSummary, languageOptions, ratingLabel, RATINGS, runtimeLabel, RUNTIMES } from '../discoverFilters'
 import { plural, t, tx } from '../i18n'
 
 const LIST_EXAMPLE = 'https://trakt.tv/users/name/lists/my-list'
@@ -62,6 +64,9 @@ interface Filters {
   from: string
   to: string
   sort: string
+  language: string
+  minRating: string
+  runtime: string
   musicType: MusicType
 }
 
@@ -69,7 +74,7 @@ interface Filters {
 // popular and coming soon; or, with a filter picked, everything that matches.
 function TitleRails({ kind, filters, filtering, includeOlder, setIncludeOlder, owned, onAdd, onClear, short }: { kind: Kind; filters: Filters; filtering: boolean; includeOlder: boolean; setIncludeOlder: (v: boolean) => void; owned: Owned; onAdd: (t: AddTarget) => void; onClear: () => void; short: boolean }) {
   if (filtering) {
-    const src: Source = { kind, list: 'browse', genre: filters.genre || undefined, yearFrom: filters.from || undefined, yearTo: filters.to || undefined, sort: filters.sort }
+    const src: Source = { kind, list: 'browse', genre: filters.genre || undefined, yearFrom: filters.from || undefined, yearTo: filters.to || undefined, sort: filters.sort, language: filters.language || undefined, minRating: filters.minRating || undefined, runtime: filters.runtime || undefined }
     return <PagedGrid key={sourceToQuery(src)} title={sourceTitle(src, filters.genreName)} source={src} kind={kind} owned={owned} onAdd={onAdd} rows={3} onClear={onClear} />
   }
   const similar: Source = { kind, list: 'similar', older: includeOlder || undefined }
@@ -237,7 +242,7 @@ function DiscoverPage() {
   const [addingBook, setAddingBook] = useState<BookFound | null>(null)
 
   // The tab and the filters live in the address, so Back from a title or an album brings Discover back as it was.
-  const [ui, patchUi] = useUrlState({ kind: 'all', genre: '', from: '', to: '', sort: 'popular', type: 'all' })
+  const [ui, patchUi] = useUrlState({ kind: 'all', genre: '', from: '', to: '', sort: 'popular', type: 'all', language: '', minRating: '', runtime: '' })
   const picked: Show = isSection(ui.kind) ? ui.kind : 'all'
   const setPicked = (k: Show) => patchUi({ kind: k, genre: '', type: 'all', sort: ui.sort === 'rating' && k !== 'movie' && k !== 'tv' ? 'popular' : ui.sort })
   // Only the kinds of media that are switched on get a tab, and a section on
@@ -258,11 +263,15 @@ function DiscoverPage() {
   const setTo = (v: string) => patchUi({ to: v })
   const sort = ui.sort
   const setSort = (v: string) => patchUi({ sort: v })
+  // The extra filters (original language, lowest rating, runtime) are for movies and shows only.
+  const extraOn = show === 'movie' || show === 'tv'
+  const extra = { language: extraOn ? ui.language : '', minRating: extraOn ? ui.minRating : '', runtime: extraOn ? ui.runtime : '' }
+  const extraCount = activeExtraFilters(extra)
   const musicType = ui.type as MusicType
   const setMusicType = (v: MusicType) => patchUi({ type: v })
   const [genres, setGenres] = useState<{ id: number; name: string }[]>([])
   const [browseMissing, setBrowseMissing] = useState(false)
-  const filtering = !!(genre || from || to || sort !== 'popular' || (show === 'music' && musicType !== 'all'))
+  const filtering = !!(genre || from || to || sort !== 'popular' || extraCount > 0 || (show === 'music' && musicType !== 'all'))
 
   const [showImport, setShowImport] = useState(false)
   const [listUrl, setListUrl] = useState('')
@@ -321,7 +330,7 @@ function DiscoverPage() {
   const titleKind = show !== 'music' && show !== 'book'
   const bookFilters = { subject: genre, subjectName: subjects.find((s) => s.subject === genre)?.label, from, to, sort }
   const orders = show === 'all' ? SHARED_ORDERS : DISCOVER_KINDS[show].orders
-  const filters: Filters = { genre, genreName: genres.find((g) => String(g.id) === genre)?.name, from, to, sort, musicType }
+  const filters: Filters = { genre, genreName: genres.find((g) => String(g.id) === genre)?.name, from, to, sort, ...extra, musicType }
   const musicFilters = { type: musicType, genre, yearFrom: from, yearTo: to, sort }
 
   async function onImport() {
@@ -339,7 +348,7 @@ function DiscoverPage() {
   }
 
   function clear() {
-    patchUi({ genre: '', from: '', to: '', sort: 'popular', type: 'all' })
+    patchUi({ genre: '', from: '', to: '', sort: 'popular', type: 'all', language: '', minRating: '', runtime: '' })
   }
 
   const switcher = (
@@ -403,6 +412,41 @@ function DiscoverPage() {
         )}
         </div>
       </div>
+      {extraOn && (
+        <div className="more-filters">
+          <Collapsible id="discover-more-filters" label={t('More filters')} showLabel summary={extraFiltersSummary(extra)} forceOpen={extraCount > 0}>
+            <div className="toolbar filter-bar" style={{ marginBottom: 0 }}>
+              <Dropdown
+                icon="globe"
+                label={t('Original language')}
+                value={extra.language}
+                onChange={(v) => patchUi({ language: v })}
+                disabled={browseMissing}
+                title={t('The language the title was first made in. This is separate from the language Mediarium shows names and summaries in, which you pick under Settings > Info, lists and subtitles > Movie and show info.')}
+                options={languageOptions(t('Original language: any'))}
+              />
+              <Dropdown
+                icon="star"
+                label={t('Lowest rating')}
+                value={extra.minRating}
+                onChange={(v) => patchUi({ minRating: v })}
+                disabled={browseMissing}
+                title={t('Only titles with at least this average rating. Titles with very few votes are left out.')}
+                options={[{ value: '', label: t('Any rating') }, ...RATINGS.map((r) => ({ value: r, label: ratingLabel(r) }))]}
+              />
+              <Dropdown
+                icon="clock"
+                label={t('Runtime')}
+                value={extra.runtime}
+                onChange={(v) => patchUi({ runtime: v })}
+                disabled={browseMissing}
+                title={show === 'tv' ? t('How long an episode is.') : t('How long the film is.')}
+                options={[{ value: '', label: t('Any runtime') }, ...RUNTIMES.map((r) => ({ value: r, label: runtimeLabel(r) }))]}
+              />
+            </div>
+          </Collapsible>
+        </div>
+      )}
       {yearProblem && (
         <p className="field-error" role="alert" style={{ margin: '0 0 14px' }}>
           {yearProblem}

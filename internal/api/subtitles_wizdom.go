@@ -35,5 +35,10 @@ func (s *Server) findWizdomSubtitles(ctx context.Context, q subtitles.Query) (re
 	results, err = s.wizdomClient().Find(ctx, subtitles.WizdomQuery{
 		IMDBID: imdb, Series: q.ParentTMDBID > 0, Season: q.Season, Episode: q.Episode, Language: q.Language,
 	})
+	line := subtitles.Diagnostic{Source: "Wizdom", Lookup: "imdb", Value: imdb, Count: len(results), Found: len(results)}
+	if err != nil {
+		line.Note, line.Detail = "error", err.Error()
+	}
+	subtitles.Report(ctx, line)
 	return results, true, err
 }

@@ -1,6 +1,6 @@
 # Notifications
 
-Notifications tell you when something happens: a download started or finished, a download failed, Mediarium needs a decision, a subtitle arrived, a connection to your Usenet provider or an indexer broke, an error was added to Logs and errors, or a new version of Mediarium is out. Administrators set them up under **Settings > Connections > Notifications**.
+Notifications tell you when something happens: a download started or finished, a download failed, Mediarium needs a decision, a subtitle arrived, a connection to your Usenet provider or an indexer broke, a download client went down or came back, an error was added to Logs and errors, or a new version of Mediarium is out. Administrators set them up under **Settings > Connections > Notifications**.
 
 ## The page
 
@@ -26,7 +26,7 @@ Notifications tell you when something happens: a download started or finished, a
 | Home Assistant | The address of Home Assistant and a long-lived access token (for a notify service), or a webhook ID (to start an automation). See [Home Assistant](#home-assistant). |
 | Apprise | The address of an Apprise API server, and either the service addresses to send to or the key of a configuration saved on that server. See [Apprise](#apprise). |
 | Push to this device | Notifications straight to the phone or computer you're using, from the browser itself. No app or account needed. See [Push to this device](#push-to-this-device). |
-| Webhook | Any address; Mediarium sends it a small JSON message, for your own automations. You can write your own JSON body with `{{event}}`, `{{title}}`, `{{message}}` and `{{at}}`. |
+| Webhook | Any address; Mediarium sends it a small JSON message, for your own automations. You can write your own JSON body with `{{event}}`, `{{title}}`, `{{message}}`, `{{at}}` and the release details listed [below](#what-a-message-looks-like). |
 
 ### Matrix
 
@@ -64,7 +64,7 @@ All three go through Mediarium's usual address check, like the other methods. Th
 
 1. Choose the method on the left.
 2. Fill in the fields. Each has a short explanation underneath, required ones are marked with a star, and mistakes (an address without `http://`, an email address without an `@`, a port that is not a number) are pointed out as you type.
-3. Choose **when** it should tell you: download started, downloaded, failed, needs a decision, subtitles, something is wrong, a new version of Mediarium. There is also **Weekly summary**, which is described [below](#weekly-summary). The default is downloaded, failed, something is wrong and a new version.
+3. Choose **when** it should tell you: download started, downloaded, failed, needs a decision, subtitles, something is wrong, a new version of Mediarium. There is also **Weekly summary**, which is described [below](#weekly-summary), **Download client down** and **Download client back**, described [below](#download-client-down-and-back), and **TRaSH Guides sync applied**, described [below](#trash-guides-sync-applied). The default is downloaded, failed, something is wrong and a new version. The download client events and the TRaSH Guides event are never on unless you tick them, and notifications you made before they existed do not get them.
 4. Press **Send a test** and check your device, then **Add**. Add works without a test, but a test finds a wrong address or password before you rely on it.
 
 ### The test log
@@ -99,9 +99,38 @@ Every message has a clear subject and the same details, made from one template, 
 
 Under the subject is one sentence and a small table: title, year, quality, size, where it was saved (or the reason it failed, or the release name) and the time.
 
+The "download started" and "ready to watch" messages also say what Mediarium knows about the release, one row each and only when it is known: the **release group**, the **indexer** it came from, the **custom format score** (only when the quality profile has custom formats, written with its sign, like `+1750`) and the **custom formats** it matched, the five that count most. A movie or show you downloaded before this existed shows the same on its "ready to watch" message, because it is worked out from the release name and the profile as they are now.
+
+When subtitles are switched on, the "ready to watch" message also has a **Subtitles** row that says where they stand at the moment of the import: `Already there (en, nl)` when the wanted languages were found next to the video or inside it (or came with the download), `Already there (en), nl still missing`, or `None yet, searching for en` when automatic downloading is on and Mediarium is about to look. With automatic downloading off it says `None yet, not downloaded`. The row is left out when subtitles are off. It shows what was there when the file arrived; a subtitle that Mediarium then downloads still sends its own **Subtitles** message, if you chose that event. For a season pack the row covers all its episodes.
+
 - **Email** is a formatted page with the Mediarium name on the brand colour, the poster, the table and an **Open in Mediarium** button, plus a plain-text version of the same message for mail programs that don't show pages. It loads nothing but the poster picture from TMDB: no tracking pictures, scripts or fonts. A message about a problem uses a warmer colour under the header.
 - **Discord** gets an embed with the poster as a thumbnail and a field per detail. **Slack** gets a header, the sentence, the details in two columns and a button. **Telegram** gets bold text and a link. **ntfy** gets a title, a priority, an emoji tag for the event, and the title's page as the tap action. **Gotify**, **Pushover** and webhooks get the same subject and details in their own format.
-- A webhook keeps `event`, `title`, `message` and `at`, and adds `details` (a list of `label` and `value`), and `link` and `poster` when there are any. `title` is now the subject and `message` the sentence with the details, one per line. A custom JSON body sees the same `{{title}}` and `{{message}}`.
+- A webhook keeps `event`, `title`, `message` and `at`, and adds `customFormatScore` (a number), `customFormats` (a list of names), `releaseGroup`, `indexer` and `size` (in bytes), each only when it is known, and adds `details` (a list of `label` and `value`), and `link`, `poster` and, on a "downloaded" message while subtitles are on, `subtitles` (the same words as the Subtitles row) when there are any. `title` is now the subject and `message` the sentence with the details, one per line. A custom JSON body sees the same `{{title}}` and `{{message}}`, and also `{{subtitles}}`, `{{customFormatScore}}`, `{{customFormats}}` (names separated by commas), `{{releaseGroup}}`, `{{indexer}}`, `{{size}}` (bytes) and `{{sizeText}}` (like `4.2 GB`), all empty when there is nothing to say. Put them inside quotes, as in `{"score": "{{customFormatScore}}"}`.
+
+### Download client down and back
+
+Tick **Download client down** and **Download client back** on a notification to hear when a download client stops answering and when it answers again. This covers the torrent client you connected (qBittorrent, Transmission, Deluge...), the Usenet downloader you connected (SABnzbd or NZBGet) and the built-in Usenet downloader. There is no extra checking: Mediarium notices when the requests it already makes to the client (while a download runs, and when you have the Activity page open) fail.
+
+- A client is down after three failed checks in a row that stretch over at least a minute, so a restart does not count. Message: `qBittorrent can't be reached: connection refused.`
+- When it answers again, you get one message: `qBittorrent is reachable again after 12 minutes.` You only get "back" for an outage you were told about.
+- One message for one outage, and a new "down" message waits until ten minutes have passed since the last message about that client, so a client that keeps flapping does not fill your phone.
+- A client that answers but refuses the login or the category is not counted as down. The Health list and the download itself already say that.
+- "Down" is sent straight away even in quiet hours, "back" waits for the quiet hours to end like the other everyday messages.
+- Both are off for every notification that exists today. The built-in torrent downloader has no separate program to be down, so it sends neither.
+
+
+### TRaSH Guides sync applied
+
+Tick **TRaSH Guides sync applied** to hear when the update of your TRaSH custom formats changed something (see [Keeping the TRaSH formats up to date](quality-profiles.md#keeping-the-trash-formats-up-to-date)). It covers the automatic daily or weekly update and the **Update from TRaSH** button.
+
+- You get one message per update that changed at least one format, for example: `2 custom formats updated from the TRaSH Guides.` with the rows **Custom formats** (the first five names, then `and 3 more`), **Profile scores** (`4 scores changed in 2 profiles`, only when a score moved) and **Started by** (the automatic update, or the button).
+- When the guides had nothing new, nothing is sent, unless you tick **Also tell me when nothing changed** under the event (it shows up once the event is ticked, and it applies to every notification that listens for the event). Then you get `TRaSH Guides checked: nothing needed updating.` after each check.
+- When a check fails (GitHub could not be reached, for example), you always get `TRaSH Guides check failed: <reason>.`, with or without that box.
+- The size limits from the TRaSH Guides are not applied automatically, so they never appear here.
+- It is a normal everyday message: quiet hours hold it back until they end.
+- A webhook gets the usual `event` (`trashsync`), `title`, `message` and `details`, and `customFormats` with the names of the formats that changed (up to ten). The custom body placeholder `{{customFormats}}` has them too.
+- It is off for every notification that exists today and for new ones until you tick it.
+
 
 ### The link
 

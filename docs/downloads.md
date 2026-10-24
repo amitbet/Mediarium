@@ -11,7 +11,7 @@ How Mediarium's built-in downloaders use your network and disk: the torrent port
 Settings > Downloading has four pages: **Usenet**, **Torrents**, **VPN and proxy** and **Download rules**. The cards below are on **Download rules**, **Usenet** and **Torrents**. The settings in [Speed and space](#speed-and-space) and [Checks on releases](#checks-on-releases) are on Download rules (the age of Usenet posts is on the Usenet page), and you can [add a download by hand](activity.md#add-a-download-by-hand) from Activity.
 
 - **Where to download from** (Download rules): **Usenet and torrents**, **Usenet only** or **Torrents only** for every movie and show. You can change it for a single title when you add it or on its page. When a Usenet release and a torrent release are equally good, Usenet wins. Choosing Usenet only also switches the torrent client off.
-- **Downloads at the same time** (Download rules): how many downloads run together (1 to 5). See [below](#downloads-at-the-same-time-the-download-line).
+- **Downloads at the same time** (Download rules): how many downloads run together (1 to 500). See [below](#downloads-at-the-same-time-the-download-line).
 - **Usenet (NZB)** (Usenet page): the built-in downloader needs only your provider's login. **Add your Usenet provider** takes the server address, port, username, password, number of connections and whether to use SSL. Press **Test connection** first. With SSL on, the server needs a certificate a public authority vouches for: a self-signed one is refused, and the test says so in plain words ("The server's certificate isn't trusted ..."), as it does for a certificate made out to another name or one that has expired. **Add server** (or **Save server**) works once the test has passed. Each server has **Test**, **Edit**, **Disable** and **Remove**. A second server (**Add a backup provider**) is used for articles your main one is missing. Priority 0 is the main provider, higher numbers are backups.
 - **Torrents** (Torrents page): the switch **Use the built-in torrent client**, **Client settings** (listen port, seed ratio limit, seed time limit; press **Save**), **Stalled torrents**, **Torrent options** (the router port, new torrents in order, upload limit, categories), a **Debrid service** and **Use your own torrent client**. The Download clients tab in Activity shows the router port and links here.
 
@@ -55,7 +55,7 @@ A torrent often holds more than the film or episode you want: samples, notes, ex
 ### Speed limits
 
 - **Per torrent:** under Details, **Download KB/s** and **Upload KB/s** limit one torrent. Empty means no limit of its own. The torrent is held back whenever it has taken more than its share, so its speed stays near the limit on average, but it can come in bursts and a limit below about 50 KB/s is rough.
-- **Upload limit for the whole client:** **Upload limit (KB/s)** in the torrent client card (`torrent.upload_limit_kb`, no limit by default). It is separate from the download limit in Settings. The hours you set for the download limit ("Only from ... to ...", see [Speed and space](#speed-and-space)) also decide when the upload limit applies.
+- **Upload limit for the whole client:** **Upload limit (KB/s)** in the torrent client card (`torrent.upload_limit_kb`). Empty means no limit, which is the default. `0` switches uploading off completely: the built-in client stops sending data to anyone, while downloading keeps working. A fraction or a negative number is refused. Some trackers need you to share, and private trackers may ban accounts that don't seed, so use `0` with care. It is separate from the download limit in Settings. The hours you set for the download limit ("Only from ... to ...", see [Speed and space](#speed-and-space)) also decide when the upload limit applies.
 - The limit of a torrent, the upload limit and the download limit all apply together, and the slowest wins.
 
 ### Categories and save folders
@@ -70,7 +70,7 @@ A category files torrents in a folder of their own. Under **Categories** in the 
 
 ### Seeding rules for one indexer
 
-Private trackers have their own rules. On **Settings > Indexers & Search**, a torrent indexer has **Seeding rules**: **Seed until ratio** and **or for hours**. A torrent from that indexer stops seeding at the first of the two that is reached. With an [external download client](#how-a-download-goes), the limits are sent to the client when the torrent is added and the client enforces them. An empty box follows the global limit (`torrent.seed_ratio_limit` and `torrent.seed_time_limit_h`), and `0` means no limit of that kind. A rule applies to torrents that start downloading after you save it. A torrent that came from no indexer, or from one without a rule, uses the global limit.
+Private trackers have their own rules. On **Settings > Indexers & Search**, a torrent indexer has **Seeding rules**: **Seed until ratio** and **or for hours**. A torrent from that indexer stops seeding at the first of the two that is reached. With an [external download client](#how-a-download-goes), the limits are sent to the client when the torrent is added and the client enforces them. An empty box follows the global limit (`torrent.seed_ratio_limit` and `torrent.seed_time_limit_h`). `0` means don't seed at all, even when the global limit would let it. To have no limit of that kind even when the global one has a limit, type `unlimited` (the API holds it as `-1`). A rule applies to torrents that start downloading after you save it. Mediarium remembers which indexer a release came from when it is grabbed, whether you picked it in a search or the feed check or a scheduled search did. A torrent that came from no indexer (a magnet link you pasted, or a search too old to remember), or from one without a rule, uses the global limit.
 
 ### Opening the port on your router
 
@@ -87,7 +87,7 @@ The request is made when the client starts and the port is taken off the router 
 
 ### For scripts
 
-Administrators only: `GET` and `PUT /api/downloads/torrent-options` (`sequentialDefault`, `skipJunk`, `packOnlyWanted`, `uploadLimitKB`, `portMapping`, `categories`, `categoryByKind`), `GET` and `PUT /api/queue/{id}/torrent` (`sequential` as `default`, `on` or `off`, `downLimitKB`, `upLimitKB`), `PUT /api/queue/{id}/torrent/files` (`skip`, the list of file paths to leave out), and `GET /api/indexers/seed-rules` with `PUT /api/indexers/{id}/seed-rules` (`ratio`, `hours`; `null` follows the global limit).
+Administrators only: `GET` and `PUT /api/downloads/torrent-options` (`sequentialDefault`, `skipJunk`, `packOnlyWanted`, `uploadLimitKB`, `portMapping`, `categories`, `categoryByKind`), `GET` and `PUT /api/queue/{id}/torrent` (`sequential` as `default`, `on` or `off`, `downLimitKB`, `upLimitKB`), `PUT /api/queue/{id}/torrent/files` (`skip`, the list of file paths to leave out), and `GET /api/indexers/seed-rules` with `PUT /api/indexers/{id}/seed-rules` (`ratio`, `hours`; `null` follows the global limit, `0` is don't seed, `-1` is no limit). In `torrent-options`, `uploadLimitKB` is `null` for no limit and `0` for no uploading; send `-1` to clear the limit.
 
 ## Usenet connections
 
@@ -99,6 +99,8 @@ If the provider says "too many connections" (usually because another program, li
 
 When the provider keeps refusing connections, the dashboard's **Needs your attention** list also says so ("news.example.com allows fewer connections than you set", with a button to the test), for twelve hours after the last refusal.
 
+Using SABnzbd or NZBGet instead? See [SABnzbd and NZBGet](#sabnzbd-and-nzbget).
+
 Connections close when a download finishes, fails or is cancelled, and when you remove or switch off a server or change its address or login. Lowering the number of connections takes effect at once, even for a download that's running.
 
 ## What is checked when you save
@@ -107,17 +109,17 @@ Every field in Settings points out a mistake under the box when you leave it, or
 
 - **Usenet servers:** the server is a bare host name or IP address (`news.example.com`, no `https://`, no port and no path), the port is 1 to 65535, connections are 1 to 100 and the priority is 0 to 99. A username and password go together.
 - **Torrents:** the listen port is 0 (use the default) or 1 to 65535, the seed ratio is 0 to 1000 and the seed time is 0 to 87,600 hours. 0 means unlimited for both.
-- **Downloads at the same time:** a whole number from 1 to 5.
+- **Downloads at the same time:** a whole number from 1 to 500.
 - **VPN:** the endpoint is `host:port` with a port from 1 to 65535, the two keys are 44-character WireGuard keys, and the tunnel address is an IP address with an optional `/prefix`.
 - **Folders:** each folder must be a full path, starting with `/`, a drive letter such as `D:\`, or a network path such as `\\server\share`. A custom movie file name must include the movie's title and an episode file name its season and episode; both use only known tokens and can't contain `/` or `\` (see [library.md](./library.md#file-names)).
 
 Only what you change is checked, so a value an older version saved never stops you saving something else.
 
-## Debrid services (Real-Debrid, TorBox)
+## Debrid services (Real-Debrid, TorBox, Premiumize)
 
 Instead of downloading torrents here, Mediarium can hand them to a debrid service. The service downloads the torrent on its own servers, and Mediarium then downloads the finished files from it over https into the download's folder, where unpacking and import work as for any other download.
 
-- **Set up:** Settings > Downloading > Torrents > **Debrid service**. Pick **Real-Debrid** or **TorBox**, paste your API key (Real-Debrid: real-debrid.com/apitoken; TorBox: torbox.app/settings), press **Test** to see the account and when its premium ends, then **Save**. Most downloads need a premium account.
+- **Set up:** Settings > Downloading > Torrents > **Debrid service**. Pick **Real-Debrid**, **TorBox** or **Premiumize**, paste your API key (Real-Debrid: real-debrid.com/apitoken; TorBox: torbox.app/settings; Premiumize: premiumize.me/account), press **Test** to see the account and when its premium ends, then **Save**. Most downloads need a premium account.
 - **The built-in torrent client can stay off.** Torrent sites are still searched while a debrid service is set, and torrent releases go to the service. No torrent traffic leaves your home, nothing is seeded from here, and the VPN for torrents isn't needed for them. Seeding settings don't apply.
 - **Progress:** the first half of the bar is the service downloading the torrent, the second half is Mediarium bringing the files home. A download that was paused or interrupted carries on where it stopped, also after a restart, without adding the torrent to the service again.
 - **When the service gives up** (no one sharing it, a dead or harmful torrent), or nothing moves there for 6 hours, the release is blocklisted and, with automation on, the next-best one is tried, as with a stalled torrent.
@@ -126,23 +128,37 @@ Instead of downloading torrents here, Mediarium can hand them to a debrid servic
 - The service's API key is stored encrypted. Requests to the service go through the proxy set for indexers, if you have one (Settings > Downloading > VPN and proxy > Proxy).
 - Mediarium never mounts anything or streams from the service: no special container permissions are needed.
 
-### Releases that are already cached (TorBox)
+### Premiumize
 
-TorBox keeps torrents other people already downloaded. When you grab one of those, it is ready at once. TorBox will tell Mediarium which torrents it has, so you can see them and have them preferred.
+Premiumize works like the other two, with a few differences worth knowing.
 
-- **In the release list:** a green **Cached** tag on a release means TorBox already has it. Mediarium asks once per search, for the whole list, and remembers the answer for 5 minutes. A release with no tag is either not cached or not known: some indexers give no torrent hash, and a plain .torrent link is not downloaded just to find out.
+- **Where to find the API key:** sign in at premiumize.me and open [premiumize.me/account](https://www.premiumize.me/account). The key is on that page. Paste it into the **API key** box. It is stored encrypted, like the other keys.
+- **What the Test button does:** it asks Premiumize for your account (`/account/info`) and shows your customer number, the date your premium ends and how much of this month's fair-use limit is used. A wrong key is reported as such. A free account is accepted by the test, but Premiumize refuses most downloads on it.
+- **Cached torrents are instant.** Premiumize keeps torrents other people already downloaded. When you grab one of those, Mediarium reads the file list straight away and starts bringing the files home, without adding anything to your account. Everything else becomes a normal transfer on your account, and the first half of the progress bar follows it.
+- **Cached tags and ranking** work as for TorBox, see below.
+- **Clean-up:** when the files are home, Mediarium deletes the transfer and the folder it made in your Premiumize cloud storage, so the finished torrent doesn't use up your space. Anything else in your cloud storage, and other transfers on the account, are never touched.
+- **Limits and manners:** Premiumize has a monthly fair-use limit that every transfer counts against (the Test button shows how much is left). Mediarium asks for the list of your transfers at most once every 5 seconds, no matter how many downloads are waiting, and only while a torrent is waiting on Premiumize or the Activity page is open. If Premiumize answers "too many requests" (HTTP 429), Mediarium waits and tries again at the next check instead of giving up on the download.
+- **When Premiumize gives up** (an error, a time-out, a banned torrent) the release is blocklisted with Premiumize's own message, as with the other services.
+- **Private torrents** are your own call: some trackers forbid debrid services. Mediarium doesn't check.
+- Requests go through the proxy set for indexers, if you have one, and only to premiumize.me, only while Premiumize is the chosen service.
+
+### Releases that are already cached (TorBox and Premiumize)
+
+TorBox and Premiumize keep torrents other people already downloaded. When you grab one of those, it is ready at once. They will tell Mediarium which torrents they have, so you can see them and have them preferred.
+
+- **In the release list:** a green **Cached** tag on a release means TorBox or Premiumize (whichever you chose) already has it. Mediarium asks once per search, for the whole list, and remembers the answer for 5 minutes. A release with no tag is either not cached or not known: some indexers give no torrent hash, and a plain .torrent link is not downloaded just to find out.
 - **In automatic searches:** among releases of the same quality, a cached one is picked before one that has to be downloaded first. The quality profile is applied first, so a release the profile would refuse is never picked for being cached, and a cached release of a lower quality never wins over a better one. The delay profile, size limits, blocklist and the order of your indexers and protocols work as before: a cached release is not treated specially there. Between two releases that score differently under the profile's preferred terms, the higher score still wins.
-- **Settings > Downloading > Debrid service** (with TorBox chosen):
-  - **Prefer releases TorBox already has** is on by default for TorBox. Turn it off and Mediarium stops asking TorBox about torrents: no tags and no ranking, and no hashes are sent (`debrid.prefer_cached`).
+- **Settings > Downloading > Debrid service** (with TorBox or Premiumize chosen):
+  - **Prefer releases TorBox already has** (or Premiumize) is on by default for both. Turn it off and Mediarium stops asking the service about torrents: no tags and no ranking, and no hashes are sent (`debrid.prefer_cached`).
   - **Accept a lower score for a cached release** is off by default. Turn it on and a cached release also wins over a higher-scoring one of the same quality (`debrid.cached_lower_score`). It still never wins over a better quality.
-- **What is sent:** only the info hashes of the torrents in the results, to TorBox's `checkcached` call. Nothing else.
-- **If TorBox is slow or unreachable,** the search carries on without the information, after waiting at most 5 seconds. Mediarium then leaves TorBox alone for a minute before it asks again. A failed check never stops a search or a download.
+- **What is sent:** only the info hashes of the torrents in the results, to TorBox's `checkcached` call or Premiumize's `cache/check` call. Nothing else.
+- **If the service is slow or unreachable,** the search carries on without the information, after waiting at most 5 seconds. Mediarium then leaves it alone for a minute before it asks again. A failed check never stops a search or a download.
 - **Real-Debrid** has no cache check: it turned off its availability endpoint (`instantAvailability`) at the end of 2024, and its API documentation no longer lists it, so nothing is marked or preferred when Real-Debrid is the service.
 - The tag shows in the release lists of movies, shows and books, and in the main search. Music release lists don't show it yet.
 
 ## Download clients (qBittorrent, Transmission, RDT-Client, Decypharr)
 
-If you already run a torrent client, Mediarium can hand torrent releases to it instead of downloading them itself. It works with qBittorrent, with Transmission, and with programs that copy qBittorrent's web interface, such as RDT-Client and Decypharr. The client downloads the torrent into its own folder and can keep seeding it there. When it's done, Mediarium imports the files straight from that folder. It never moves, renames or deletes the client's files.
+If you already run a torrent client, Mediarium can hand torrent releases to it instead of downloading them itself. It works with qBittorrent, with Transmission, and with programs that copy qBittorrent's web interface, such as RDT-Client and Decypharr. The client downloads the torrent into its own folder and can keep seeding it there. When it's done, Mediarium imports the files straight from that folder. It never moves or renames the client's files, and deletes them only when you stop or remove a download before it finished, or when you switch on removal after import (see [How a download goes](#how-a-download-goes)).
 
 Torrent releases go to one place only: the built-in torrent client, a debrid service or a download client. Saving a download client turns the debrid service off, and saving a debrid service turns the download client off. The built-in torrent client can stay off: torrent sites are still searched while a download client is set.
 
@@ -150,8 +166,8 @@ Torrent releases go to one place only: the built-in torrent client, a debrid ser
 
 - **Address:** where you open its web page, for example `http://192.168.1.10:8080`. In Docker, use the client's container name if both are on the same network (`http://qbittorrent:8080`).
 - **User name** and **Password:** the web login. Leave them empty if the client lets Mediarium in without one. The password is stored encrypted and never shown again.
-- **Category:** torrents are added in this category (`mediarium` unless you change it), so they're easy to find in the client. Each torrent also gets a tag like `mediarium-q12`, which is how Mediarium finds it again.
-- **Category for movies, TV shows, music and books:** optional. Fill one in to keep that kind of download in its own category (for example `movies` and `tv`), which is handy when the client moves finished files by category. An empty one uses the main category, so nothing changes if you leave them all empty. A torrent added earlier under the main category is still shown as Mediarium's. In Transmission the category is a label.
+- **Category:** torrents are added in this category (`mediarium` if you never set anything), so they're easy to find in the client. Each torrent also gets a tag like `mediarium-q12`, which is how Mediarium finds it again, with or without a category. You can clear this field: if you have filled in a category for some kinds and leave this one empty, a kind without its own category is added with **no category** at all. Only when this and all four kinds are empty is `mediarium` used.
+- **Category for movies, TV shows, music and books:** optional. Fill one in to keep that kind of download in its own category (for example `movies` and `tv`), which is handy when the client moves finished files by category. An empty one uses the main category (or none, if you cleared that too, see above), so nothing changes if you leave them all empty. A torrent added earlier under the main category is still shown as Mediarium's. In Transmission the category is a label.
 
 Press **Test** to check the address and login (it shows the client's version), then **Save**.
 
@@ -163,7 +179,7 @@ Use the address and login of qBittorrent's Web UI (Tools > Options > Web UI). Me
 
 Pick **Transmission** and use the address of its Web UI, for example `http://192.168.1.10:9091` (in Docker, `http://transmission:9091`). Mediarium adds `/transmission/rpc` itself. If you set a user name and password in Transmission (`rpc-authentication-required`), enter them; otherwise leave them empty. Transmission needs to be **version 3.00 or newer**: Mediarium marks its torrents with **labels** (the category, and a tag like `mediarium-q12`), which older versions don't have. As with qBittorrent, mount the folder Transmission downloads to into the Mediarium container, and set the path mapping if the paths differ. If Transmission's `rpc-host-whitelist` is on, add Mediarium's address to it.
 
-What Mediarium does with it: sends the magnet link or the torrent file, follows the progress, pauses, resumes and re-checks the torrent when you do in Activity, and removes it after the import when you chose **Remove after import**. A tracker error in Transmission doesn't fail a download; a local error (disk full, files gone) does. I could only test this against a copy of Transmission's RPC, not a real Transmission, so please say how it goes.
+What Mediarium does with it: sends the magnet link or the torrent file, follows the progress, pauses, resumes and re-checks the torrent when you do in Activity (**Pause** on a download in the queue pauses the torrent in the client too, qBittorrent 4 and 5 alike, and **Resume** starts it again; a torrent you pause in the client yourself is left paused and isn't counted as stalled), and removes it after the import when you chose **Remove after import**. A tracker error in Transmission doesn't fail a download; a local error (disk full, files gone) does. I could only test this against a copy of Transmission's RPC, not a real Transmission, so please say how it goes.
 
 ### RDT-Client
 
@@ -189,22 +205,61 @@ A download the client saved at `/downloads/Movie.2024.1080p` is then looked for 
 
 ### How a download goes
 
-- The magnet link or `.torrent` file is sent to the client. The progress bar follows the client's progress. Pausing or stopping in Activity leaves the torrent in the client; resuming picks it up again, also after a restart, without adding it twice.
+- The magnet link or `.torrent` file is sent to the client. The progress bar follows the client's progress. Pausing in Activity leaves the torrent in the client; resuming picks it up again, also after a restart, without adding it twice. Stopping a download, or removing one that hasn't finished, takes the torrent out of the client too (see below).
 - If the client says the torrent has an error, or nothing moves for 6 hours, the torrent is removed from the client with its files, the release is blocklisted and, with automation on, the next-best one is tried.
 - When the torrent is done, the download's own folder (`incomplete/queue-N`) gets a link to each of the torrent's files. For a single-file torrent that's only that one file, never other files that sit next to it in the client's folder. Archives (RAR, ZIP, 7z) are unpacked into the download's own folder, not into the client's folder. Files are imported from the client's folder with a hardlink when possible, otherwise copied.
 - Afterwards the download's own folder is cleaned up as usual. That removes only the links and what was unpacked, never the client's files.
+- **When I stop or remove a download, remove it from the client too** is on by default (`downloadclient.remove_on_stop`, `removeOnStop` in `PUT /api/download-client`). When you stop a download in Activity, remove it from the list, remove its movie or show, or press **Blocklist & search again**, Mediarium also removes the torrent from the client, with what it downloaded, so you don't have to clean up there by hand. It only touches a torrent that Mediarium sent itself (it has the tag `mediarium-q12` for that download), and only one that hasn't finished downloading. A torrent that has finished stays and keeps seeding, a download that was already imported is never touched, and a torrent that was in the client before Mediarium sent it is left alone. **Blocklist & search again** removes the torrent even when it had finished, since that release is thrown away. Pausing never removes anything. If the client is down or no longer has the torrent, the download is removed from Mediarium anyway and nothing is shown; the reason goes in the log. Switch the option off to keep every torrent in the client when you stop or remove a download.
 - **Remove from the client after import** is off by default, so the torrent keeps seeding as long as the client wants it to. Switch it on to have the torrent removed once it's in your library. Its files go with it, unless they are symlinks (the library's links still need them) or the torrent was already in the client before Mediarium sent it.
-- **Seeding limits are sent to the client.** When Mediarium adds a torrent it also gives that torrent its seeding limits: the global ones (`torrent.seed_ratio_limit`, `torrent.seed_time_limit_h`) or, for a torrent from an indexer with [seeding rules](#seeding-rules-for-one-indexer), that indexer's. The client then enforces them itself. In qBittorrent they are the torrent's own share limits (ratio and seeding time in minutes). A kind that is `0` is sent as "no limit"; with both at `0` Mediarium sends nothing and the client keeps its own defaults. Transmission only gets the ratio, because it has no total seeding time (its idle limit is something different). RDT-Client, Decypharr and other programs that copy the qBittorrent API may ignore the limits; that never fails the download.
+- **Seeding limits are sent to the client.** When Mediarium adds a torrent it also gives that torrent its seeding limits: the global ones (`torrent.seed_ratio_limit`, `torrent.seed_time_limit_h`) or, for a torrent from an indexer with [seeding rules](#seeding-rules-for-one-indexer), that indexer's. The client then enforces them itself. In qBittorrent they are the torrent's own share limits (ratio and seeding time in minutes), which you can see under the torrent's right-click menu, **Limit share ratio...**. Mediarium sends them in the add call and again with `setShareLimits` on the torrent's hash, so qBittorrent 4 and 5 both take them. A rule with only hours sends "no ratio limit" next to the time, so the time limit is enforced whatever ratio limit qBittorrent has itself. A kind that is empty is sent as "no limit"; with both empty Mediarium sends nothing and the client keeps its own defaults. A limit of `0` (don't seed) is sent as ratio `0`, so the client stops the torrent as soon as it has finished; what it does then (pause or remove) is its own setting. Transmission only gets the ratio, because it has no total seeding time (its idle limit is something different). RDT-Client, Decypharr and other programs that copy the qBittorrent API may ignore the limits; that never fails the download.
 - **What happens when the limit is reached is the client's choice.** In qBittorrent that is a global setting, and Mediarium doesn't change it: to have qBittorrent remove the torrent (or pause it, or stop it) at the limit, set it in qBittorrent under Options > BitTorrent > Seeding Limits, **then** (pause, stop or remove torrent). This is separate from **Remove from the client after import**, which removes the torrent as soon as it is in your library, whatever its limits are. Limits are set when the torrent is added; changing a rule later doesn't change torrents already in the client.
 - The VPN settings for the built-in torrent client don't apply: the client handles its own traffic.
 
+## SABnzbd and NZBGet
+
+Mediarium downloads from Usenet by itself and that stays the default. If you already run SABnzbd or NZBGet, you can have Mediarium hand Usenet releases to it instead. The downloader fetches, repairs and unpacks into its own folder, and when it is done Mediarium imports the files straight from that folder. It never moves or renames the downloader's files. They are only deleted when you stop or remove a download before it finished, or when you switch on removal after import (see below).
+
+**Set up:** Settings > Downloading > Usenet > **Use SABnzbd or NZBGet** (the last card on the page). Pick the downloader, then fill in:
+
+- **Address:** where you open its web page, for example `http://192.168.1.10:8080` for SABnzbd or `http://192.168.1.10:6789` for NZBGet. In Docker, use the container name if both are on the same network (`http://sabnzbd:8080`).
+- **API key** (SABnzbd): in SABnzbd under Config > General. It is stored encrypted and never shown again.
+- **User name** and **Password** (NZBGet): the `ControlUsername` and `ControlPassword` from NZBGet's settings (Security). Stored encrypted.
+- **Category:** NZBs are added in this category (`mediarium` if you never set anything). It has to exist in the downloader already: in SABnzbd under Config > Categories, in NZBGet under Settings > Categories. That is also where its download folder is set. As with torrent clients, you can clear it when you fill in a category for some kinds: a kind without one then gets no category.
+- **Category for movies, TV shows, music and books:** optional, to keep each kind in its own category and folder.
+- **Priority:** low, normal, high or force, sent with every release.
+- **Send Usenet releases to SABnzbd/NZBGet:** the switch that makes it the downloader. It is off until you turn it on, so you can save and test everything first. Off, or with no downloader chosen, the built-in downloader is used. Turning it on does not change what is already downloading.
+- **Let it fetch the NZB file itself:** off by default. Mediarium then gets the NZB from the indexer, checks it (no programs or scripts in it, not the same NZB as an earlier download of the title, the other checks under [Checks on releases](#checks-on-releases)) and sends the file. On, only the link is sent, so the indexer's address, which holds your key, ends up in the downloader and Mediarium can't look at the file first. A release that only Mediarium can open (an indexer that needs its sign-in, or an NZB you uploaded) is always sent as a file.
+
+Press **Test**. It says which part is wrong: that nothing answers at the address, that the API key or the login was refused, that the address is something else than SABnzbd or NZBGet, or that a category doesn't exist in the downloader (it names the category). On success it shows the downloader's version. Then **Save**.
+
+The Usenet provider is then the downloader's business: Mediarium doesn't need a news server of its own while the switch is on, and the "No Usenet provider added" warning goes away.
+
+### Path mapping
+
+The downloader reports where it saved a finished download as it sees it. If it runs in another container or on another computer, that path can be different inside Mediarium. Fill in both fields, exactly as for a [torrent client](#path-mapping): **The downloader's folder** (for example `/downloads/complete`) and **The same folder in Mediarium** (for example `/data/usenet/complete`). Leave both empty when the paths are the same. Mounting one parent folder (for example `/data`) into both containers, with the same path inside each, needs no mapping and lets imports use hardlinks instead of copies. When Mediarium can't see a finished download, it fails with a message that points here.
+
+### How a download goes
+
+- The NZB is sent to the downloader with the category of its kind and your priority. Mediarium keeps the job's id in the download's own folder (`incomplete/queue-N`), so a restart or a retry picks the job up again instead of sending it twice.
+- Mediarium asks every few seconds how it is doing. The progress bar follows the downloader's. Waiting, downloading, paused, "checking and unpacking" (repair and unpack) and done are shown the same way as for torrents, on the Queue tab and under Activity > Download clients.
+- When the job is done, the download's own folder gets a link to each file in the downloader's folder, and the import goes on as for any download. Files are imported with a hardlink when possible, otherwise copied. Mediarium does not repair or unpack in the downloader's folder: the downloader already did.
+- **If the downloader gives up** on a release (SABnzbd's history says Failed, NZBGet's says FAILURE or WARNING such as too many articles missing, a repair or unpack that failed, or a password), that is the release's fault: it goes on the [blocklist](#when-a-download-fails), the job is removed from the downloader with what it had, and with automation on the next-best release is tried, exactly as for a failure of the built-in downloader.
+- The downloader's own trouble (a full disk, a folder it can't write to, NZBGet failing to move the files) is not held against the release. It is not blocklisted, the job stays in the downloader for you to look at, and the download fails with a message saying so. The same goes for a job deleted by hand in the downloader.
+- **Pause** in Mediarium pauses the job in the downloader, and **Resume** starts it again. A download left paused in the downloader by hand keeps waiting there.
+- **When I stop or remove a download, remove it from the downloader too** is on by default (`usenetclient.remove_on_stop`). Stopping, removing a download, removing its movie or show, or **Blocklist & search again** also removes the job from the downloader, with what it downloaded. It only touches a job that Mediarium sent and that hasn't finished. A finished job stays, and a download that was already imported is never touched.
+- **Remove from the downloader after import** is off by default, so nothing is ever deleted there. Switch it on to have the job removed once it is in your library. SABnzbd deletes the finished files with it. NZBGet's API can only take the job out of its history, so its files stay in its folder unless NZBGet is set to clean up by itself.
+
+Not supported: the downloader's own post-processing scripts are left to it, Mediarium doesn't change the downloader's settings, and the speed limit of Mediarium only applies to the built-in downloader. I could only test SABnzbd and NZBGet against copies of their web APIs, not the real programs, so please say how it goes.
+
+Scripts (administrators): `GET` and `PUT /api/usenet-client` (the secrets are `apiKey` and `password`, write only), `POST /api/usenet-client/test`, `GET /api/usenet-client/jobs?scope=mine|all`, `POST /api/usenet-client/jobs/{id}/pause|resume|remove|remove-files`.
+
 ## Seeding
 
-A finished torrent is imported straight away and keeps seeding in the background until its **seeding goal** is met: the seed ratio limit (`torrent.seed_ratio_limit`, uploaded divided by size, for example 2.0) or the seed time limit (`torrent.seed_time_limit_h`, hours), whichever comes first. A torrent indexer can have rules of its own, and a torrent from it follows those instead (see [Seeding rules for one indexer](#seeding-rules-for-one-indexer)). With both at 0, a torrent seeds until Mediarium stops or torrents are switched off. Seeding doesn't survive a restart. When the goal is met the torrent stops and its data is deleted from the downloads folder (see below).
+A finished torrent is imported straight away and keeps seeding in the background until its **seeding goal** is met: the seed ratio limit (`torrent.seed_ratio_limit`, uploaded divided by size, for example 2.0) or the seed time limit (`torrent.seed_time_limit_h`, hours), whichever comes first. A torrent indexer can have rules of its own, and a torrent from it follows those instead (see [Seeding rules for one indexer](#seeding-rules-for-one-indexer)). With both empty, a torrent seeds until Mediarium stops or torrents are switched off. Empty is the default, and it is what a `0` in an older version became when you updated, so nothing changed for you. A `0` in either box now means **don't seed**: the torrent is stopped as soon as it has downloaded and the files stay for the import (a hardlinked library file is not affected). Some trackers need you to share, and private trackers may ban accounts that don't seed. Seeding doesn't survive a restart. When the goal is met the torrent stops and its data is deleted from the downloads folder (see below).
 
 ## Downloads at the same time (the download line)
 
-Downloads run in a line. **Downloads at the same time** (Settings > Downloading > Download rules, saved as `downloads.concurrent`) is 1 to 5 and starts at **1**, the safest choice. Usenet and torrents share the number, so 1 means one download in total.
+Downloads run in a line. **Downloads at the same time** (Settings > Downloading > Download rules, saved as `downloads.concurrent`) is a number from 1 to 500 and starts at **1**, the safest choice. Usenet and torrents share the number, so 1 means one download in total. A high number is for a [download client](#download-clients-qbittorrent-transmission-rdt-client-decypharr) such as qBittorrent, which can run a hundred torrents side by side the way it did for Radarr and Sonarr. The built-in downloaders keep their own limit however high the number is: built-in Usenet downloads run at most as many at once as your provider allows connections (never fewer than 5, never more than 50), and built-in torrents at most 20. The rest wait in line. With the built-in clients more downloads at once mostly share the same bandwidth anyway, so a handful is usually enough.
 
 - **A download keeps its place for the whole trip:** downloading, repairing (PAR2), unpacking and moving into your library. When it's done, or fails, the next one in line starts. A failed download waits in Activity to retry and doesn't stop the line.
 - **Releases that cannot be finished stop early:** Usenet posts lose articles over time. If articles are missing on all your servers and the release has no PAR2 repair files, or too few to rebuild what is gone, Mediarium stops at once instead of downloading the rest. The release goes on the blocklist and, when automation is on, the next-best release is tried. The reason shows in Activity and in Logs and errors as "Parts of a download are missing". A second Usenet provider from a different company often has the missing pieces.
@@ -366,6 +421,10 @@ Every download works in its own folder, `incomplete/queue-N` inside the download
 - **Failed downloads** keep their folder for a day, so you can retry them or look inside. After that the clean-up removes it. Stopped downloads whose partial files you chose to keep go the same way.
 - **Paused downloads** keep their folder while they're paused, so you can resume them. See [Pause, resume and stop](activity.md#pause-resume-and-stop).
 
+## Fake and cut-off downloads
+
+Before a finished download is filed into the library, Mediarium reads the length of the video from its header and compares it with how long the movie or episode should be (the runtime TMDB gives). A video under half of that is a fake, a sample or a download that was cut off, so it is not imported. The download fails with a plain reason, for example "The file is only 1 min long, the episode is about 45 min. This looks like a fake or broken release.", its working folder is cleared, the release is blocklisted with the reason *incomplete file* and, with automation on, the next-best release is tried. In a season pack only the short files are left out. A file whose length can't be read is imported as before, and a title whose runtime is unknown is only refused when it is very short (a movie under 10 minutes, an episode under 3). The check is on by default; switch it off with **Check that the video is as long as the episode or movie** in Settings > Library > File names and importing (`import.check_duration`). Fakes that are already in your library are found with the **Looks incomplete** filter, see [Files that look incomplete](library.md#files-that-look-incomplete).
+
 ## Clean up
 
 The clean-up is a card on **Settings > System > Server**.
@@ -401,7 +460,7 @@ Open **Settings > System > Logs and errors**. Every failed download is listed th
 
 ## Removing a movie or show
 
-Removing a title from the library leaves nothing behind in the downloads folder. Its downloads are cancelled (a running Usenet download stops, a torrent stops downloading or seeding), their folders are deleted (including leftovers from failed downloads, also in the temporary download folder), and they leave the queue. The activity list keeps a line saying so.
+Removing a title from the library leaves nothing behind in the downloads folder. Its downloads are cancelled (a running Usenet download stops, a torrent stops downloading or seeding), their folders are deleted (including leftovers from failed downloads, also in the temporary download folder), and they leave the queue. A torrent that is still downloading in your own [download client](#how-a-download-goes) is removed from the client too, unless you switched that off there. The activity list keeps a line saying so.
 
 **Also delete everything on disk** (`?deleteFiles=true`, unticked in the app, which shows the number of files and their size first) deletes the title's files too:
 

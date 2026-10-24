@@ -325,6 +325,9 @@ type trashImportRequest struct {
 	// ProfileID, when set, gives each imported format TRaSH's default score
 	// in that quality profile.
 	ProfileID int64 `json:"profileId"`
+	// ReplaceScores sets TRaSH's score for a format the profile already has.
+	// Left out, such a format keeps the score it has.
+	ReplaceScores bool `json:"replaceScores"`
 }
 
 // handleTrashImportFormats imports chosen TRaSH custom formats (again, to
@@ -365,25 +368,24 @@ func (s *Server) handleTrashImportFormats(w http.ResponseWriter, r *http.Request
 			res.Missing = append(res.Missing, id)
 			continue
 		}
+		f.Format.TrashScore = &f.DefaultScore
 		saved, err := s.saveFormat(f.Format, &res)
 		if err != nil {
 			writeFormatError(w, err)
 			return
 		}
-		if f.DefaultScore != 0 {
-			scores[saved.ID] = f.DefaultScore
-		}
+		// A score of 0 still adds the format to the profile, as an entry the
+		// person can raise later.
+		scores[saved.ID] = f.DefaultScore
 	}
 	if req.ProfileID != 0 && len(scores) > 0 {
-		if profile.FormatScores == nil {
-			profile.FormatScores = map[int64]int{}
-		}
-		for id, sc := range scores {
-			profile.FormatScores[id] = sc
-		}
-		if _, err := s.QualityRepo.Update(profile); err != nil {
-			writeProfileError(w, err)
-			return
+		ch := applyFormatScores(&profile, scores, req.ReplaceScores, false)
+		res.Profile = &ch
+		if ch.Added+ch.Replaced > 0 {
+			if _, err := s.QualityRepo.Update(profile); err != nil {
+				writeProfileError(w, err)
+				return
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, res)
@@ -437,7 +439,7 @@ func (s *Server) handleTrashImportProfile(w http.ResponseWriter, r *http.Request
 		return
 	}
 	res := formatImportResult{Formats: []customFormatPayload{}}
-	p := quality.Profile{Name: name, Allowed: allowed, Cutoff: cutoff, UpgradeAllowed: tp.UpgradeAllowed,
+	p := quality.Profile{Name: name, Allowed: allowed, Cutoff: cutoff, QualityOrder: tp.QualityOrder(), UpgradeAllowed: tp.UpgradeAllowed,
 		MinFormatScore: tp.MinFormatScore, CutoffFormatScore: max(tp.CutoffFormatScore, 0), FormatScores: map[int64]int{}, SkipBadReleases: true}
 	for _, id := range tp.FormatTrashIDs() {
 		f, ok := all[id]
@@ -445,14 +447,13 @@ func (s *Server) handleTrashImportProfile(w http.ResponseWriter, r *http.Request
 			res.Missing = append(res.Missing, id)
 			continue
 		}
+		f.Format.TrashScore = &f.DefaultScore
 		saved, err := s.saveFormat(f.Format, &res)
 		if err != nil {
 			writeFormatError(w, err)
 			return
 		}
-		if sc := tp.ScoreFor(f); sc != 0 {
-			p.FormatScores[saved.ID] = sc
-		}
+		p.FormatScores[saved.ID] = tp.ScoreFor(f)
 	}
 	created, err := s.QualityRepo.Create(p)
 	if err != nil {

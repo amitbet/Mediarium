@@ -34,7 +34,7 @@ var Lists = []ListSection{
 	},
 	{
 		Name: "indexers", Path: "/api/indexers", Partial: true,
-		Fields:  []string{"name", "kind", "definitionId", "baseUrl", "apiKey", "protocol", "enabled", "settings", "priority", "requestsPerDay"},
+		Fields:  []string{"name", "kind", "definitionId", "baseUrl", "apiKey", "protocol", "enabled", "settings", "priority", "requestsPerDay", "minSeeders"},
 		Secrets: []string{"apiKey"},
 	},
 	{
@@ -45,7 +45,7 @@ var Lists = []ListSection{
 	{
 		Name: "qualityProfiles", Path: "/api/quality-profiles", Wrap: "profiles",
 		Fields: []string{"name", "allowed", "cutoff", "upgradeAllowed", "mustContain", "mustNotContain", "preferred", "fallback",
-			"maxSizeGB", "formatScores", "minFormatScore", "cutoffFormatScore", "noSeasonPacks", "skipBadReleases"},
+			"maxSizeGB", "formatScores", "minFormatScore", "cutoffFormatScore", "noSeasonPacks", "skipBadReleases", "qualityOrder"},
 	},
 }
 

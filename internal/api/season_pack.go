@@ -137,11 +137,11 @@ func planSeasonPackFor(profile quality.Profile, sr library.Series, eps []library
 		}
 		switch ep.Status {
 		case library.StatusMissing:
-			if ep.AirDate != "" && ep.AirDate <= today {
+			if ep.AirDate != "" && ep.AirDate <= today && !ep.AirsLater(now) {
 				missing++
 			}
 		case library.StatusDownloaded:
-			if r := quality.Rank(quality.Tier(ep.Quality)); r > floor {
+			if r := profile.TierRank(quality.Tier(ep.Quality)); r > floor {
 				floor = r
 			}
 			if releaseIsPack(ep.ReleaseTitle) {
@@ -160,7 +160,7 @@ func planSeasonPackFor(profile quality.Profile, sr library.Series, eps []library
 	}
 	lowest := candidates[0]
 	for _, ep := range candidates[1:] {
-		if quality.Rank(quality.Tier(ep.Quality)) < quality.Rank(quality.Tier(lowest.Quality)) {
+		if profile.TierRank(quality.Tier(ep.Quality)) < profile.TierRank(quality.Tier(lowest.Quality)) {
 			lowest = ep
 		}
 	}
@@ -177,10 +177,10 @@ func releaseIsPack(title string) bool {
 }
 
 // packCandidates keeps the releases that are not below the quality already in.
-func packCandidates(results []indexers.Result, floor int, mapper func(parser.Release) parser.Release) []indexers.Result {
+func packCandidates(results []indexers.Result, profile quality.Profile, floor int, mapper func(parser.Release) parser.Release) []indexers.Result {
 	var out []indexers.Result
 	for _, res := range results {
-		if quality.Rank(quality.Classify(parseFor(mapper, res.Title))) >= floor {
+		if profile.TierRank(quality.Classify(parseFor(mapper, res.Title))) >= floor {
 			out = append(out, res)
 		}
 	}
@@ -190,7 +190,7 @@ func packCandidates(results []indexers.Result, floor int, mapper func(parser.Rel
 // pickSeasonPack chooses the season pack to take for a plan from the search
 // results (already filtered for the blocklist, sources, sizes and delay).
 func pickSeasonPack(results []indexers.Result, series library.Series, season int, profile quality.Profile, plan packPlan, mapper func(parser.Release) parser.Release) *indexers.Result {
-	cands := packCandidates(results, plan.floor, mapper)
+	cands := packCandidates(results, profile, plan.floor, mapper)
 	if plan.over != nil {
 		return pickTVResult(cands, series, season, 0, profile, plan.over, mapper)
 	}

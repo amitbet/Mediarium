@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"time"
 
 	"github.com/rdborg/mediarium/internal/books"
 )
@@ -10,6 +11,9 @@ import (
 func (s *Server) TestSetOpenLibrary(baseURL string) {
 	s.OpenLibrary = &books.Client{Base: baseURL, UserAgent: "Mediarium/test", HTTP: s.OpenLibrary.HTTP}
 }
+
+// TestSetBookWait sets how long a book release search may take.
+func (s *Server) TestSetBookWait(d time.Duration) { s.bookWait = d }
 
 // TestSetAudnexus points the Audnexus client at fake Audible and Audnexus servers.
 func (s *Server) TestSetAudnexus(audibleBase, audnexusBase string) {

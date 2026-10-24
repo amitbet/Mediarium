@@ -65,7 +65,7 @@ function GeneralCard({ state, error, onChange, reload }: { state: SignInSettings
   const [busy, setBusy] = useState(false)
   const [problem, setProblem] = useState('')
 
-  async function save(change: { localSignIn?: boolean; passkeys?: boolean }, done: string) {
+  async function save(change: { localSignIn?: boolean; passkeys?: boolean; autoSignIn?: '' | 'oidc' }, done: string) {
     setBusy(true)
     setProblem('')
     try {
@@ -151,6 +151,36 @@ function GeneralCard({ state, error, onChange, reload }: { state: SignInSettings
               </button>
             )}
           </div>
+        </div>
+      )}
+      {state && (
+        <div style={{ marginTop: 18 }}>
+          <strong>
+            <TipLabel text={t('Visitors who are not signed in are sent straight to the provider, and come back to the page they asked for. Add ?no-redirect=1 to the address to see the normal sign-in page. Password sign-in is not changed.')} learnMore="accounts#signing-in-automatically">
+              {t('Sign in automatically with')}
+            </TipLabel>
+          </strong>
+          <div style={{ margin: '8px 0 4px' }}>
+            <select
+              aria-label={t('Sign in automatically with')}
+              value={state.autoSignIn}
+              disabled={busy || (state.autoSignInChoices.length === 0 && state.autoSignIn === '')}
+              onChange={(e) => void save({ autoSignIn: e.target.value as '' | 'oidc' }, e.target.value ? t('Visitors are now sent to {name} to sign in.', { name: state.autoSignInChoices.find((c) => c.id === e.target.value)?.name ?? '' }) : t('Visitors see the normal sign-in page.'))}
+              style={{ width: 'auto', maxWidth: '100%' }}
+            >
+              <option value="">{t('Off')}</option>
+              {state.autoSignInChoices.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <small style={{ color: 'var(--text-dim)' }}>
+            {state.autoSignInChoices.length === 0
+              ? t('Switch on single sign-on below to pick it here.')
+              : t('To use the password form anyway, open the address with ?no-redirect=1.')}
+          </small>
         </div>
       )}
       {problem && <p className="error-text">{problem}</p>}

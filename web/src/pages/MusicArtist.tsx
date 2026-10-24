@@ -1,11 +1,13 @@
 import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
+import { albumRescanNote, type AlbumRescanReport } from '../albumRescan'
 import { api, can, isAdmin, type MusicAlbum, type MusicArtist as MusicArtistData, type MusicProfile, type MusicRelease, type QueueItem, type SearchResult } from '../api'
 import { useAuth } from '../AuthContext'
 import { useConfirm } from '../components/ConfirmProvider'
 import Cover from '../components/Cover'
 import FilesPanel from '../components/FilesPanel'
 import Icon from '../components/Icon'
+import MusicArtistFilters from '../components/MusicArtistFilters'
 import MusicMenu from '../components/MusicMenu'
 import { useMusicPlayer } from '../components/MusicPlayer'
 import { artistQueue, playable } from '../musicPlay'
@@ -21,6 +23,7 @@ import { artistState } from './MusicLibrary'
 import { removeOption } from '../diskUsage'
 import ReleaseNotice from '../components/ReleaseNotice'
 import type { Unanswered } from '../releaseHint'
+import type { Searched } from '../searched'
 import { useDocumentTitle } from '../documentTitle'
 import { plural, t, st } from '../i18n'
 import '../music.css'
@@ -75,7 +78,8 @@ function ArtistPage() {
   const toast = useToast()
   const navigate = useNavigate()
   const location = useLocation()
-  const admin = isAdmin(useAuth().user)
+  const me = useAuth().user
+  const admin = isAdmin(me)
   const { on, loaded } = useModules()
   const { id } = useParams<{ id: string }>()
   const artistId = Number(id)
@@ -372,6 +376,8 @@ function ArtistPage() {
         </div>
       </section>
 
+      <MusicArtistFilters artist={artist} admin={admin} canManage={can(me, 'manage')} onArtist={setArtist} onChanged={load} />
+
       {grouped.length === 0 && (
         <div className="empty-state">
           <Icon name="disc" size={44} />
@@ -438,6 +444,23 @@ function AlbumCard({
   const player = useMusicPlayer()
   const artistName = useContext(ArtistName)
   const toast = useToast()
+  const [note, setNote] = useState<AlbumRescanReport | null>(null)
+  const [rescanning, setRescanning] = useState(false)
+  // Looks at the files in the album's folder again (administrators): files put
+  // there by hand are matched to tracks, files removed by hand are let go.
+  async function rescan() {
+    setRescanning(true)
+    try {
+      const report = await api.rescanAlbum(album.id)
+      setNote(report)
+      onChanged()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setRescanning(false)
+    }
+  }
+  const noteText = note ? albumRescanNote(note) : null
   async function playAlbum() {
     try {
       const full = await api.getAlbum(album.id)
@@ -495,6 +518,11 @@ function AlbumCard({
             <Icon name="list" size={14} /> {t('Choose a release')}
           </button>
         )}
+        {isAdmin(me) && album.status !== 'downloading' && !live && (
+          <button className="btn-sm btn-with-icon" onClick={() => void rescan()} disabled={rescanning} title={t('Looks at the files in the album folder again and matches them to the tracks, so files you added or removed by hand are picked up.')}>
+            <Icon name="folder" size={14} /> {rescanning ? t('Checking…') : t('Rescan album folder')}
+          </button>
+        )}
         {album.status === 'downloaded' && (
           <>
             <button className="btn-sm btn-with-icon btn-play" onClick={() => void playAlbum()}>
@@ -511,12 +539,42 @@ function AlbumCard({
           <Icon name={open ? 'chevron-up' : 'chevron-down'} size={14} /> {t('Details')}
         </button>
       </div>
-      {open && <AlbumPanel album={album} tab={open} onTab={onOpen} onChanged={onChanged} />}
+      {noteText && (
+        <div className={`notice ${noteText.good ? 'notice-info' : 'notice-warn'} album-note`} role="status">
+          {noteText.lines.map((line, i) => (
+            <p key={i} style={{ margin: i === 0 ? 0 : '4px 0 0' }}>
+              {line}
+            </p>
+          ))}
+          <div className="album-note-actions" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+            {noteText.offerSearch && can(me, 'manage') && (
+              <button className="btn-sm btn-with-icon primary" onClick={onSearchNow} disabled={busy || !!live}>
+                <Icon name="search" size={14} /> {busy ? t('Searching…') : t('Search for missing tracks')}
+              </button>
+            )}
+            <button className="btn-sm" onClick={() => setNote(null)}>
+              {t('Dismiss')}
+            </button>
+          </div>
+        </div>
+      )}
+      {open && (
+        <AlbumPanel
+          album={album}
+          tab={open}
+          onTab={onOpen}
+          onChanged={onChanged}
+          onFilesChanged={(r) => {
+            setNote(r)
+            onChanged()
+          }}
+        />
+      )}
     </article>
   )
 }
 
-function AlbumPanel({ album, tab, onTab, onChanged }: { album: MusicAlbum; tab: Tab; onTab: (t: Tab) => void; onChanged: () => void }) {
+function AlbumPanel({ album, tab, onTab, onChanged, onFilesChanged }: { album: MusicAlbum; tab: Tab; onTab: (t: Tab) => void; onChanged: () => void; onFilesChanged: (r: AlbumRescanReport) => void }) {
   return (
     <div className="album-panel">
       <div className="seg">
@@ -535,7 +593,7 @@ function AlbumPanel({ album, tab, onTab, onChanged }: { album: MusicAlbum; tab: 
       </div>
       {tab === 'tracks' && <TracksPanel album={album} />}
       {tab === 'releases' && <ReleasesPanel album={album} onChanged={onChanged} />}
-      {tab === 'files' && <FilesPanel kind="album" id={album.id} />}
+      {tab === 'files' && <FilesPanel kind="album" id={album.id} onAlbumChanged={onFilesChanged} />}
       {tab === 'events' && (
         <div className="album-events">
           {album.status === 'missing' && album.monitored && <SearchStatus kind="album" id={album.id} />}
@@ -638,7 +696,7 @@ function TracksPanel({ album }: { album: MusicAlbum }) {
 function ReleasesPanel({ album, onChanged }: { album: MusicAlbum; onChanged: () => void }) {
   const toast = useToast()
   const [results, setResults] = useState<MusicRelease[] | null>(null)
-  const [answered, setAnswered] = useState<{ sources: number; unanswered: Unanswered[]; warnings?: string[] }>({ sources: 0, unanswered: [] })
+  const [answered, setAnswered] = useState<{ sources: number; unanswered: Unanswered[]; warnings?: string[]; searched?: Searched[] }>({ sources: 0, unanswered: [] })
   const [error, setError] = useState('')
   const [grabbing, setGrabbing] = useState<string | null>(null)
 
@@ -648,7 +706,7 @@ function ReleasesPanel({ album, onChanged }: { album: MusicAlbum; onChanged: () 
     api
       .albumSearch(album.id)
       .then((a) => {
-        setAnswered({ sources: a.sources, unanswered: a.unanswered, warnings: a.warnings })
+        setAnswered({ sources: a.sources, unanswered: a.unanswered, warnings: a.warnings, searched: a.searched })
         setResults(a.results)
       })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
@@ -671,16 +729,16 @@ function ReleasesPanel({ album, onChanged }: { album: MusicAlbum; onChanged: () 
   if (error) return <p className="error-text">{error}</p>
   if (results === null) return <div className="skeleton" style={{ height: 120 }} />
   if (results.length === 0) {
-    return <ReleaseNotice className="album-empty" sources={answered.sources} unanswered={answered.unanswered} warnings={answered.warnings} results={0} />
+    return <ReleaseNotice className="album-empty" sources={answered.sources} unanswered={answered.unanswered} warnings={answered.warnings} searched={answered.searched} results={0} />
   }
   return (
     <div className="album-releases">
       <p className="album-empty">
         {plural(results.length, '{n} release found. Releases Mediarium would skip are marked with the reason, and you can still pick any of them.', '{n} releases found. Releases Mediarium would skip are marked with the reason, and you can still pick any of them.')}
       </p>
-      <ReleaseNotice className="album-empty" sources={answered.sources} unanswered={answered.unanswered} warnings={answered.warnings} results={results.length} />
+      <ReleaseNotice className="album-empty" sources={answered.sources} unanswered={answered.unanswered} warnings={answered.warnings} searched={answered.searched} results={results.length} />
       <div className="table-scroll">
-        <ReleaseTable results={results} grabbing={grabbing} onGrab={grab} qualityLabel={releaseQuality} />
+        <ReleaseTable results={results} searched={answered.searched} grabbing={grabbing} onGrab={grab} qualityLabel={releaseQuality} />
       </div>
     </div>
   )

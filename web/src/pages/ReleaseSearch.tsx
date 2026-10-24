@@ -5,6 +5,8 @@ import Icon from '../components/Icon'
 import ReleaseTable from '../components/ReleaseTable'
 import { useToast } from '../components/Toast'
 import { plural, t } from '../i18n'
+import { useModules } from '../ModulesContext'
+import { resultsLink } from '../searchTabs'
 import '../search.css'
 
 // Search every indexer for a release by name, the way you would on the
@@ -13,6 +15,9 @@ import '../search.css'
 // files the download as usual.
 export default function ReleaseSearch() {
   const toast = useToast()
+  const { on } = useModules()
+  const titlesOn = on('movies') || on('tv')
+  const booksOn = on('ebooks') || on('audiobooks')
   const [q, setQ] = useState('')
   const [results, setResults] = useState<SearchResult[] | null>(null)
   const [searching, setSearching] = useState(false)
@@ -53,9 +58,16 @@ export default function ReleaseSearch() {
         <h1>{t('Search releases')}</h1>
       </div>
       <nav className="search-modes" aria-label={t('Search releases')}>
-        <Link to="/search">
-          <Icon name="film" size={15} /> {t('Movies and shows')}
-        </Link>
+        {titlesOn && (
+          <Link to="/search">
+            <Icon name="film" size={15} /> {t('Movies and shows')}
+          </Link>
+        )}
+        {booksOn && (
+          <Link to={resultsLink('books', '')}>
+            <Icon name="book" size={15} /> {t('Books')}
+          </Link>
+        )}
         <Link to="/search/releases" className="active" aria-current="page">
           <Icon name="list" size={15} /> {t('Releases')}
         </Link>

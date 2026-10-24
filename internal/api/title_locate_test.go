@@ -512,3 +512,49 @@ func TestChangeSeriesFolderRefusesOtherFolders(t *testing.T) {
 		t.Fatalf("a refused folder changed an episode: %+v", eps[0])
 	}
 }
+
+func TestLocateEpisodeFile(t *testing.T) {
+	e := newLocateEnv(t)
+	sr, err := e.server.MovieRepo.AddSeries(library.Series{TMDBID: 7, Title: "Fixture Show", Year: 2026, Monitored: true}, []library.Episode{
+		{Season: 1, Episode: 1, AirDate: "2026-01-01", Monitored: true},
+		{Season: 1, Episode: 2, AirDate: "2026-01-08", Monitored: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ep1, err := e.server.MovieRepo.GetEpisode(sr.ID, 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ep2, _ := e.server.MovieRepo.GetEpisode(sr.ID, 1, 2)
+	url := func(id int64) string { return fmt.Sprintf("%s/api/episodes/%d/locate-file", e.base, id) }
+
+	inShow := filepath.Join(e.tv, "Fixture Show", "S15E01.mkv")
+	elsewhere := filepath.Join(e.tv, "Old drive", "clip.1080p.WEB-DL.mkv")
+	outside := filepath.Join(e.outside, "a.mkv")
+	for _, p := range []string{inShow, elsewhere, outside} {
+		writeBody(t, p, "video")
+	}
+	if status, _ := doStatus(t, e.member, http.MethodPost, url(ep1.ID)); status != http.StatusForbidden {
+		t.Fatalf("a member's request = %d, want 403", status)
+	}
+	// Outside the library folders, or not a file: refused.
+	postJSON[map[string]any](t, e.admin, url(ep1.ID), map[string]any{"path": outside}, http.StatusBadRequest)
+	postJSON[map[string]any](t, e.admin, url(ep1.ID), map[string]any{"path": e.tv}, http.StatusBadRequest)
+	postJSON[map[string]any](t, e.admin, url(99999), map[string]any{"path": inShow}, http.StatusNotFound)
+
+	postJSON[map[string]any](t, e.admin, url(ep1.ID), map[string]any{"path": inShow}, http.StatusOK)
+	got, _ := e.server.MovieRepo.GetEpisodeByID(ep1.ID)
+	if got.Status != library.StatusDownloaded || got.FilePath != inShow {
+		t.Fatalf("episode 1 = %+v", got)
+	}
+	if _, err := os.Stat(inShow); err != nil {
+		t.Fatalf("the file was touched: %v", err)
+	}
+	// One file is not two episodes' file; a file outside the show's folder can be used.
+	postJSON[map[string]any](t, e.admin, url(ep2.ID), map[string]any{"path": inShow}, http.StatusConflict)
+	postJSON[map[string]any](t, e.admin, url(ep2.ID), map[string]any{"path": elsewhere}, http.StatusOK)
+	if got, _ := e.server.MovieRepo.GetEpisodeByID(ep2.ID); got.FilePath != elsewhere || got.Status != library.StatusDownloaded {
+		t.Fatalf("episode 2 = %+v", got)
+	}
+}

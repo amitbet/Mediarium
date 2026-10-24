@@ -10,6 +10,7 @@ import { FieldError, FormProblem, useValidation } from '../useValidation'
 import { useReveal } from '../useReveal'
 import { plural, t } from '../i18n'
 import TipLabel from './TipLabel'
+import Collapsible from './Collapsible'
 
 interface Draft {
   id?: number
@@ -138,6 +139,12 @@ export default function MusicProfilesSection() {
       <h2>
         <Icon name="music" size={18} /> {t('Music')}
       </h2>
+      <Collapsible
+        id="music-profiles"
+        label={t('Music')}
+        summary={profiles ? plural(profiles.length, '{n} music profile', '{n} music profiles') : undefined}
+        forceOpen={draft !== null}
+      >
       <p style={{ color: 'var(--text-dim)', marginTop: 0 }}>
         {t('Music qualities, worst to best: {list}. The highlighted format is where a profile stops upgrading.', { list: tiers.length > 0 ? tiers.filter((tier) => tier !== 'Unknown').join(', ') : t('MP3-192 up to FLAC 24bit') })}
       </p>
@@ -241,6 +248,7 @@ export default function MusicProfilesSection() {
           </button>
         </div>
       )}
+      </Collapsible>
     </section>
   )
 }

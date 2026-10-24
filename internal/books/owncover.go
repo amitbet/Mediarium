@@ -28,22 +28,22 @@ const (
 var (
 	// ErrCoverTooBig is returned for a picture over MaxOwnCoverBytes.
 	ErrCoverTooBig = fmt.Errorf("the picture is larger than %d MB", MaxOwnCoverBytes>>20)
-	// ErrCoverFormat is returned for something that is not a JPEG or PNG
-	// picture (a WebP one included: it can't be read here).
-	ErrCoverFormat = errors.New("the picture is not a JPEG or PNG")
-	// ErrCoverUnreadable is returned for a JPEG or PNG that can't be decoded.
+	// ErrCoverFormat is returned for something that is not a JPEG, PNG or WebP
+	// picture.
+	ErrCoverFormat = errors.New("the picture is not a JPEG, PNG or WebP")
+	// ErrCoverUnreadable is returned for a picture that can't be decoded.
 	ErrCoverUnreadable = errors.New("the picture can't be read")
 )
 
 // PrepareOwnCover checks a picture a person gave and returns it as the JPEG
 // that is kept. The bytes decide what it is, not a file name or a header: only
-// a JPEG or PNG that really decodes is accepted.
+// a JPEG, PNG or WebP that really decodes is accepted.
 func PrepareOwnCover(data []byte) ([]byte, error) {
 	if len(data) > MaxOwnCoverBytes {
 		return nil, ErrCoverTooBig
 	}
 	switch http.DetectContentType(data) {
-	case "image/jpeg", "image/png":
+	case "image/jpeg", "image/png", "image/webp":
 	default:
 		return nil, ErrCoverFormat
 	}

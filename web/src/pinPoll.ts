@@ -11,6 +11,9 @@ export interface PinPoll<T> {
   onExpired: () => void
   onError: (e: unknown) => void
   everyMs?: number
+  // A wait that can change while polling (the server may ask to slow down); in
+  // milliseconds, or undefined to use everyMs.
+  delayMs?: () => number | undefined
   // For tests: the clock and the timer.
   now?: () => number
   later?: (fn: () => void, ms: number) => unknown
@@ -47,9 +50,9 @@ export function pollPin<T>(p: PinPoll<T>): () => void {
       p.onError(e)
       return
     }
-    handle = later(() => void ask(), p.everyMs ?? 2000)
+    handle = later(() => void ask(), p.delayMs?.() ?? p.everyMs ?? 2000)
   }
-  handle = later(() => void ask(), p.everyMs ?? 2000)
+  handle = later(() => void ask(), p.delayMs?.() ?? p.everyMs ?? 2000)
   return () => {
     stopped = true
     cancel(handle)

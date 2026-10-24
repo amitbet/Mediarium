@@ -1,17 +1,14 @@
 package api
 
 import (
-	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/rdborg/mediarium/internal/cleanup"
 	"github.com/rdborg/mediarium/internal/libimport"
 	"github.com/rdborg/mediarium/internal/library"
 	"github.com/rdborg/mediarium/internal/organizer"
@@ -19,38 +16,65 @@ import (
 	"github.com/rdborg/mediarium/internal/quality"
 )
 
-// Manual import: a video file in the downloads folder that Mediarium could
-// not match (a failed download's leftovers, a file you copied there
-// yourself) can be pointed at a movie or an episode in the library. It is
-// then named and moved into the library like any download.
+// Manual import: a video file that Mediarium could not match (a failed
+// download's leftovers, a file you copied somewhere yourself) can be pointed
+// at a movie or an episode in the library. It is then named and placed in the
+// library like any download. The folder to look in is the downloads folder
+// unless the person picks another one.
 
 const maxManualFiles = 500
 
+// maxManualWalk is how many files and folders one look may go through, so a
+// folder with a whole drive under it can't keep the page waiting.
+const maxManualWalk = 100000
+
+// manualMinSize is the smallest file worth listing: smaller ones are samples
+// and extras.
+const manualMinSize = 20 << 20
+
 type manualFile struct {
-	Path     string `json:"path"` // relative to the downloads folder
-	Size     int64  `json:"size"`
-	Modified string `json:"modified"`
-	Title    string `json:"title,omitempty"` // what the file name suggests
-	Year     int    `json:"year,omitempty"`
-	Season   int    `json:"season,omitempty"`
-	Episode  int    `json:"episode,omitempty"`
-	Quality  string `json:"quality,omitempty"`
+	Path       string `json:"path"` // relative to the chosen folder
+	Size       int64  `json:"size"`
+	Modified   string `json:"modified"`
+	Title      string `json:"title,omitempty"` // what the file name suggests
+	Year       int    `json:"year,omitempty"`
+	Season     int    `json:"season,omitempty"`
+	Episode    int    `json:"episode,omitempty"`
+	Quality    string `json:"quality,omitempty"`
+	Incomplete bool   `json:"incomplete,omitempty"` // it is inside an incomplete downloads folder
 }
 
 type manualListPayload struct {
-	Folder string       `json:"folder"`
-	Files  []manualFile `json:"files"`
-	More   bool         `json:"more,omitempty"` // there were more than were listed
+	Folder           string       `json:"folder"`
+	DownloadsFolder  string       `json:"downloadsFolder"`
+	Files            []manualFile `json:"files"`
+	More             bool         `json:"more,omitempty"`             // there were more than were listed
+	HiddenIncomplete int          `json:"hiddenIncomplete,omitempty"` // files left out because they are in an incomplete folder
 }
 
-// handleManualImportList lists the video files in the downloads folder,
-// biggest first, with what each file's name suggests.
+// handleManualImportList lists the video files in a folder (the downloads
+// folder unless ?folder= names another), biggest first, with what each file's
+// name suggests. Files in an incomplete downloads folder are left out unless
+// ?incomplete=1 asks for them.
 func (s *Server) handleManualImportList(w http.ResponseWriter, r *http.Request) {
-	root := s.downloadsRoot()
-	out := manualListPayload{Folder: root, Files: []manualFile{}}
+	root, err := s.manualFolder(r.URL.Query().Get("folder"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	withIncomplete := r.URL.Query().Get("incomplete") == "1"
+	out := manualListPayload{Folder: root, DownloadsFolder: s.downloadsRoot(), Files: []manualFile{}}
+	seen := 0
 	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if r.Context().Err() != nil {
+			return r.Context().Err()
+		}
 		if err != nil {
 			return nil
+		}
+		if seen++; seen > maxManualWalk {
+			out.More = true
+			return filepath.SkipAll
 		}
 		name := d.Name()
 		if d.IsDir() {
@@ -59,18 +83,25 @@ func (s *Server) handleManualImportList(w http.ResponseWriter, r *http.Request) 
 			}
 			return nil
 		}
-		if strings.HasPrefix(name, ".") || !organizer.IsVideoFile(path) || !d.Type().IsRegular() {
-			return nil
-		}
-		info, err := d.Info()
-		if err != nil || info.Size() < 20<<20 { // samples and extras are not worth listing
+		if strings.HasPrefix(name, ".") || isPartialName(name) || !organizer.IsVideoFile(path) || !d.Type().IsRegular() {
 			return nil
 		}
 		rel, _ := filepath.Rel(root, path)
-		rel = filepath.ToSlash(rel)
-		rel = strings.TrimPrefix(rel, "./")
+		rel = strings.TrimPrefix(filepath.ToSlash(rel), "./")
+		if isSampleFile(rel) {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil || info.Size() < manualMinSize { // samples and extras are not worth listing
+			return nil
+		}
+		incomplete := inIncompleteFolder(rel)
+		if incomplete && !withIncomplete {
+			out.HiddenIncomplete++
+			return nil
+		}
 		guess := parser.Parse(guessName(path))
-		f := manualFile{Path: rel, Size: info.Size(), Modified: info.ModTime().UTC().Format(time.RFC3339), Title: guess.Title, Year: guess.Year, Season: guess.Season}
+		f := manualFile{Path: rel, Size: info.Size(), Modified: info.ModTime().UTC().Format(time.RFC3339), Title: guess.Title, Year: guess.Year, Season: guess.Season, Incomplete: incomplete}
 		if len(guess.Episodes) > 0 {
 			f.Episode = guess.Episodes[0]
 		}
@@ -98,22 +129,30 @@ func guessName(path string) string {
 }
 
 type manualImportRequest struct {
-	Path     string `json:"path"`
-	MovieID  int64  `json:"movieId,omitempty"`
-	SeriesID int64  `json:"seriesId,omitempty"`
-	Season   int    `json:"season,omitempty"`
-	Episode  int    `json:"episode,omitempty"`
+	Folder     string `json:"folder,omitempty"` // the folder the path is in; empty means the downloads folder
+	Path       string `json:"path"`             // relative to that folder
+	Mode       string `json:"mode,omitempty"`   // "link" (the default), "copy" or "move"
+	Incomplete bool   `json:"incomplete,omitempty"`
+	MovieID    int64  `json:"movieId,omitempty"`
+	SeriesID   int64  `json:"seriesId,omitempty"`
+	Season     int    `json:"season,omitempty"`
+	Episode    int    `json:"episode,omitempty"`
 }
 
-// handleManualImport moves one file from the downloads folder into the
-// library as the movie or episode chosen.
+// handleManualImport brings one file into the library as the movie or episode
+// chosen: linked or copied, and for a move the original is removed afterwards.
 func (s *Server) handleManualImport(w http.ResponseWriter, r *http.Request) {
 	var req manualImportRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "Couldn't read that request. Reload the page and try again.")
 		return
 	}
-	src, err := s.manualSource(req.Path)
+	mode, ok := parseManualMode(req.Mode)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "Choose how the file should come in: hardlink, copy or move.")
+		return
+	}
+	src, err := s.manualSource(req.Folder, req.Path, req.Incomplete)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -132,11 +171,12 @@ func (s *Server) handleManualImport(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		dest = s.keepMovieFolder(m, s.movieRootFor(m), dest)
 		if err := s.checkLibraryRoot(dest); err != nil {
 			writeError(w, http.StatusConflict, err.Error())
 			return
 		}
-		res, err := organizer.Import(src, dest, organizer.ConflictSkip, nil)
+		res, err := manualPlace(src, dest, mode)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("Couldn't move the file into your library: %s", err.Error()))
 			return
@@ -152,8 +192,9 @@ func (s *Server) handleManualImport(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_ = s.QueueRepo.LogActivity(m.ID, "imported", fmt.Sprintf("%s imported by hand to %s", movieLabel(m), res.DestPath))
+		kept := manualFinish(src, res.DestPath, mode)
 		s.movieImported(res.DestPath)
-		writeJSON(w, http.StatusOK, map[string]any{"path": res.DestPath})
+		writeJSON(w, http.StatusOK, map[string]any{"path": res.DestPath, "sourceKept": kept})
 	case req.SeriesID > 0 && req.Season >= 0 && req.Episode > 0:
 		sr, err := s.MovieRepo.GetSeries(req.SeriesID)
 		if err != nil {
@@ -161,6 +202,16 @@ func (s *Server) handleManualImport(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		ep, err := s.MovieRepo.GetEpisode(sr.ID, req.Season, req.Episode)
+		if err != nil {
+			// The person's own numbering for the show: the season and episode
+			// the file's name carries may be what releases call an episode the
+			// library lists under another number.
+			if ls, le, ok := s.customFor(sr).ToLibrary(req.Season, req.Episode); ok {
+				if mapped, merr := s.MovieRepo.GetEpisode(sr.ID, ls, le); merr == nil {
+					ep, err = mapped, nil
+				}
+			}
+		}
 		if err != nil {
 			// An anime's files are often numbered by TheTVDB's seasons, which
 			// the movie database does not have. The number counted from the
@@ -190,7 +241,7 @@ func (s *Server) handleManualImport(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, err.Error())
 			return
 		}
-		res, err := organizer.Import(src, dest, organizer.ConflictSkip, nil)
+		res, err := manualPlace(src, dest, mode)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("Couldn't move the file into your library: %s", err.Error()))
 			return
@@ -207,31 +258,12 @@ func (s *Server) handleManualImport(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_ = s.QueueRepo.LogSeriesActivity(sr.ID, "imported", fmt.Sprintf("%s S%02dE%02d imported by hand to %s", sr.Title, ep.Season, ep.Episode, res.DestPath))
+		kept := manualFinish(src, res.DestPath, mode)
 		s.episodesImported(res.DestPath)
-		writeJSON(w, http.StatusOK, map[string]any{"path": res.DestPath})
+		writeJSON(w, http.StatusOK, map[string]any{"path": res.DestPath, "sourceKept": kept})
 	default:
 		writeError(w, http.StatusBadRequest, "Choose a movie, or a show with its season and episode.")
 	}
-}
-
-// manualSource turns a path relative to the downloads folder into the file
-// it names, refusing anything outside that folder or not a video file.
-func (s *Server) manualSource(rel string) (string, error) {
-	root := s.downloadsRoot()
-	rel = strings.TrimSpace(rel)
-	if rel == "" || filepath.IsAbs(rel) {
-		return "", errors.New("Choose a file from the list.")
-	}
-	path := filepath.Join(root, filepath.FromSlash(rel))
-	real, err := cleanup.InsideRoot(root, path)
-	if err != nil {
-		return "", errors.New("That file isn't in the downloads folder.")
-	}
-	info, err := os.Lstat(real)
-	if err != nil || !info.Mode().IsRegular() || !organizer.IsVideoFile(real) {
-		return "", errors.New("That isn't a video file in the downloads folder any more.")
-	}
-	return real, nil
 }
 
 // episodeByTVDBSeason is the episode of a show that a season and episode

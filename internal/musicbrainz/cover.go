@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/rdborg/mediarium/internal/webpimg"
 )
 
 // maxCoverBytes bounds a downloaded cover; a 500 pixel front cover is a few
@@ -53,11 +55,18 @@ func (c *Client) FrontCover(ctx context.Context, releaseGroupID string) ([]byte,
 	if len(data) > maxCoverBytes {
 		return nil, "", fmt.Errorf("cover art: image is larger than %d bytes", maxCoverBytes)
 	}
-	// Trust the bytes, not the header: only real JPEG and PNG images are kept.
+	// Trust the bytes, not the header: only real JPEG, PNG and WebP images are
+	// kept, and a WebP image is kept as a JPEG.
 	switch ct := http.DetectContentType(data); ct {
 	case "image/jpeg", "image/png":
 		return data, ct, nil
+	case "image/webp":
+		jpg, err := webpimg.ToJPEG(data)
+		if err != nil {
+			return nil, "", fmt.Errorf("cover art: %w", err)
+		}
+		return jpg, "image/jpeg", nil
 	default:
-		return nil, "", fmt.Errorf("cover art: not a JPEG or PNG image (%s)", ct)
+		return nil, "", fmt.Errorf("cover art: not a JPEG, PNG or WebP image (%s)", ct)
 	}
 }

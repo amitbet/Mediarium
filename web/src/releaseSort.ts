@@ -26,8 +26,18 @@ export interface SortableRelease {
   source?: string
   seeders?: number
   formatScore?: number
+  // The whole score the pick uses (formats + preferred terms + fix bonus);
+  // lists from before it existed only have formatScore.
+  score?: number
+  best?: boolean
   language?: string
   publishDate?: string
+}
+
+// scoreOf is the score a release is shown and sorted by, undefined when the
+// profile scores nothing.
+export function scoreOf(r: { score?: number; formatScore?: number }): number | undefined {
+  return r.score ?? r.formatScore
 }
 
 // publishedAt is when the release was posted, 0 when the indexer didn't say.
@@ -70,7 +80,7 @@ function compare(a: SortableRelease, b: SortableRelease, key: ReleaseSortKey): n
     case 'language':
       return text(a.language ?? '', b.language ?? '')
     case 'score':
-      return (a.formatScore ?? 0) - (b.formatScore ?? 0)
+      return (scoreOf(a) ?? 0) - (scoreOf(b) ?? 0)
     case 'indexer':
       return text(a.indexerName, b.indexerName)
     case 'size':
@@ -91,6 +101,20 @@ export function sortReleases<T extends SortableRelease>(list: T[], key: ReleaseS
   return list
     .map((item, i) => ({ item, i }))
     .sort((x, y) => compare(x.item, y.item, key) * dir || x.i - y.i)
+    .map((x) => x.item)
+}
+
+// defaultOrder is how a list of releases starts, before a column is clicked:
+// the release automatic search would take first (the server marks it), then,
+// when the title's profile scores custom formats, the highest score first.
+// Equal rows keep the order the server sent them. Without scores and without a
+// marked release the list is left as it is.
+export function defaultOrder<T extends SortableRelease>(list: T[]): T[] {
+  const scored = list.some((r) => scoreOf(r) !== undefined)
+  if (!scored && !list.some((r) => r.best)) return list
+  return list
+    .map((item, i) => ({ item, i }))
+    .sort((x, y) => Number(!!y.item.best) - Number(!!x.item.best) || (scored ? (scoreOf(y.item) ?? 0) - (scoreOf(x.item) ?? 0) : 0) || x.i - y.i)
     .map((x) => x.item)
 }
 

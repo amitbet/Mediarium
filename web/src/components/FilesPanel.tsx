@@ -1,9 +1,12 @@
 import { createPortal } from 'react-dom'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useFocusTrap } from '../useFocusTrap'
-import { api, can, type TitleFile } from '../api'
+import { api, can, isAdmin, type TitleFile } from '../api'
+import type { AlbumRescanReport } from '../albumRescan'
 import { useAuth } from '../AuthContext'
+import { useConfirm } from './ConfirmProvider'
 import SubtitleTiming from './SubtitleTiming'
+import { useToast } from './Toast'
 import { formatBytes, timeAgo } from '../format'
 import { useLive } from '../useLive'
 import Icon from './Icon'
@@ -17,13 +20,16 @@ const KIND_ICON: Record<TitleFile['kind'], string> = { video: 'film', audio: 'mu
 // for videos and songs. Playback is direct (no converting), so it works for
 // formats the browser understands: usually MP4 and WebM for video, MP3 and AAC
 // for music, and FLAC in current browsers.
-export default function FilesPanel({ kind, id }: { kind: 'movie' | 'series' | 'album'; id: number }) {
+export default function FilesPanel({ kind, id, onAlbumChanged }: { kind: 'movie' | 'series' | 'album'; id: number; onAlbumChanged?: (r: AlbumRescanReport) => void }) {
   const [files, setFiles] = useState<TitleFile[] | null>(null)
   const [error, setError] = useState('')
   const [playing, setPlaying] = useState<TitleFile | null>(null)
   const [viewing, setViewing] = useState<TitleFile | null>(null)
   const [timing, setTiming] = useState('')
   const me = useAuth().user
+  const confirm = useConfirm()
+  const toast = useToast()
+  const [deleting, setDeleting] = useState('')
 
   const load = useCallback(() => {
     ;(kind === 'movie' ? api.movieFiles(id) : kind === 'album' ? api.albumFiles(id) : api.seriesFiles(id))
@@ -35,6 +41,29 @@ export default function FilesPanel({ kind, id }: { kind: 'movie' | 'series' | 'a
   }, [kind, id])
   useEffect(load, [load])
   useLive(load, 30000)
+
+  // Deletes one file of an album (administrators): it goes to the recycle bin
+  // when that is on, its track loses the link and the album's status and
+  // quality are worked out again.
+  async function deleteFile(f: TitleFile) {
+    const ok = await confirm({
+      title: t('Delete {name}?', { name: f.path.split('/').pop() ?? f.path }),
+      body: <p>{f.kind === 'audio' ? t("The file goes to the recycle bin (or is deleted, if it is switched off). Its track will have no file and the album's status is updated, so Mediarium can look for a better release.") : t('The file goes to the recycle bin (or is deleted, if it is switched off).')}</p>,
+      confirmLabel: t('Delete'),
+      danger: true,
+    })
+    if (!ok) return
+    setDeleting(f.path)
+    try {
+      const report = await api.deleteAlbumFile(id, f.path)
+      onAlbumChanged?.(report)
+      load()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setDeleting('')
+    }
+  }
 
   // A failed refresh keeps the list (and a video that is playing) on screen.
   if (error && files === null) return <p className="error-text">{error}</p>
@@ -68,6 +97,11 @@ export default function FilesPanel({ kind, id }: { kind: 'movie' | 'series' | 'a
             {(f.kind === 'image' || f.kind === 'subtitle' || f.kind === 'nfo') && (
               <button className="btn-sm btn-with-icon" onClick={() => setViewing(f)}>
                 <Icon name="eye" size={14} /> {t('View')}
+              </button>
+            )}
+            {kind === 'album' && isAdmin(me) && (
+              <button className="btn-sm btn-with-icon danger-ghost" onClick={() => void deleteFile(f)} disabled={deleting !== ''} title={t('Delete this file from the album folder')}>
+                <Icon name="trash" size={14} /> {t('Delete file')}
               </button>
             )}
             {f.kind === 'subtitle' && kind !== 'album' && /\.(srt|vtt)$/i.test(f.path) && can(me, 'subtitles') && (

@@ -1,5 +1,6 @@
 import { api, ApiError, type DiscoverMovie } from './api'
 import { locale, t } from './i18n.ts'
+import { browseTitle, languageName } from './discoverFilters.ts'
 
 export type Kind = 'movie' | 'tv'
 export type ListName = 'trending' | 'popular' | 'upcoming' | 'similar'
@@ -13,6 +14,10 @@ export interface Source {
   yearFrom?: string
   yearTo?: string
   sort?: string
+  // Original language (a code like "ko"), lowest rating and runtime bucket; movies and shows only.
+  language?: string
+  minRating?: string
+  runtime?: string
   // "More like your library" only: also list titles from before the last 15 years.
   older?: boolean
 }
@@ -32,7 +37,7 @@ async function legacyList(kind: Kind, list: ListName): Promise<DiscoverMovie[]> 
 
 export async function fetchPage(src: Source, page: number): Promise<Page> {
   if (src.list === 'browse') {
-    return api.discoverBrowse({ kind: src.kind, genre: src.genre, yearFrom: src.yearFrom, yearTo: src.yearTo, sort: src.sort, page })
+    return api.discoverBrowse({ kind: src.kind, genre: src.genre, yearFrom: src.yearFrom, yearTo: src.yearTo, sort: src.sort, language: src.language, minRating: src.minRating, runtime: src.runtime, page })
   }
   try {
     return await api.discoverList(src.kind, src.list, page, src.older)
@@ -60,6 +65,9 @@ export function sourceFromQuery(q: URLSearchParams): Source {
     yearFrom: q.get('yearFrom') ?? undefined,
     yearTo: q.get('yearTo') ?? undefined,
     sort: q.get('sort') ?? undefined,
+    language: q.get('language') ?? undefined,
+    minRating: q.get('minRating') ?? undefined,
+    runtime: q.get('runtime') ?? undefined,
     older: q.get('older') === 'true' || undefined,
   }
 }
@@ -75,10 +83,7 @@ export function sourceTitle(src: Source, genreName?: string): string {
   if (src.list !== 'browse') return LIST_TITLE[src.list][src.kind === 'movie' ? 0 : 1]
   const movie = src.kind === 'movie'
   const what = genreName ? (movie ? t('{genre} movies', { genre: genreName }) : t('{genre} shows', { genre: genreName })) : movie ? t('Movies') : t('Shows')
-  if (src.yearFrom && src.yearTo) return t('{what} from {from} to {to}', { what, from: src.yearFrom, to: src.yearTo })
-  if (src.yearFrom) return t('{what} from {from}', { what, from: src.yearFrom })
-  if (src.yearTo) return t('{what} up to {to}', { what, to: src.yearTo })
-  return what
+  return browseTitle(what, src, src.language ? languageName(src.language) : undefined)
 }
 
 // "Coming 12 Oct" for a date still ahead, otherwise nothing.

@@ -159,6 +159,9 @@ func (e *Extractor) freeSpace(dir string) (uint64, bool) {
 var (
 	rarVolumeRe = regexp.MustCompile(`(?i)\.part0*(\d+)\.rar$`)
 	rarOldStyle = regexp.MustCompile(`(?i)\.r\d{2,3}$`)
+	// sevenZipSplitRe matches a 7z archive cut into numbered pieces
+	// ("name.7z.001", "name.7z.002", ...), which is how Usenet posts them.
+	sevenZipSplitRe = regexp.MustCompile(`(?i)\.7z\.0*(\d+)$`)
 	// rarSetRe splits "name.part07.rar" into the set name and the digits.
 	rarSetRe = regexp.MustCompile(`(?i)^(.+)\.part(\d+)\.rar$`)
 )
@@ -231,6 +234,11 @@ func primariesIn(dir string, entries []os.DirEntry) []string {
 				continue // only part1/part01 is the entry point
 			}
 			primaries = append(primaries, filepath.Join(dir, name))
+		case sevenZipSplitRe.MatchString(lower):
+			if m := sevenZipSplitRe.FindStringSubmatch(lower); m[1] != "1" {
+				continue // only .7z.001 is the entry point; 7z finds the rest
+			}
+			primaries = append(primaries, filepath.Join(dir, name))
 		case strings.HasSuffix(lower, ".rar"), strings.HasSuffix(lower, ".zip"), strings.HasSuffix(lower, ".7z"):
 			primaries = append(primaries, filepath.Join(dir, name))
 		}
@@ -257,7 +265,7 @@ func (e *Extractor) Extract(archivePath, destDir string) error {
 		return e.ExtractAs(archivePath, destDir, FormatRAR)
 	case strings.HasSuffix(lower, ".zip"):
 		return e.ExtractAs(archivePath, destDir, FormatZip)
-	case strings.HasSuffix(lower, ".7z"):
+	case strings.HasSuffix(lower, ".7z"), sevenZipSplitRe.MatchString(lower):
 		return e.ExtractAs(archivePath, destDir, Format7z)
 	default:
 		return fmt.Errorf("extract %s: %w", filepath.Base(archivePath), ErrUnsupportedArchive)

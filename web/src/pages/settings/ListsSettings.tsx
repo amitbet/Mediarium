@@ -3,6 +3,7 @@ import { api, type Settings } from '../../api'
 import ImportLists from '../../components/ImportLists'
 import ServiceKeyCard from '../../components/ServiceKeyCard'
 import SimklConnect from '../../components/SimklConnect'
+import { t } from '../../i18n'
 import { SIMKL_COPY, TRAKT_COPY } from '../../components/serviceCopy'
 
 // Settings > Info, lists and subtitles > Import lists: the lists, and the
@@ -19,7 +20,7 @@ export default function ListsSettings() {
       <ImportLists />
       {s && <ServiceKeyCard service="trakt" {...TRAKT_COPY} builtIn={!!s.traktClientIdBuiltIn} configured={s.hasTraktClientId} onSaved={load} allowOverride usingOwnKey={!!s.traktUsingOwnKey} />}
       {s && (
-        <ServiceKeyCard service="simkl" {...SIMKL_COPY} builtIn={!!s.simklClientIdBuiltIn} configured={!!s.hasSimklClientId} onSaved={load} allowOverride usingOwnKey={!!s.simklUsingOwnKey}>
+        <ServiceKeyCard service="simkl" {...SIMKL_COPY} savedLabel={t('Client ID saved')} builtIn={!!s.simklClientIdBuiltIn} configured={!!s.hasSimklClientId} onSaved={load} allowOverride usingOwnKey={!!s.simklUsingOwnKey}>
           <SimklConnect hasClientId={!!s.hasSimklClientId} />
         </ServiceKeyCard>
       )}

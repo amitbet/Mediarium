@@ -12,6 +12,13 @@ import (
 	"github.com/rdborg/mediarium/internal/subtitles"
 )
 
+// subtitleSearchPayload is the answer to a subtitle search: the results, best
+// fit first, and what each source was asked and said (shown when it is empty).
+type subtitleSearchPayload struct {
+	Results     []subtitleResultPayload `json:"results"`
+	Diagnostics []subtitles.Diagnostic  `json:"diagnostics"`
+}
+
 type subtitleResultPayload struct {
 	FileID int    `json:"fileId"`
 	Source string `json:"source,omitempty"` // "subdl"; empty for OpenSubtitles
@@ -119,7 +126,8 @@ func (s *Server) searchSubtitles(w http.ResponseWriter, r *http.Request, kind st
 	if forcedOnly {
 		q.Forced = true
 	}
-	results, err := s.findSubtitles(r.Context(), q, true)
+	ctx, diag := subtitles.WithDiagnostics(r.Context())
+	results, err := s.findSubtitles(ctx, q, true)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, fmt.Sprintf("Couldn't search for subtitles: %s", err.Error()))
 		return
@@ -135,11 +143,15 @@ func (s *Server) searchSubtitles(w http.ResponseWriter, r *http.Request, kind st
 	for i, res := range results {
 		out[i] = subtitleResultPayload{
 			FileID: res.FileID, Source: res.Source, SourceName: res.SourceName, Link: res.Link, Language: res.Language, Release: res.Release, Rating: res.Rating,
-			Score: subtitles.Score(res, videoName), HashMatch: res.HashMatch, Variant: string(res.Variant()),
+			Score: subtitles.ScoreFor(res, videoName, it.hints()), HashMatch: res.HashMatch, Variant: string(res.Variant()),
 		}
 	}
 	sortSubtitleResults(out)
-	writeJSON(w, http.StatusOK, out)
+	lines := diag.List()
+	if lines == nil {
+		lines = []subtitles.Diagnostic{}
+	}
+	writeJSON(w, http.StatusOK, subtitleSearchPayload{Results: out, Diagnostics: lines})
 }
 
 type downloadSubtitleRequest struct {

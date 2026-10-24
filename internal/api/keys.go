@@ -199,13 +199,22 @@ func (s *Server) handleTestService(w http.ResponseWriter, r *http.Request) {
 		if req.Key != "" {
 			client = client.WithClientID(req.Key)
 		}
-		// Asking for a sign-in code proves the Client ID works and changes nothing.
-		switch _, err := client.StartPIN(ctx); {
+		// Asking for a sign-in code proves the Client ID works. The code that
+		// comes back is thrown away unused (it simply runs out), so no sign-in
+		// is left for anyone to finish. It uses the same flow choice as a real
+		// sign-in: the OAuth 2.0 device flow first, the older PIN flow for old apps.
+		switch _, err := client.StartSignIn(ctx); {
 		case err == nil:
-			writeJSON(w, http.StatusOK, connTestResult{OK: true, Message: "Simkl accepted the client ID."})
+			writeJSON(w, http.StatusOK, connTestResult{OK: true, Message: "Simkl accepted this Client ID."})
 		case errors.Is(err, simkl.ErrNoClientID):
 			writeJSON(w, http.StatusOK, connTestResult{Message: "Enter a Simkl client ID first."})
 		default:
+			logSimklRefusal("test the Client ID", req.Key, err)
+			var se *simkl.StatusError
+			if errors.As(err, &se) {
+				writeJSON(w, http.StatusOK, connTestResult{Message: sentence(se.Error())})
+				break
+			}
 			writeJSON(w, http.StatusOK, connTestResult{Message: plainerror.Message(err)})
 		}
 	default:

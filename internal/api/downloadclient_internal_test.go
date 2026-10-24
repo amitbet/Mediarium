@@ -43,7 +43,8 @@ func TestClientCategoryPerKind(t *testing.T) {
 		{"tv is trimmed", "mediarium", torrentopts.KindTV, "shows"},
 		{"music falls back to the main one", "mediarium", torrentopts.KindMusic, "mediarium"},
 		{"books may use a subcategory", "mediarium", torrentopts.KindBook, "reads/new"},
-		{"empty main falls back to the default", "", torrentopts.KindMusic, defaultClientCategory},
+		{"empty main with other kinds set leaves this kind without one", "", torrentopts.KindMusic, ""},
+		{"empty main still lets a kind use its own", "", torrentopts.KindMovie, "films"},
 		{"unknown kind falls back", "tor", "other", "tor"},
 	}
 	for _, tc := range cases {
@@ -53,6 +54,15 @@ func TestClientCategoryPerKind(t *testing.T) {
 				t.Errorf("categoryFor(%q) = %q, want %q", tc.kind, got, tc.want)
 			}
 		})
+	}
+	// Nothing set at all: the default category, as before.
+	if got := (downloadClientConfig{}).category(); got != defaultClientCategory {
+		t.Errorf("category() with nothing set = %q", got)
+	}
+	// Only the main category cleared while kinds have their own: no default creeps back in.
+	only := downloadClientConfig{KindCategories: map[string]string{torrentopts.KindMovie: "films"}}
+	if got := only.allCategories(); !slices.Equal(got, []string{"films"}) {
+		t.Errorf("allCategories() with an empty main = %v", got)
 	}
 	// Nothing set: one category, as before.
 	if got := (downloadClientConfig{}).allCategories(); !slices.Equal(got, []string{"mediarium"}) {

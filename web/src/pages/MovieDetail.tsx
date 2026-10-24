@@ -6,12 +6,17 @@ import InfoTip from '../components/InfoTip'
 import PosterCard from '../components/PosterCard'
 import ProfilePicker from '../components/ProfilePicker'
 import ReleaseTable from '../components/ReleaseTable'
+import GrabBlocked from '../components/GrabBlocked'
+import { blockingOf, type BlockingDownload } from '../grabBlocked'
 import TitleTags from '../components/Tags'
 import WatchedLine from '../components/WatchedLine'
 import CollectionCard from '../components/CollectionCard'
 import CopiesCard from '../components/CopiesCard'
 import TitleRequestActions from '../components/TitleRequestActions'
 import FilesPanel from '../components/FilesPanel'
+import FileChips from '../components/FileChips'
+import ShortFile from '../components/ShortFile'
+import { redoAnswerText } from '../shortFile'
 import SubtitlesOffNote from '../components/SubtitlesOffNote'
 import SubtitlesPanel from '../components/SubtitlesPanel'
 import Switch from '../components/Switch'
@@ -36,6 +41,7 @@ import { removeOption } from '../diskUsage'
 import ReleaseNotice from '../components/ReleaseNotice'
 import { releaseFacts } from '../releaseDates'
 import type { Unanswered } from '../releaseHint'
+import type { Searched } from '../searched'
 import { useDocumentTitle } from '../documentTitle'
 import { plural, t } from '../i18n'
 
@@ -65,6 +71,8 @@ function MoviePage() {
   const [adding, setAdding] = useState(false)
   const [locating, setLocating] = useState(false)
   const [monitored, setMonitored] = useState<boolean | null>(null)
+  // What the movie's file takes on disk (0 when there is none).
+  const [diskBytes, setDiskBytes] = useState(0)
   const [results, setResults] = useState<SearchResult[] | null>(null)
   // The releases list is drawn above the files and settings: bring it into view when a search answers.
   const releasesRef = useRef<HTMLElement>(null)
@@ -72,7 +80,7 @@ function MoviePage() {
   useEffect(() => {
     if (hasResults) releasesRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }, [hasResults])
-  const [answered, setAnswered] = useState<{ sources: number; unanswered: Unanswered[]; warnings?: string[] }>({ sources: 0, unanswered: [] })
+  const [answered, setAnswered] = useState<{ sources: number; unanswered: Unanswered[]; warnings?: string[]; searched?: Searched[] }>({ sources: 0, unanswered: [] })
   const [searching, setSearching] = useState(false)
   const [searchingNow, setSearchingNow] = useState(false)
   const [grabbing, setGrabbing] = useState<string | null>(null)
@@ -111,6 +119,24 @@ function MoviePage() {
     }
   }
 
+  // A file far shorter than the movie should be: delete it and look for another release.
+  async function redoShortFile() {
+    if (!movie?.libraryId) return
+    const answer = await confirm({
+      title: t('Delete the file of {title} and search again?', { title: movie.title }),
+      body: <p>{t('This file is much shorter than the movie should be, so it is most likely a fake or a cut-off download. It goes to the recycle bin (or is deleted, if that is switched off), the release it came from is blocklisted when Mediarium knows it, and Mediarium searches for another one.')}</p>,
+      confirmLabel: t('Delete and search again'),
+      danger: true,
+    })
+    if (!answer) return
+    try {
+      toast.info(redoAnswerText(await api.redoIncomplete({ movieIds: [movie.libraryId] })))
+      reload()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    }
+  }
+
   function reload() {
     api
       .tmdbMovieDetail(id)
@@ -131,9 +157,12 @@ function MoviePage() {
     if (!libraryId) return
     api
       .getMovie(libraryId)
-      .then((m) => setMonitored(m.monitored ?? true))
+      .then((m) => {
+        setMonitored(m.monitored ?? true)
+        setDiskBytes(m.sizeBytes ?? 0)
+      })
       .catch(() => undefined)
-  }, [libraryId])
+  }, [libraryId, movie?.filePath])
 
   async function toggleMonitored(v: boolean) {
     if (!libraryId) return
@@ -194,7 +223,7 @@ function MoviePage() {
     setResults(null)
     try {
       const a = await api.movieSearch(libraryId)
-      setAnswered({ sources: a.sources, unanswered: a.unanswered, warnings: a.warnings })
+      setAnswered({ sources: a.sources, unanswered: a.unanswered, warnings: a.warnings, searched: a.searched })
       setResults(a.results)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
@@ -203,15 +232,22 @@ function MoviePage() {
     }
   }
 
-  async function grab(r: SearchResult) {
+  // A grab that was refused because another download is in the way, with the
+  // release that was picked, so it can be repeated once that one is cancelled.
+  const [blocked, setBlocked] = useState<{ release: SearchResult; blocking: BlockingDownload; message: string } | null>(null)
+
+  async function grab(r: SearchResult, replaceQueueId?: number) {
     if (!libraryId) return
     setGrabbing(r.downloadUrl)
+    setBlocked(null)
     try {
-      await api.grab(libraryId, { releaseTitle: r.title, downloadUrl: r.downloadUrl, sizeBytes: r.sizeBytes, protocol: r.protocol })
+      await api.grab(libraryId, { releaseTitle: r.title, downloadUrl: r.downloadUrl, sizeBytes: r.sizeBytes, protocol: r.protocol, replaceQueueId })
       toast.success(t('Started downloading "{title}". Follow it in Activity.', { title: r.title }))
       setTimeout(reload, 500)
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e))
+      const blocking = blockingOf(e)
+      if (blocking) setBlocked({ release: r, blocking, message: e instanceof Error ? e.message : String(e) })
+      else toast.error(e instanceof Error ? e.message : String(e))
     } finally {
       setGrabbing(null)
     }
@@ -264,6 +300,7 @@ function MoviePage() {
             ...(writers.length ? [{ label: writers.length > 1 ? t('Writers') : t('Writer'), value: <PeopleLinks people={writers} /> }] : []),
             ...releaseFacts(movie.releaseDates, movie.releaseDate),
             ...(movie.releaseStatus ? [{ label: t('Status'), value: movie.releaseStatus }] : []),
+            ...(inLibrary && movie.filePath && diskBytes > 0 ? [{ label: t('Size on disk'), value: formatBytes(diskBytes) }] : []),
           ],
           links: titleLinks('movie', movie.tmdbId, movie.imdbId, movie.homepage),
         }}
@@ -340,6 +377,8 @@ function MoviePage() {
             {movie.filePath && <code className="filepath">{movie.filePath}</code>}
           </div>
         )}
+        {inLibrary && movie.status === 'downloaded' && <FileChips info={movie.fileInfo} />}
+        {inLibrary && movie.status === 'downloaded' && <ShortFile note={movie.shortFile} onRedo={admin ? () => void redoShortFile() : undefined} />}
         {inLibrary && admin && movie.folderPath && (
           <FolderLine path={movie.folderPath} kind="movie">
             {movie.libraryId && (
@@ -369,13 +408,22 @@ function MoviePage() {
       {results !== null && (
         <section ref={releasesRef} className="card" style={{ marginBottom: 24, scrollMarginTop: 80 }}>
           <h2>{t('Releases')}</h2>
-          <ReleaseNotice sources={answered.sources} unanswered={answered.unanswered} warnings={answered.warnings} results={results.length} />
+          <ReleaseNotice sources={answered.sources} unanswered={answered.unanswered} warnings={answered.warnings} searched={answered.searched} results={results.length} />
           {results.length === 0 && (
             <button className="btn-sm" onClick={() => setResults(null)}>
               {t('Close')}
             </button>
           )}
-          {results.length > 0 && <ReleaseTable results={results} grabbing={grabbing} onGrab={grab} onClose={() => setResults(null)} />}
+          {blocked && (
+            <GrabBlocked
+              message={blocked.message}
+              blocking={blocked.blocking}
+              busy={grabbing !== null}
+              onReplace={() => void grab(blocked.release, blocked.blocking.id)}
+              onDismiss={() => setBlocked(null)}
+            />
+          )}
+          {results.length > 0 && <ReleaseTable results={results} searched={answered.searched} grabbing={grabbing} onGrab={(r) => void grab(r)} onClose={() => setResults(null)} />}
         </section>
       )}
 

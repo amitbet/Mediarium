@@ -1,7 +1,7 @@
 // Run with: npm test (uses node's built-in test runner, no extra packages).
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { ageOf, filterReleases, indexersIn, qualitiesIn, resolutionOf, sortReleases, sortSubtitles, subtitleFit, subtitleRating, subtitleSite, type SortableRelease } from './releaseSort.ts'
+import { ageOf, defaultOrder, filterReleases, indexersIn, qualitiesIn, resolutionOf, scoreOf, sortReleases, sortSubtitles, subtitleFit, subtitleRating, subtitleSite, type SortableRelease } from './releaseSort.ts'
 
 const base = { protocol: 'usenet', sizeBytes: 0 }
 const list: SortableRelease[] = [
@@ -24,6 +24,14 @@ test('size, seeders and names sort the way people read them', () => {
   assert.deepEqual(sortReleases(list, 'seeders', -1).map((r) => r.seeders ?? null), [50, 3, null, null])
   assert.equal(sortReleases(list, 'indexer', 1)[0].indexerName, 'Alpha')
   assert.equal(sortReleases(list, null, 1), list)
+})
+
+test('the list starts with the best match, then the highest score, then the order the server gave', () => {
+  const r = (title: string, formatScore?: number, best?: boolean): SortableRelease => ({ ...base, title, indexerName: 'A', formatScore, best })
+  const scored = [r('a', 0), r('b', 300), r('c', -50), r('d', 300), r('e', 100, true)]
+  assert.deepEqual(defaultOrder(scored).map((x) => x.title), ['e', 'b', 'd', 'a', 'c'])
+  // A list that is not scored and has no marked release is left alone.
+  assert.equal(defaultOrder(list), list)
 })
 
 test('filters combine: indexer, quality and words in the title', () => {
@@ -78,4 +86,13 @@ test('a subtitle shows its own site or add-on name, and only the rating and fit 
   assert.equal(subtitleRating(addon), '')
   assert.equal(subtitleFit(addon), '130')
   assert.equal(subtitleFit(nameless), '')
+})
+
+test('the score column sorts by the whole score the pick uses, not the formats alone', () => {
+  const r = (title: string, score?: number, formatScore?: number): SortableRelease => ({ ...base, title, indexerName: 'A', score, formatScore })
+  // "b" has fewer format points but a preferred term lifts it above "a".
+  const rows = [r('a', 100, 100), r('b', 130, 80), r('c', 40, 40)]
+  assert.deepEqual(sortReleases(rows, 'score', -1).map((x) => x.title), ['b', 'a', 'c'])
+  assert.deepEqual(defaultOrder(rows).map((x) => x.title), ['b', 'a', 'c'])
+  assert.equal(scoreOf(r('x', undefined, 7)), 7)
 })

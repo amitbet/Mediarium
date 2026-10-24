@@ -24,6 +24,12 @@ const (
 	EventUpdate   = "update"   // a new version of Mediarium is available
 	EventRequest  = "request"  // someone asked for a title (see Activity > Requests)
 	EventDigest   = "digest"   // the weekly summary
+
+	// The two below are opt-in: a target only gets them when it was set up to,
+	// so nobody receives messages they never asked for.
+	EventClientDown = "clientdown" // a download client can't be reached
+	EventClientUp   = "clientup"   // a download client can be reached again
+	EventTrashSync  = "trashsync"  // a check of the TRaSH Guides changed custom formats or their scores
 )
 
 // EventInfo describes one subscribable event for the UI.
@@ -45,15 +51,25 @@ func EventKinds() []EventInfo {
 		{EventUpdate, "New version", "A new version of Mediarium is available."},
 		{EventRequest, "Requests", "Someone asked for a movie, show, artist or book."},
 		{EventDigest, "Weekly summary", "Once a week: what arrived, what failed and what is still missing."},
+		{EventClientDown, "Download client down", "A download client (built-in or external) can't be reached."},
+		{EventClientUp, "Download client back", "A download client that was down can be reached again."},
+		{EventTrashSync, "TRaSH Guides sync applied", "The update from the TRaSH Guides (automatic or by button) changed custom formats or profile scores."},
 	}
+}
+
+// OptIn reports whether a kind is only sent to targets that chose it. An empty
+// list of events (older targets) means every kind except these.
+func OptIn(kind string) bool {
+	return kind == EventClientDown || kind == EventClientUp || kind == EventTrashSync
 }
 
 // DefaultEvents is what a target subscribes to when it doesn't say.
 func DefaultEvents() []string {
-	kinds := EventKinds()
-	out := make([]string, len(kinds))
-	for i, k := range kinds {
-		out[i] = k.ID
+	var out []string
+	for _, k := range EventKinds() {
+		if !OptIn(k.ID) {
+			out = append(out, k.ID)
+		}
 	}
 	return out
 }
@@ -225,7 +241,7 @@ func Types() []TypeInfo {
 			{Name: "url", Label: "URL", Kind: "password", Required: true, Placeholder: "https://example.com/hook",
 				Help: "Receives an HTTP POST with a JSON body."},
 			{Name: "template", Label: "Custom JSON body", Kind: "text", Placeholder: `{"text": "{{title}}: {{message}}"}`,
-				Help: "Optional. Write your own JSON using {{event}}, {{title}}, {{message}} and {{at}}."},
+				Help: "Optional. Write your own JSON using {{event}}, {{title}}, {{message}}, {{at}}, {{customFormatScore}}, {{customFormats}}, {{releaseGroup}}, {{indexer}}, {{size}} and {{sizeText}}."},
 		}},
 	}
 }
@@ -453,8 +469,10 @@ func SplitAddresses(s string) []string {
 	return out
 }
 
-// renderTemplate fills {{event}}, {{title}}, {{message}} and {{at}} into a
-// user-written JSON template, escaping each value for use inside a JSON
+// renderTemplate fills {{event}}, {{title}}, {{message}}, {{at}}, {{subtitles}}
+// and the release details ({{customFormatScore}}, {{customFormats}},
+// {{releaseGroup}}, {{indexer}}, {{size}} in bytes, {{sizeText}}; empty when
+// unknown) into a user-written JSON template, escaping each value for use inside a JSON
 // string, and checks the result is valid JSON.
 func renderTemplate(tmpl string, ev Event) (string, error) {
 	esc := func(s string) string {
@@ -466,8 +484,17 @@ func renderTemplate(tmpl string, ev Event) (string, error) {
 	if !at.IsZero() {
 		atText = at.UTC().Format("2006-01-02T15:04:05Z07:00")
 	}
+	score, size := "", ""
+	if ev.ScoreKnown {
+		score = strconv.Itoa(ev.Score)
+	}
+	if ev.SizeBytes > 0 {
+		size = strconv.FormatInt(ev.SizeBytes, 10)
+	}
 	body := strings.NewReplacer(
-		"{{event}}", esc(ev.Type), "{{title}}", esc(ev.Title), "{{message}}", esc(ev.Message), "{{at}}", esc(atText),
+		"{{event}}", esc(ev.Type), "{{title}}", esc(ev.Title), "{{message}}", esc(ev.Message), "{{at}}", esc(atText), "{{subtitles}}", esc(ev.Subtitles),
+		"{{customFormatScore}}", esc(score), "{{customFormats}}", esc(strings.Join(ev.Formats, ", ")),
+		"{{releaseGroup}}", esc(ev.ReleaseGroup), "{{indexer}}", esc(ev.Indexer), "{{size}}", esc(size), "{{sizeText}}", esc(formatSize(ev.SizeBytes)),
 	).Replace(tmpl)
 	if !json.Valid([]byte(body)) {
 		return "", fmt.Errorf("invalid JSON")

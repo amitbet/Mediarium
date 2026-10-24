@@ -323,7 +323,7 @@ func TestManualSubtitleDownloadNamesTheKind(t *testing.T) {
 	dir, base, movie := profileMovie(t, env)
 	url := fmt.Sprintf("%s/api/movies/%d/subtitles", env.baseURL, movie)
 
-	results := getJSON[[]map[string]any](t, env.client, url+"?lang=en")
+	results := subtitleSearchResults(t, env.client, url+"?lang=en")
 	kinds := map[float64]string{}
 	for _, r := range results {
 		v, _ := r["variant"].(string)
@@ -333,7 +333,7 @@ func TestManualSubtitleDownloadNamesTheKind(t *testing.T) {
 		t.Fatalf("variants in the list: %v", kinds)
 	}
 	// Only the forced ones when asked.
-	forced := getJSON[[]map[string]any](t, env.client, url+"?lang=en&variant=forced")
+	forced := subtitleSearchResults(t, env.client, url+"?lang=en&variant=forced")
 	if len(forced) != 1 || forced[0]["fileId"] != float64(fakeForcedID) {
 		t.Fatalf("forced list: %+v", forced)
 	}

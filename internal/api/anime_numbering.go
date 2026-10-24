@@ -113,11 +113,11 @@ func (s *Server) numberingFor(series library.Series) *animemap.Numbering {
 // importMaps is what is known about a show's other numberings, to place files
 // named by them.
 func (s *Server) importMaps(series library.Series) library.ImportMaps {
-	num := s.numberingFor(series)
-	if num.Empty() {
-		return library.ImportMaps{}
+	maps := library.ImportMaps{Custom: customMap(s.customFor(series))}
+	if num := s.numberingFor(series); !num.Empty() {
+		maps.Scene, maps.TVDB = num.MapScene, num.MapTVDB
 	}
-	return library.ImportMaps{Scene: num.MapScene, TVDB: num.MapTVDB}
+	return maps
 }
 
 // importFilesOf turns the files a folder scan found into what the import

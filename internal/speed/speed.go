@@ -79,3 +79,13 @@ func SetUpload(bytesPerSecond int64) {
 
 // CurrentUpload is the upload limit in bytes per second, 0 for none.
 func CurrentUpload() int64 { return upCurrent.Load() }
+
+var upOff atomic.Bool
+
+// SetUploadOff switches uploading off for every torrent (true) or back on. It
+// is a different thing from a limit: nothing is sent at all, and downloading
+// goes on as before. The torrent engine reads it through UploadOff.
+func SetUploadOff(off bool) { upOff.Store(off) }
+
+// UploadOff reports whether uploading is switched off.
+func UploadOff() bool { return upOff.Load() }

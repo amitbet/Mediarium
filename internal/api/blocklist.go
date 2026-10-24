@@ -73,13 +73,14 @@ func (s *Server) blockedKeys() map[string]bool {
 // as wanted while the bad release is not blocklisted yet (and grab it
 // again), and then calls retryAfterBadRelease.
 func (s *Server) blocklistBadRelease(releaseTitle string, protocol indexers.Protocol, movieID, seriesID int64, cause error) bool {
+	reason := blocklistReason(cause)
 	if err := s.Blocklist.Add(blocklist.Entry{
-		ReleaseTitle: releaseTitle, Protocol: string(protocol), Reason: cause.Error(), MovieID: movieID, SeriesID: seriesID,
+		ReleaseTitle: releaseTitle, Protocol: string(protocol), Reason: reason, MovieID: movieID, SeriesID: seriesID,
 	}); err != nil {
 		log.Printf("api: %v", err)
 		return false
 	}
-	_ = s.QueueRepo.LogItemActivity(movieID, seriesID, "blocklisted", fmt.Sprintf("Blocklisted \"%s\": %s", releaseTitle, cause.Error()))
+	_ = s.QueueRepo.LogItemActivity(movieID, seriesID, "blocklisted", fmt.Sprintf("Blocklisted \"%s\": %s", releaseTitle, reason))
 	return true
 }
 

@@ -4,10 +4,11 @@ Mediarium is licensed under the GNU Affero General Public License v3.0 (see LICE
 
 ## Contents
 
-- [Go modules compiled into the program](#go-modules) (105)
+- [Go modules compiled into the program](#go-modules) (106)
 - [Packages bundled into the web app](#web-app-packages) (38)
 - [Fonts](#fonts) (3)
 - [Tools in the Docker images](#tools-in-the-docker-images)
+- [Data from other services](#data-from-other-services)
 
 ## Tools in the Docker images
 
@@ -23,6 +24,14 @@ The images install these from Alpine Linux (the standard image) or Debian (the `
 | tzdata | time zones | public domain |
 
 The `-full` image is built on the official FlareSolverr image (MIT), which brings Python, Chromium and their own licences: see https://github.com/FlareSolverr/FlareSolverr.
+
+## Data from other services
+
+| Service | What Mediarium uses it for | Licence |
+|---|---|---|
+| [TVmaze](https://www.tvmaze.com) | the time episodes air, shown on the calendar | CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/) |
+
+Air times from TVmaze. Only a show's TheTVDB or IMDb id, or its name and year, is sent to it, and it can be switched off under Settings > Metadata.
 
 ## Go modules
 
@@ -121,6 +130,7 @@ The `-full` image is built on the official FlareSolverr image (MIT), which bring
 | go.opentelemetry.io/otel/trace | v1.46.0 | Apache-2.0 |
 | golang.org/x/crypto | v0.57.0 | BSD-3-Clause |
 | golang.org/x/exp | v0.0.0-20251113190631-e25ba8c21ef6 | BSD-3-Clause |
+| golang.org/x/image | v0.46.0 | BSD-3-Clause |
 | golang.org/x/net | v0.60.0 | BSD-3-Clause |
 | golang.org/x/oauth2 | v0.37.0 | BSD-3-Clause |
 | golang.org/x/sync | v0.23.0 | BSD-3-Clause |
@@ -7645,6 +7655,39 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 ### golang.org/x/exp v0.0.0-20251113190631-e25ba8c21ef6
+
+```text
+Copyright 2009 The Go Authors.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+   * Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+   * Redistributions in binary form must reproduce the above
+copyright notice, this list of conditions and the following disclaimer
+in the documentation and/or other materials provided with the
+distribution.
+   * Neither the name of Google LLC nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+
+### golang.org/x/image v0.46.0
 
 ```text
 Copyright 2009 The Go Authors.

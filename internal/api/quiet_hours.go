@@ -33,7 +33,7 @@ func (s *Server) quietHours() (from, to int, ok bool) {
 // hours never hold back.
 func urgentEvent(ev notify.Event) bool {
 	switch notify.EventKind(ev.Type) {
-	case notify.EventFailed, notify.EventHealth, notify.EventConflict:
+	case notify.EventFailed, notify.EventHealth, notify.EventConflict, notify.EventClientDown:
 		return true
 	}
 	return ev.Type == "test"

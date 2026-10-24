@@ -75,6 +75,11 @@ func main() {
 			if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 				continue
 			}
+			// The MCP server (mcp*.go in internal/api) talks to AI assistants, not to
+			// the screen: its sentences are not translated.
+			if d == "internal/api" && strings.HasPrefix(name, "mcp") {
+				continue
+			}
 			scan(filepath.Join(*root, d, name), found)
 		}
 	}

@@ -41,6 +41,10 @@ type musicReleasePayload struct {
 	PublishDate string `json:"publishDate,omitempty"`
 	Seeders     int    `json:"seeders,omitempty"`
 	Peers       int    `json:"peers,omitempty"`
+	// BelowMinSeeders marks a torrent with fewer seeders than its indexer's minimum
+	// (MinSeeders): automatic searches skip it, a grab by hand is allowed.
+	BelowMinSeeders bool `json:"belowMinSeeders,omitempty"`
+	MinSeeders      int  `json:"minSeeders,omitempty"`
 	// What the release name says.
 	Artist      string `json:"artist,omitempty"`
 	Album       string `json:"album,omitempty"`
@@ -134,7 +138,15 @@ func (s *Server) handleAlbumSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	blocked := s.searchSkipKeys()
 	sources := s.sourcesFor("")
-	outcomes := indexers.SearchAll(indexers.AsManual(r.Context()), instances, albumQuery(artist, album), musicCategories)
+	// A site that lists no audio category is not asked for an album.
+	asked, left := indexers.SplitByCategories(r.Context(), instances, musicCategories)
+	var notAsked []string
+	for _, inst := range left {
+		if inst.Enabled {
+			notAsked = append(notAsked, inst.Name)
+		}
+	}
+	outcomes := indexers.SearchAll(indexers.AsManual(r.Context()), asked, albumQuery(artist, album), musicCategories)
 	for _, res := range indexers.MergeResults(outcomes) {
 		rel := music.ParseRelease(res.Title)
 		p := musicReleasePayload{
@@ -149,9 +161,12 @@ func (s *Server) handleAlbumSearch(w http.ResponseWriter, r *http.Request) {
 		if !res.PublishDate.IsZero() {
 			p.PublishDate = res.PublishDate.Format(time.RFC3339)
 		}
+		if belowMinSeeders(res) {
+			p.BelowMinSeeders, p.MinSeeders = true, res.MinSeeders
+		}
 		out = append(out, p)
 	}
-	writeSearch(w, r, out, len(instances), outcomes)
+	writeSearchAll(w, r, out, len(instances), outcomes, notAsked, instances)
 }
 
 // handleAlbumGrab grabs one release for an album (from the interactive
@@ -221,18 +236,26 @@ func (s *Server) huntAlbum(ctx context.Context, artist music.Artist, album music
 	case music.StatusDownloading:
 		return false
 	case music.StatusDownloaded:
-		if !profile.WantsUpgrade(current) {
+		if force && s.albumIncomplete(album.ID) {
+			// A search by hand for an album with tracks missing: any
+			// release the profile accepts is better than what is there,
+			// so it is judged like a missing album, not as an upgrade.
+			current = ""
+		} else if !profile.WantsUpgrade(current) {
 			return false
 		}
 	}
 	if !force && !album.Monitored {
 		return false
 	}
-	outcomes := indexers.SearchAll(ctx, instances, albumQuery(artist, album), musicCategories)
+	asked, _ := indexers.SplitByCategories(ctx, instances, musicCategories)
+	outcomes := indexers.SearchAll(ctx, asked, albumQuery(artist, album), musicCategories)
 	results, expired := s.freshResults(indexers.MergeResults(outcomes))
+	results, thin := s.keepSeeded(ctx, results)
 	sources := s.sourcesFor("")
 	best, verdict := pickMusicRelease(results, blocked, sources, artist, album, profile, current)
 	verdict.addExpired(expired, s.retentionDays())
+	verdict.addThin(thin)
 	verdict.failedIndexers = failedIndexers(outcomes)
 	what := "Searched"
 	if current != "" {
@@ -468,4 +491,19 @@ func (s *Server) retryAlbum(albumID int64) {
 	if !s.huntAlbum(context.Background(), artist, album, profile, instances, s.searchSkipKeys(), false) {
 		s.albumEvent(albumID, "retry", queue.LevelWarn, noOtherRelease)
 	}
+}
+
+// albumIncomplete reports whether a downloaded album has tracks without a
+// file (its tracklist is known and not every track has one).
+func (s *Server) albumIncomplete(albumID int64) bool {
+	tracks, err := s.MusicRepo.ListTracks(albumID)
+	if err != nil || len(tracks) == 0 {
+		return false
+	}
+	for _, t := range tracks {
+		if t.FilePath == "" {
+			return true
+		}
+	}
+	return false
 }

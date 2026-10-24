@@ -45,8 +45,10 @@ func (s *Server) removeDownloadsFor(movieID, seriesID int64, title string) (int,
 		if running || isActiveStatus(it.Status) {
 			cancelled++
 		}
+		ref, inClient := s.clientRefFor(it)
 		s.removeWorkDir(s.workDirFor(it.ID))
 		_ = s.QueueRepo.Delete(it.ID)
+		s.removeFromClient(ref, inClient, false)
 	}
 	if cancelled > 0 {
 		_ = s.QueueRepo.LogActivity(0, "removed", fmt.Sprintf("Cancelled %s of %s and removed their files from the downloads folder", plural(cancelled, "download"), title))

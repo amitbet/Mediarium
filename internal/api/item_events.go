@@ -321,6 +321,7 @@ func (s *Server) noteMovieSearch(ctx context.Context, mode limitMode, m library.
 		return true, ""
 	}
 	fresh, expired := s.freshResults(indexers.MergeResults(outcomes))
+	fresh, thin := s.keepSeeded(ctx, fresh)
 	sizeWhy := s.movieSizeRejections(ctx, m, profile)
 	limit := func(res indexers.Result) string {
 		if len(sizeWhy(res.Title, res.SizeBytes)) > 0 {
@@ -335,6 +336,7 @@ func (s *Server) noteMovieSearch(ctx context.Context, mode limitMode, m library.
 	}
 	v := judgeSearchLimited(fresh, blocked, sources, profile, keep, upgradeFrom, m.ReleaseTitle, limit)
 	v.addExpired(expired, s.retentionDays())
+	v.addThin(thin)
 	v.failedIndexers = failedIndexers(outcomes)
 	what := "Searched"
 	if upgradeFrom != "" {
@@ -377,6 +379,7 @@ func (s *Server) noteTVSearch(ctx context.Context, force bool, series library.Se
 	}
 	profile := s.profileForSeries(profiles, series)
 	fresh, expired := s.freshResults(indexers.MergeResults(outcomes))
+	fresh, thin := s.keepSeeded(ctx, fresh)
 	sizeWhy := s.tvSizeRejections(ctx, series, profile)
 	limit := func(res indexers.Result) string {
 		if len(sizeWhy(res.Title, res.SizeBytes)) > 0 {
@@ -391,6 +394,7 @@ func (s *Server) noteTVSearch(ctx context.Context, force bool, series library.Se
 	}
 	v := judgeSearchLimited(fresh, s.searchSkipKeys(), s.sourcesFor(series.SourcePref), profile, keep, "", "", limit)
 	v.addExpired(expired, s.retentionDays())
+	v.addThin(thin)
 	v.failedIndexers = failedIndexers(outcomes)
 	what := fmt.Sprintf("Searched for season %d", season)
 	if episode > 0 {

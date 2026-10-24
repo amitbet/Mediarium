@@ -30,6 +30,7 @@ func (s *Server) handleRescanMovie(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "Found a video file but couldn't save it to the library. Check the Mediarium log for details.")
 			return
 		}
+		s.kickMediaInfo() // read what the file that was added holds
 		writeJSON(w, http.StatusOK, rep)
 		return
 	}
@@ -50,5 +51,6 @@ func (s *Server) handleRescanSeries(w http.ResponseWriter, r *http.Request) {
 	}
 	rep := s.rescanSeriesFiles(id, true)
 	s.attachHandAddedEpisodes(sr, &rep)
+	s.kickMediaInfo() // read what the files that were added hold
 	writeJSON(w, http.StatusOK, rep)
 }

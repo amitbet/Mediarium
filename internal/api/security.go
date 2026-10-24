@@ -78,5 +78,13 @@ func (s *Server) isHTTPS(r *http.Request) bool {
 // cross-site request check.
 func (s *Server) harden(next http.Handler) http.Handler {
 	st := s.sec()
-	return st.proxies.HeadersWithFrames(st.proxies.CSRF(st.origins, next), s.appFrameSources)
+	csrf := st.proxies.CSRF(st.origins, next)
+	checked := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.oauthOpenPath(r.URL.Path) {
+			next.ServeHTTP(w, r) // programs, not a browser with a session (see oauthOpenPath)
+			return
+		}
+		csrf.ServeHTTP(w, r)
+	})
+	return st.proxies.HeadersWithFrames(checked, s.appFrameSources)
 }

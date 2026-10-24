@@ -56,7 +56,7 @@ With the module on, music shows up next to movies and TV. Basic users can browse
 
 ## Adding an artist
 
-Search for the artist by name. A short description ("jazz", "UK rock band") tells artists with the same name apart. When you add one, Mediarium lists its **albums, EPs and singles**. Live albums, compilations, remixes, soundtracks and DJ mixes are left out, so the list is the artist's own studio releases.
+Search for the artist by name. A short description ("jazz", "UK rock band") tells artists with the same name apart. When you add one, Mediarium lists its **albums, EPs and singles**. Live albums, compilations, remixes, soundtracks and DJ mixes are left out unless you change that (see [Choosing what to show](#choosing-what-to-show)), so by default the list is the artist's own studio releases.
 
 The Add dialog is the same everywhere you can add an artist (Discover and the header search), with these choices:
 
@@ -70,6 +70,19 @@ The Add dialog is the same everywhere you can add an artist (Discover and the he
 You can switch any album on or off later. Only albums that are monitored and already released are searched for automatically, and each album has its own switch. Basic users can add artists and albums and grab releases just like movies. Removing an artist is for administrators.
 
 Adding a large discography can take a few seconds, because the music database allows only about one lookup a second. Mediarium remembers answers for a few hours. Where the data comes from is listed under [Sources](#sources).
+
+## Choosing what to show
+
+By default an artist's page lists albums, EPs and singles, and leaves out every release that has a secondary type (live, remix, compilation and so on). You can change that for the whole library under **Settings > Quality**, in the card **Music: what to show**, and for one artist on its own page. Changes are saved as you make them.
+
+- **Release types to show**: Albums, EPs and Singles. At least one has to stay on.
+- **Kinds to hide**: Live, Remix, Compilation, DJ-mix, Soundtrack, Demo, Mixtape/Street, Spokenword, Interview, Audiobook, Audio drama and Other (any kind the music database adds later). A release is hidden when any of its kinds is ticked. Everything is ticked by default, which is what Mediarium always did. Untick **Live** and live albums are listed.
+- **Hide bootleg-only releases**: off by default. The music database has no status for a release group itself, only for the releases inside it, so a group that only exists as a bootleg (an unofficial recording) is listed like any other album. With this on, Mediarium asks about each group once (a single request for an official release, a second one only when there is none) and leaves out the groups whose releases are all bootlegs, promotions or pseudo-releases. A group with no release at all (an announced album) is kept. The questions go out one a second in the background, so the page opens at once and releases that have not been checked yet stay visible until they have. The answers are kept in the database for about six months. Each release it has to check costs one or two requests, so a long discography takes a few minutes the first time.
+- **Official studio releases only** is a one-click preset: albums only, every kind hidden, bootleg-only releases hidden. **Back to the defaults** undoes it.
+
+The choice decides what **following an artist** adds: a new artist gets the releases that pass, and the 12-hourly check only adds new releases that pass. It never removes or unmonitors an album that is already in the library, whatever you change. If you widen the choice (say you allow EPs), the next check adds the EPs that were left out before, and saving an artist's own choice starts that check at once.
+
+On an artist's page, administrators see chips **Show: Albums EPs Singles** and a folded **More filters** with the same checkboxes as the settings card and **Use the library setting** (the default for every artist). Under them a line says what the choice leaves out of the artist's page on the music database, for example "3 hidden: 2 live, 1 bootleg". **Show them** lists those releases for this visit, and **Add to library** adds one by hand. Nothing is hidden without being counted.
 
 ## How albums are found
 
@@ -86,7 +99,7 @@ Wanted albums are searched on the same schedule as movies and shows (see [Automa
 
 An artist is either **followed** or not (`monitored` on the artist). Following decides one thing: whether releases that come out **later** are picked up. Every 12 hours (while the music module is on) Mediarium checks the releases of each followed artist again. A new album is added and monitored, so it's searched for as soon as it's out, and an announced album that now has a release date gets it. Unfollowing an artist stops that. **It never changes the monitored switch of any album already listed.** Those keep deciding, one by one, what is searched for, so an unfollowed artist's monitored albums are still wanted.
 
-Administrators change it, and the quality profile, with `PUT /api/music/artists/{id}` and `{monitored?: bool, profileId?: number}` (`profileId` 0 puts the artist back on the default profile; a field left out changes nothing). The answer is the artist with its albums, like `GET /api/music/artists/{id}`.
+Administrators change it, and the quality profile, with `PUT /api/music/artists/{id}` and `{monitored?: bool, profileId?: number, filter?: {types, hideSecondary, hideBootlegs}, useLibraryFilter?: bool}` (`profileId` 0 puts the artist back on the default profile; a field left out changes nothing). `filter` is this artist's own choice of what to list and add (see [Choosing what to show](#choosing-what-to-show)) and `useLibraryFilter: true` takes it back. The answer is the artist with its albums, like `GET /api/music/artists/{id}`.
 
 ## Quality
 
@@ -112,7 +125,7 @@ After the download is repaired and unpacked (as for movies), Mediarium finds the
 <music folder>/<Artist>/<Album> (<Year>)/2-01 - Title.flac      albums with several discs
 ```
 
-Plex, Jellyfin and Navidrome all read this layout. Files are hardlinked from the downloads folder when both are on the same disk (no extra space), otherwise copied. `cover.jpg` and `folder.jpg` (or `.png`) are kept beside the tracks. Other files (`.nfo`, `.log`, `.cue`) aren't copied.
+Plex, Jellyfin and Navidrome all read this layout. Files are hardlinked from the downloads folder when both are on the same disk (no extra space), otherwise copied. `cover.jpg` and `folder.jpg` (or `.png`, or `.webp`) are kept beside the tracks. Other files (`.nfo`, `.log`, `.cue`) aren't copied.
 
 Files are matched by disc and track number first (from the file name, or a `CD1`/`Disc 2` folder), then by title, then by number alone. If none of a release's files can be matched, the release is blocklisted as bad and the next-best one is tried, as for movies. Tracks the release doesn't have, and extra files it has, are listed in the album's activity. When an album is upgraded (MP3 to FLAC), the old files are removed once the new ones are in place.
 
@@ -269,6 +282,21 @@ If your music is already in the music folder as `Artist/Album/tracks` (a year in
 
 `GET /api/music/import/scan/{id}` answers `{id, root, phase: "scanning"|"matching"|"done"|"failed"|"stopped", done, total, current, summary: {artists, albums, imported, already, unmatched, failed}, results: [{artist, album, folder, files, status: "imported"|"already"|"unmatched"|"failed", message, note, artistId, albumId, quality, tracks}], error?}`. `GET /api/music/import/scan` answers the latest scan the same way (`{"id": ""}` when none has run since the server started), and `DELETE /api/music/import/scan/{id}` stops a running one. Starting a scan while one is running returns the running one.
 
+## Rescanning an album's folder and deleting a file
+
+The import above skips albums that are already in your library. When you change an album's folder by hand (you copy in the tracks that are missing, replace a damaged file, or remove one), press **Rescan album folder** on the album's card (administrators only). Mediarium reads the audio files in the album's folder again and matches them to the album's tracks the same way the import and a download do: by the tags, the track numbers and the titles. Then:
+
+- A track that now has a file is linked to it, where the file lies. Nothing is moved, renamed or deleted.
+- A track whose file is gone from the folder loses its link.
+- The album's quality is read from the files again (the lowest one among them), and the album's status follows: **downloaded** while at least one track has a file, **missing** (wanted again, if it is monitored) when no audio file is left.
+- Files that fit no track are counted and left alone.
+
+The card then says how many tracks have a file, which ones are missing, and the quality. If the album is still incomplete and monitored, it says so and offers **Search for missing tracks**, which searches right away and accepts any release your profile allows, not only an upgrade over what is there. An album that isn't monitored says that Mediarium won't look for the rest. Automatic searches don't go looking for albums that are only partly there, so use that button, or **Choose a release**, when you want the rest.
+
+In the album's **Files** tab, **Delete file** (administrators only) asks first and then removes that one file from the album's folder. It goes to the recycle bin when that is on, and is deleted otherwise. Only a file inside the album's folder, which must lie inside the music folder, can be removed: no `../`, no absolute paths, no link leading out. The track that used the file loses its link, the album's quality and status are worked out again (the album is wanted again when no audio file is left), and the card says what is left. A file can't be deleted while its album is downloading.
+
+`POST /api/music/albums/{id}/rescan` and `DELETE /api/music/albums/{id}/files?path=<relative path>` (both administrators only) answer with `{status, quality, folder, files, tracks, matched, linked, dropped, extra, complete, missingTitles, monitored}`; the deletion also has `deleted` (the path) and `trashed`. `matched` is the number of tracks with a file, `linked` how many of them this rescan linked, `dropped` how many links it removed because the file is gone, `extra` the files that fit no track, and `missingTitles` the first 25 tracks without a file. A rescan of an album that is downloading answers 409.
+
 ## Removing an artist
 
 Removing an artist (administrators) always cancels its downloads and deletes their files in the downloads folder. With **Delete files** its album folders in the music folder go too, and the artist folder once it's empty. Nothing outside the music folder is ever deleted.
@@ -293,10 +321,16 @@ Album, artist and release information, cover art and the popular and new-release
 | POST | `/api/music/artists` | `{mbid, monitor?: "all"\|"future"\|"none", profileId?, searchNow?}` | 201 artist with `albums` |
 | GET | `/api/music/artists` | | `[artist]` |
 | GET | `/api/music/artists/{id}` | | artist with `albums` |
-| PUT | `/api/music/artists/{id}` | `{monitored?, profileId?}` | the artist with `albums`; admin only |
+| PUT | `/api/music/artists/{id}` | `{monitored?, profileId?, filter?, useLibraryFilter?}` | the artist with `albums`; admin only |
+| GET | `/api/music/artists/{id}/discography` | | what the artist's filter leaves out and is not in the library: `{filter, hidden: [{mbid, title, type, releaseDate, secondaryTypes, hiddenBy}], counts: {reason: n}, checking}`; `hiddenBy` is `album`, `ep`, `single`, a kind (`live`, `remix`, ...) or `bootleg`; `checking` counts releases the bootleg test has not looked at yet |
+| POST | `/api/music/artists/{id}/albums` | `{mbid}` | 201 album: adds one release the filter left out, monitored; needs the manage permission |
+| GET | `/api/music/filters` | | `{filter: {types, hideSecondary, hideBootlegs}, defaults, studio, secondaryTypes: [{key, name}]}` |
+| PUT | `/api/music/filters` | `{types, hideSecondary, hideBootlegs}` | the same as GET; admin only |
 | DELETE | `/api/music/artists/{id}?deleteFiles=true` | | admin only |
 | GET | `/api/music/albums/{id}` | | album with `artistName` and `tracks` |
 | PUT | `/api/music/albums/{id}/monitored` | `{monitored}` | |
+| POST | `/api/music/albums/{id}/rescan` | | `{status, quality, folder, files, tracks, matched, linked, dropped, extra, complete, missingTitles, monitored}`; admin only |
+| DELETE | `/api/music/albums/{id}/files?path=` | | the same, plus `deleted` and `trashed`; admin only |
 | POST | `/api/music/albums/{id}/search` | | `[release]` with `rejections` |
 | POST | `/api/music/albums/{id}/grab` | `{releaseTitle, downloadUrl, sizeBytes, protocol?}` | 202 `{queueId}` |
 | POST | `/api/music/albums/{id}/search-now` | | `{grabbed, message}` |
@@ -324,4 +358,4 @@ Album, artist and release information, cover art and the popular and new-release
 | POST | `/api/music/listenbrainz/playing` | `{trackId}` | `{sent}` |
 | POST | `/api/music/listenbrainz/listen` | `{trackId, listenedAt}` | `{sent, submitted, pending}` |
 
-An artist is `{id, mbid, name, sortName, disambiguation, monitored, monitorNew, profileId, profileName, addedAt, addedBy, albumCount, monitoredCount, downloadedCount, coverUrl, imageUrl}`; an album `{id, artistId, mbid, title, type, releaseDate, year, monitored, status, quality, path, coverUrl, coverArchiveUrl}`; a track `{id, disc, position, title, lengthMs, hasFile, filePath}`. A release in the interactive search carries what its name says (`artist, album, year, format, bitrate, bitDepth, source, discography, quality`) beside the usual `title, indexerName, protocol, downloadUrl, sizeBytes, publishDate, seeders, peers, blocklisted, rejections, acceptedBy`. `coverUrl` (and, on artists, `imageUrl`, the same address) point at the cover routes above. `coverArchiveUrl` is the address of the original picture at the cover-art service. Album downloads appear in `GET /api/queue` with `albumId` and the title "Artist – Album".
+An artist is `{id, mbid, name, sortName, disambiguation, monitored, monitorNew, profileId, profileName, addedAt, addedBy, albumCount, monitoredCount, downloadedCount, coverUrl, imageUrl}` (and, on `GET /api/music/artists/{id}`, `filter: {types, hideSecondary, hideBootlegs, useLibrary}`); an album `{id, artistId, mbid, title, type, releaseDate, year, monitored, status, quality, path, coverUrl, coverArchiveUrl}`; a track `{id, disc, position, title, lengthMs, hasFile, filePath}`. A release in the interactive search carries what its name says (`artist, album, year, format, bitrate, bitDepth, source, discography, quality`) beside the usual `title, indexerName, protocol, downloadUrl, sizeBytes, publishDate, seeders, peers, blocklisted, rejections, acceptedBy`. `coverUrl` (and, on artists, `imageUrl`, the same address) point at the cover routes above. `coverArchiveUrl` is the address of the original picture at the cover-art service. Album downloads appear in `GET /api/queue` with `albumId` and the title "Artist – Album".

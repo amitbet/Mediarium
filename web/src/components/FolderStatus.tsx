@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api, type FolderCheck } from '../api'
 import { formatBytes } from '../format'
 import { t } from '../i18n'
+import RootMarkerFix from './RootMarkerFix'
 
 // Live check of a folder path as it is typed: does it exist, can Mediarium
 // write to it, is it mapped to the device (Docker), and how much room is left.
@@ -101,6 +102,7 @@ export default function FolderStatus({ path, suggest, onUse }: { path: string; s
           </button>
         </div>
       )}
+      {r.marker && <RootMarkerFix path={r.path} marker={r.marker} />}
       {error && <p className="error-text">{error}</p>}
     </div>
   )

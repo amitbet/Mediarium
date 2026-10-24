@@ -24,6 +24,10 @@ type calendarEntryPayload struct {
 	Title       string `json:"title"`
 	Subtitle    string `json:"subtitle,omitempty"`
 	ReleaseDate string `json:"releaseDate"`
+	// AirAt is the exact moment an episode airs (RFC 3339, UTC), when TVmaze
+	// has a time for it. The page shows the episode on the viewer's own day
+	// and time; without it, the episode stays on ReleaseDate.
+	AirAt string `json:"airAt,omitempty"`
 	// Release says which date of a movie this entry is, "cinema" or "digital",
 	// when the movie has both on different days; empty otherwise.
 	Release   string `json:"release,omitempty"`
@@ -65,6 +69,42 @@ func (s *Server) handleCalendar(w http.ResponseWriter, r *http.Request) {
 		sort.SliceStable(entries, func(i, j int) bool { return entries[i].ReleaseDate < entries[j].ReleaseDate })
 	}
 	writeJSON(w, http.StatusOK, entries)
+}
+
+// entryMoment is when an entry happens, for ordering: the exact air time when
+// known, else the start of its day.
+func entryMoment(e calendarEntryPayload) string {
+	if at, err := time.Parse(time.RFC3339, e.AirAt); err == nil {
+		return at.UTC().Format(time.RFC3339)
+	}
+	return e.ReleaseDate + "T00:00:00Z"
+}
+
+// upcomingEntries keeps the first limit entries that are not in the past:
+// those dated today or later, plus an episode dated earlier whose exact air
+// time is today or later (UTC). Dated order, with exact times placing an
+// episode within its day.
+func upcomingEntries(entries []calendarEntryPayload, now time.Time, limit int) []calendarEntryPayload {
+	today := now.UTC().Format("2006-01-02")
+	out := make([]calendarEntryPayload, 0, limit)
+	for _, e := range entries {
+		day := e.ReleaseDate
+		if at, err := time.Parse(time.RFC3339, e.AirAt); err == nil {
+			// The later of the two days: a US evening show is dated the day
+			// before its UTC time, a late-night one after.
+			if d := at.UTC().Format("2006-01-02"); d > day {
+				day = d
+			}
+		}
+		if day >= today {
+			out = append(out, e)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return entryMoment(out[i]) < entryMoment(out[j]) })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out
 }
 
 // moduleCalendarEntries are the album and book releases on the calendar.
@@ -223,7 +263,7 @@ func (s *Server) calendarEntriesSince(since string) ([]calendarEntryPayload, err
 		}
 		entries = append(entries, calendarEntryPayload{
 			Kind: "episode", ID: ep.ID, SeriesID: ep.SeriesID, Season: ep.Season, Episode: ep.Episode,
-			Title: ep.SeriesName, Subtitle: label, ReleaseDate: ep.AirDate, Status: string(ep.Status),
+			Title: ep.SeriesName, Subtitle: label, ReleaseDate: ep.AirDate, AirAt: ep.AirAt, Status: string(ep.Status),
 			PosterURL: metadata.PosterURL(ep.PosterPath), TMDBID: ep.SeriesTMDB,
 		})
 	}

@@ -15,12 +15,15 @@ type Mode = 'file' | 'folder'
 export default function LocateDialog({
   kind,
   id,
+  label = '',
   start,
   onClose,
   onDone,
 }: {
-  kind: 'movie' | 'series'
+  kind: 'movie' | 'series' | 'episode'
   id: number
+  // The episode's name for the texts (kind 'episode').
+  label?: string
   // The folder to open first (the title's own folder), when there is one.
   start?: string
   onClose: () => void
@@ -29,7 +32,7 @@ export default function LocateDialog({
   const toast = useToast()
   const box = useRef<HTMLDivElement>(null)
   useFocusTrap(box)
-  const [mode, setMode] = useState<Mode>(kind === 'movie' ? 'file' : 'folder')
+  const [mode, setMode] = useState<Mode>(kind === 'series' ? 'folder' : 'file')
   const [here, setHere] = useState<BrowseAnswer | null>(null)
   const [picked, setPicked] = useState('')
   const [busy, setBusy] = useState(false)
@@ -68,6 +71,9 @@ export default function LocateDialog({
         const rep = await api.changeSeriesFolder(id, target)
         if (rep.found > 0) toast.success(st(rep.message))
         else toast.info(st(rep.message))
+      } else if (kind === 'episode') {
+        const rep = await api.locateEpisodeFile(id, target)
+        toast.success(t('Linked {file} to {episode}.', { file: rep.added ?? '', episode: label }))
       } else if (mode === 'file') {
         const rep = await api.locateMovieFile(id, target)
         toast.success(t('Found {file} and added it.', { file: rep.added ?? '' }))
@@ -89,8 +95,8 @@ export default function LocateDialog({
     }
   }
 
-  const title = kind === 'movie' ? t('Locate the file') : t('Change folder')
-  const goLabel = kind === 'series' ? t('Use this folder') : mode === 'file' ? t('Use this file') : t('Look in this folder')
+  const title = kind === 'movie' ? t('Locate the file') : kind === 'episode' ? t('Link a file to this episode') : t('Change folder')
+  const goLabel = kind === 'series' ? t('Use this folder') : kind === 'episode' ? t('Link this file') : mode === 'file' ? t('Use this file') : t('Look in this folder')
 
   return createPortal(
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && !busy && onClose()}>
@@ -99,7 +105,9 @@ export default function LocateDialog({
           <div style={{ flex: 1, minWidth: 0 }}>
             <h2 style={{ margin: '0 0 4px' }}>{title}</h2>
             <p className="field-hint" style={{ margin: 0 }}>
-              {kind === 'series'
+              {kind === 'episode'
+                ? t("Pick the video file of {episode}. It can be in the show's folder or anywhere else in your library folders. Nothing is moved, renamed or deleted.", { episode: label })
+                : kind === 'series'
                 ? t("Pick the show's new folder. Mediarium reads the episode files in it and attaches the ones it can place. Nothing is moved, renamed or deleted.")
                 : mode === 'file'
                   ? t("Pick the video file of this title. Nothing is moved, renamed or deleted.")
@@ -147,6 +155,11 @@ export default function LocateDialog({
               </li>
             ))}
           </ul>
+          {kind === 'episode' && picked && (
+            <p className="field-hint" style={{ margin: 0, overflowWrap: 'anywhere' }}>
+              {t('Link {file} to {episode}?', { file: picked.split(/[\\/]/).pop() ?? picked, episode: label })}
+            </p>
+          )}
           {error && <p className="error-text">{error}</p>}
         </div>
 

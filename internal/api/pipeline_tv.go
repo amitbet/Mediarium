@@ -125,6 +125,7 @@ func (s *Server) grabTV(series library.Series, hintSeason, hintEpisode int, rele
 	_ = s.QueueRepo.LogSeriesActivity(series.ID, "grabbed", grabbed)
 	grabbedItem := seriesItem(series, season, episodes)
 	grabbedItem.Quality, grabbedItem.SizeBytes, grabbedItem.Release = string(quality.Classify(parser.Parse(releaseTitle))), sizeBytes, releaseTitle
+	s.seriesReleaseDetails(&grabbedItem, series, releaseTitle, downloadURL)
 	s.notifyItem("grabbed", grabbedItem)
 
 	s.dispatch.Kick()
@@ -230,6 +231,10 @@ func (s *Server) runTVPipeline(queueID int64, series library.Series, season int,
 
 	mapper := s.releaseMapper(series) // anime and daily file names
 	imported, skipped := 0, 0
+	importProfile := quality.Profile{} // ranks the new file against the old one ("overwrite if better")
+	if ps, err := s.loadProfiles(); err == nil {
+		importProfile = s.profileForSeries(ps, series)
+	}
 	copiedNote := "" // set when files had to be copied over from the temporary download folder
 	// Files the library has down for other titles, and the places this run
 	// has already filled: two episodes of one pack never overwrite each other,
@@ -239,6 +244,7 @@ func (s *Server) runTVPipeline(queueID int64, series library.Series, season int,
 	var importedFiles []string // for the media server refresh
 	var importedEps []library.Episode
 	var subtitleItems []subtitleItem
+	var tooShort error // the first file that was far shorter than its episode
 	for _, file := range files {
 		fileSeason, fileEpisodes := s.tvFileEpisodes(file, season, fileTargets, mapper)
 		if len(fileEpisodes) == 0 {
@@ -256,6 +262,18 @@ func (s *Server) runTVPipeline(queueID int64, series library.Series, season int,
 			continue
 		}
 
+		if err := s.checkEpisodeLength(ctx, series.TMDBID, eps[0].Season, file); err != nil {
+			// Not filed: this file is a fake, a sample or cut off. The rest of a
+			// pack is imported as usual.
+			slog.Warn("import: a file is far shorter than its episode, left out", "file", filepath.Base(file))
+			if tooShort == nil {
+				tooShort = err
+			}
+			if seconds, ok := videoSeconds(file); ok {
+				_ = s.QueueRepo.LogSeriesActivity(series.ID, "skipped", fmt.Sprintf("%s: the file %s was left out because it looks like a fake or broken release (it is only %d min long).", series.Title, filepath.Base(file), lengthMinutes(seconds)))
+			}
+			continue
+		}
 		destPath, err := s.buildTVDestPath(series, eps[0], release, releaseTitle, file)
 		if err != nil {
 			return fail(err)
@@ -275,7 +293,7 @@ func (s *Server) runTVPipeline(queueID int64, series library.Series, season int,
 			skipped++
 			continue
 		}
-		policy, isBetter := s.conflictPolicy(tier, !series.NoUpgrade, func() (quality.Tier, bool) {
+		policy, isBetter := s.conflictPolicy(tier, !series.NoUpgrade, importProfile, func() (quality.Tier, bool) {
 			return existingTier(eps[0].Quality, eps[0].ReleaseTitle, eps[0].FilePath)
 		})
 		replaceEarlier := replacesOldFiles(policy, isBetter)
@@ -348,6 +366,11 @@ func (s *Server) runTVPipeline(queueID int64, series library.Series, season int,
 	releaseTargets()
 
 	if imported == 0 {
+		if tooShort != nil && skipped == 0 {
+			// Nothing in the download was long enough: it is a bad release.
+			s.discardWorkDir(dir, protocol)
+			return fail(tooShort)
+		}
 		if skipped > 0 {
 			// "If a file already exists" said to keep what is there: a decision,
 			// not a failure (no "failed" notification, nothing in Logs and errors).
@@ -373,12 +396,15 @@ func (s *Server) runTVPipeline(queueID int64, series library.Series, season int,
 	for sn, eps := range bySeason {
 		_, _ = s.QueueRepo.ClearFailedForEpisodes(series.ID, sn, eps, queueID)
 	}
+	subtitleNote := s.importSubtitleNote(subtitleItems...)
 	s.autoSubtitlesFor(subtitleItems...)
 	message := fmt.Sprintf("%s: imported %s from %s", series.Title, plural(imported, "episode"), releaseTitle) + copiedNote
 	_ = s.QueueRepo.LogSeriesActivity(series.ID, "imported", message)
 	s.checkFinishedShowSoon(series.ID)
 	importedItem := seriesItemFor(series, season, importedEps)
 	importedItem.Quality, importedItem.SizeBytes, importedItem.Release = string(tier), fileSize(importedFiles...), releaseTitle
+	s.seriesReleaseDetails(&importedItem, series, releaseTitle, downloadURL)
+	importedItem.Subtitles = subtitleNote
 	if len(importedFiles) == 1 {
 		importedItem.Path = importedFiles[0]
 	} else if len(importedFiles) > 1 {
@@ -520,7 +546,13 @@ func (s *Server) buildTVDestPath(series library.Series, ep library.Episode, rele
 	mode, replacement := s.illegalCharSettings()
 	clean := func(f string) string { return organizer.Sanitize(organizer.Render(f, ctx), mode, replacement) }
 
-	folder := filepath.Join(root, clean(organizer.TVSeriesFolder), clean(organizer.TVSeasonFolder))
+	folder := filepath.Join(root, clean(s.seriesFolderFormat()), clean(organizer.TVSeasonFolder))
+	if s.seriesFolderFormat() != organizer.DefaultSeriesFolder {
+		// The folder format is for new shows: one that has files keeps its folder.
+		if dir, ok := s.existingSeriesDir(series, root); ok {
+			folder = filepath.Join(dir, clean(organizer.TVSeasonFolder))
+		}
+	}
 	// Each file of a season pack keeps its own name.
 	if name, ok := s.keptName(videoFile, mode, replacement); ok {
 		return filepath.Join(folder, name), nil

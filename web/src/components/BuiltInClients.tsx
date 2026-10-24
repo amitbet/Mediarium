@@ -32,7 +32,7 @@ function savedShow(): Show {
 // right now, with the same controls on every download. Children (the clients
 // you connected and the debrid account) go in the torrent card, since that is
 // where torrents end up.
-export default function BuiltInClients({ items, renderRows, onChanged, children }: { items: QueueItem[]; renderRows: (list: QueueItem[]) => ReactNode; onChanged: () => void | Promise<void>; children?: ReactNode }) {
+export default function BuiltInClients({ items, renderRows, onChanged, usenetChildren, children }: { items: QueueItem[]; renderRows: (list: QueueItem[]) => ReactNode; onChanged: () => void | Promise<void>; usenetChildren?: ReactNode; children?: ReactNode }) {
   const [status, setStatus] = useState<DownloadsStatus | null>(null)
   useEffect(() => {
     api.downloadsStatus().then(setStatus).catch(() => undefined)
@@ -66,6 +66,7 @@ export default function BuiltInClients({ items, renderRows, onChanged, children 
         {show !== 'torrent' && (
           <div className="client-card">
             <ClientSection kind="usenet" status={status} items={items} renderRows={renderRows} onChanged={onChanged} />
+            {usenetChildren}
           </div>
         )}
         {show !== 'usenet' && (
@@ -84,7 +85,7 @@ function ClientSection({ kind, status, items, renderRows, onChanged }: { kind: K
   const [busy, setBusy] = useState<'pause' | 'resume' | null>(null)
   // What is open in this downloader: running, waiting, paused, failed or stopped. Finished ones are in History.
   // When torrents go to a connected client or a debrid service, they show in that one's section instead.
-  const elsewhere = kind === 'torrent' && !!status && status.torrent.via !== undefined && status.torrent.via !== 'builtin'
+  const elsewhere = kind === 'torrent' ? !!status && status.torrent.via !== undefined && status.torrent.via !== 'builtin' : !!status?.usenet.external
   const mine = useMemo(() => (elsewhere ? [] : sortQueue(items.filter((q) => q.protocol === kind && q.status !== 'completed'))), [items, kind, elsewhere])
   const running = mine.filter((q) => q.status === 'downloading' || q.status === 'importing').length
   const inLine = mine.filter((q) => q.status === 'queued').length
@@ -99,7 +100,10 @@ function ClientSection({ kind, status, items, renderRows, onChanged }: { kind: K
   let state: { text: string; tone: 'downloaded' | 'missing' | '' } | null = null
   let note: ReactNode = null
   if (status) {
-    if (usenet) {
+    if (usenet && elsewhere) {
+      state = { text: t('not in use'), tone: '' }
+      note = t('Usenet downloads go to {name} while it is switched on, so they show in its section below.', { name: status.usenet.externalLabel ?? '' })
+    } else if (usenet) {
       state = status.usenet.ready ? { text: t('ready'), tone: 'downloaded' } : { text: t('needs your provider'), tone: 'missing' }
       if (!status.usenet.ready) note = <>{t("It only needs your Usenet provider's login.")} <Link to="/settings/usenet">{t('Add it in Settings')}</Link></>
     } else if (elsewhere) {

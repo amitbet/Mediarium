@@ -4,7 +4,7 @@ import Icon from './Icon'
 import { useConfirm } from './ConfirmProvider'
 import { useToast } from './Toast'
 import { FieldError, FormProblem, useValidation } from '../useValidation'
-import { apiKey as apiKeyCheck, firstError, maxLength } from '../validate'
+import { apiKey as apiKeyCheck, firstError, maxLength, required, url as urlCheck } from '../validate'
 import { locale, plural, t, tx } from '../i18n'
 
 type Filter = 'all' | 'public' | 'semi-private' | 'private'
@@ -33,6 +33,12 @@ export default function SitePicker({ protocol, onAdded }: { protocol: 'torrent' 
   // Sites decide for themselves what they ask for. Keys and tokens must be one unbroken string.
   const keyLike = (n: string) => /api.?key|pass.?key|rss.?key|token|secret/i.test(n)
   const errs: Record<string, string | null> = { name: maxLength(name, 80, t('The name')) }
+  // A site that runs on the person's own network takes the address of their own server.
+  const ownAddress = !!picked?.local && !picked.custom
+  if (ownAddress) {
+    const example = 'http://192.168.1.10:3333'
+    errs.baseUrl = firstError(required(baseUrl, t('Add the address of the indexer, for example {example}.', { example })), urlCheck(baseUrl, { requireScheme: true, example }), maxLength(baseUrl, 200, t('The address')))
+  }
   for (const s of picked?.settings ?? []) {
     if (s.type.startsWith('info') || s.type === 'checkbox' || s.type === 'select') continue
     const val = values[s.name] ?? ''
@@ -185,6 +191,13 @@ export default function SitePicker({ protocol, onAdded }: { protocol: 'torrent' 
                 ))}
               </datalist>
               <small style={{ color: 'var(--text-dim)', fontWeight: 400 }}>{t('Change it if the site runs somewhere else, such as on another computer at home.')}</small>
+            </label>
+          ) : ownAddress ? (
+            <label>
+              {t('Address')}
+              <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} spellCheck={false} placeholder="http://192.168.1.10:3333" {...v.bind('baseUrl', baseUrl, setBaseUrl)} />
+              <FieldError v={v} name="baseUrl" />
+              <small style={{ color: 'var(--text-dim)', fontWeight: 400 }}>{t('The address of your own server, for example http://192.168.1.10:3333. Inside Docker, 127.0.0.1 is the Mediarium container itself.')}</small>
             </label>
           ) : picked.links && picked.links.length > 1 && (
             <label>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { api, type ClientTorrent, type ClientTorrentsAnswer, type DebridTorrent, type DebridTorrentsAnswer } from '../api'
+import { api, type ClientTorrent, type ClientTorrentsAnswer, type DebridTorrent, type DebridTorrentsAnswer, type UsenetClientJob, type UsenetClientJobsAnswer } from '../api'
 import { formatBytes, timeAgo } from '../format'
 import { t, st } from '../i18n'
 import { etaText } from '../transferRate'
@@ -204,6 +204,185 @@ function TorrentRow({ tor, label, reload }: { tor: ClientTorrent; label: string;
             if (id === 'recheck') void run('recheck', t('Checking the files again.'))
             else void remove(id === 'remove-files')
           }}
+        />
+      </div>
+    </div>
+  )
+}
+
+// Activity > Download clients, in the Usenet card: what is in SABnzbd or NZBGet
+// when Usenet releases are sent there, with the controls next to each.
+// Administrators only. Shows nothing until a downloader is set up.
+export function UsenetClients() {
+  const [data, setData] = useState<UsenetClientJobsAnswer | null>(null)
+  const [scope, setScope] = useState<'mine' | 'all'>('mine')
+  const [failed, setFailed] = useState('')
+  const latest = useRef(0)
+  const load = useCallback(() => {
+    const mine = ++latest.current
+    api.usenetClientJobs(scope).then((a) => {
+      if (mine !== latest.current) return
+      setData(a)
+      setFailed('')
+    }).catch((e) => mine === latest.current && setFailed(e instanceof Error ? e.message : String(e)))
+  }, [scope])
+  useEffect(load, [load])
+  useLive(load, 4000)
+
+  if (failed) return <p className="error-text">{failed}</p>
+  if (!data || !data.configured) return null
+  const label = data.label ?? t('The Usenet downloader')
+  return (
+    <section style={{ marginTop: 20 }}>
+      <div className="rail-head">
+        <h2>{label}</h2>
+        <span>{data.jobs.length === 1 ? t('1 download') : t('{n} downloads', { n: data.jobs.length })}</span>
+        {!data.active && <span className="badge">{t('switched off')}</span>}
+        <div className="seg" role="group" aria-label={t('Which downloads to show')}>
+          <button aria-pressed={scope === 'mine'} className={scope === 'mine' ? 'active' : ''} onClick={() => setScope('mine')} title={t('Only the downloads Mediarium sent, the ones in the category "{name}"', { name: data.category ?? '' })}>
+            {t('Added by Mediarium')}
+          </button>
+          <button aria-pressed={scope === 'all'} className={scope === 'all' ? 'active' : ''} onClick={() => setScope('all')}>
+            {t('Everything in {name}', { name: label })}
+          </button>
+        </div>
+      </div>
+      {data.error && <p className="error-text">{st(data.error)}</p>}
+      {!data.error && data.jobs.length === 0 && <p className="hint">{scope === 'mine' ? t('Nothing from Mediarium is in {name} right now.', { name: label }) : t('{name} has no downloads.', { name: label })}</p>}
+      {data.jobs.map((job) => (
+        <UsenetJobRow key={job.id} job={job} label={label} reload={load} />
+      ))}
+    </section>
+  )
+}
+
+function stageText(stage: UsenetClientJob['stage']): string {
+  switch (stage) {
+    case 'downloading':
+      return t('Downloading')
+    case 'paused':
+      return t('Paused')
+    case 'processing':
+      return t('Checking and unpacking')
+    case 'done':
+      return t('Finished')
+    case 'problem':
+      return t('Problem')
+  }
+  return t('Waiting in line')
+}
+
+function UsenetJobRow({ job, label, reload }: { job: UsenetClientJob; label: string; reload: () => void }) {
+  const toast = useToast()
+  const confirm = useConfirm()
+  const [busy, setBusy] = useState(false)
+  const active = job.stage === 'downloading' || job.stage === 'queued' || job.stage === 'processing'
+
+  async function run(action: 'pause' | 'resume' | 'remove' | 'remove-files', done: string) {
+    setBusy(true)
+    try {
+      await api.usenetClientJobAction(job.id, action)
+      toast.success(done)
+      reload()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function remove(files: boolean) {
+    const yes = await confirm({
+      title: files ? t('Remove {name} and its files?', { name: job.name }) : t('Remove {name}?', { name: job.name }),
+      body: <p>{job.mine ? t('Mediarium put this one in {client}. Removing it there cancels that download; use "Give up and search again" if you want another release.', { client: label }) : files ? t('The download and the files it made are deleted from {client}.', { client: label }) : t('The download is removed from {client}. The files stay on the disk.', { client: label })}</p>,
+      confirmLabel: files ? t('Remove and delete files') : t('Remove'),
+      danger: true,
+    })
+    if (yes) await run(files ? 'remove-files' : 'remove', t('Removed.'))
+  }
+
+  async function searchAgain() {
+    const yes = await confirm({
+      title: t('Give up on this one and search again?'),
+      body: <p>{t('The release goes on the blocklist, the download and its files are removed from {client}, and Mediarium looks for another release.', { client: label })}</p>,
+      confirmLabel: t('Give up and search again'),
+      danger: true,
+    })
+    if (!yes || !job.queueId) return
+    setBusy(true)
+    try {
+      await api.stopQueueItem(job.queueId, true).catch(() => undefined)
+      await api.usenetClientJobAction(job.id, 'remove-files').catch(() => undefined)
+      await api.blocklistQueueItem(job.queueId)
+      toast.success(t('Blocklisted. Looking for another release.'))
+      reload()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const tone = job.stage === 'downloading' ? 'downloading' : job.stage === 'problem' ? 'failed' : job.stage === 'paused' ? 'paused' : 'queued'
+  return (
+    <div className={`qrow st-${tone} kind-movie`}>
+      <div className="qthumb client-thumb" aria-hidden="true">
+        <Icon name="download" size={22} />
+      </div>
+      <div className="qmain">
+        <div className="qtitle">
+          <span className="client-name" title={job.name}>{job.name}</span>
+          <span className={`badge ${job.stage === 'problem' ? 'failed' : job.stage === 'downloading' ? 'downloading' : ''}`}>{stageText(job.stage)}</span>
+          {job.mine && <span className="qproto">Mediarium</span>}
+          {job.category && !job.mine && <span className="qproto">{job.category}</span>}
+        </div>
+        {(active || job.stage === 'paused') && (
+          <div className="qprogress">
+            <div className={`bar ${job.stage === 'downloading' ? 'active' : ''} ${job.stage === 'paused' ? 'paused' : ''}`}>
+              <span style={{ width: `${Math.max(2, job.progress)}%` }} />
+            </div>
+          </div>
+        )}
+        <div className="qspeed">
+          {[job.downSpeed > 0 ? `↓ ${formatBytes(job.downSpeed)}/s` : '', job.etaSeconds > 0 && etaText(job.etaSeconds) ? t('about {time} left', { time: etaText(job.etaSeconds) }) : ''].filter(Boolean).join(' · ')}
+        </div>
+        {job.stage === 'problem' && job.failMessage && <div className="qnote">{job.failMessage}</div>}
+        <small className="qwhen">
+          {job.addedAt ? t('Added {when}', { when: timeAgo(job.addedAt) }) : ''}
+          {job.sizeBytes ? `${job.addedAt ? ' · ' : ''}${formatBytes(job.sizeBytes)}` : ''}
+        </small>
+      </div>
+      <div className="qmeter" aria-hidden="true">
+        <b>
+          {job.progress.toFixed(0)}
+          <small>%</small>
+        </b>
+      </div>
+      <div className="row-actions qactions">
+        {job.canPause && (
+          <button className="btn-sm btn-with-icon" disabled={busy} onClick={() => void run('pause', t('Paused.'))}>
+            <Icon name="pause" size={15} /> {t('Pause')}
+          </button>
+        )}
+        {job.canResume && (
+          <button className="primary btn-sm btn-with-icon" disabled={busy} onClick={() => void run('resume', t('Started again.'))}>
+            <Icon name="play" size={15} /> {t('Resume')}
+          </button>
+        )}
+        {job.mine && job.queueId && (job.stage === 'queued' || job.stage === 'downloading' || job.stage === 'problem') && (
+          <button className="btn-sm btn-with-icon" disabled={busy} title={t('Blocklist this release and look for another one')} onClick={() => void searchAgain()}>
+            <Icon name="ban" size={15} /> {t('Give up and search again')}
+          </button>
+        )}
+        <ActionMenu
+          label={t('More')}
+          icon="sliders"
+          disabled={busy}
+          choices={[
+            { id: 'remove', label: t('Remove, keep the files'), danger: true },
+            { id: 'remove-files', label: t('Remove and delete the files'), danger: true },
+          ]}
+          onPick={(id) => void remove(id === 'remove-files')}
         />
       </div>
     </div>

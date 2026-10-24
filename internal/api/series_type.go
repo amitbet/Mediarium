@@ -144,7 +144,8 @@ var commonTitleWords = map[string]bool{
 
 // releaseMapper maps release names for one show to the episodes they are for
 // under the show's own numbering: names in scene or anime numbering through
-// the show's numbering (see mapNumbered), anime and daily names without a
+// the show's numbering (see mapNumbered; the person's own rules for the show,
+// see mapCustom, come before that), anime and daily names without a
 // season marker through the episode list, and a special named by its title to
 // that special. The episode list and the numbering are read once, on first use.
 func (s *Server) releaseMapper(series library.Series) func(parser.Release) parser.Release {
@@ -152,9 +153,18 @@ func (s *Server) releaseMapper(series library.Series) func(parser.Release) parse
 	loaded := false
 	var num *animemap.Numbering
 	numLoaded := false
+	var custom *animemap.Custom
+	customLoaded := false
 	return func(rel parser.Release) parser.Release {
 		if rel.Special {
 			return rel
+		}
+		// The person's own rules come first.
+		if !customLoaded {
+			custom, customLoaded = s.customFor(series), true
+		}
+		if mappedRel, ok := mapCustom(rel, custom); ok {
+			return mappedRel
 		}
 		if !numLoaded {
 			num, numLoaded = s.numberingFor(series), true
@@ -280,7 +290,8 @@ func (s *Server) extraTVQueries(series library.Series, season, episode int) []st
 }
 
 func (s *Server) extraNumberingQueries(series library.Series, season, episode int) []string {
-	out := s.extraTVQueriesFor(series, season, episode)
+	own := customQueries(series.Title, s.customFor(series), season, episode)
+	out := append(own, s.extraTVQueriesFor(series, season, episode)...)
 	if season <= 0 || episode <= 0 {
 		return out
 	}

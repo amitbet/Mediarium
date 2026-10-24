@@ -142,3 +142,36 @@ func TestNewItemsAreSwitchedOn(t *testing.T) {
 		t.Fatalf("a server is switched on unless the file says otherwise: %v", posted)
 	}
 }
+
+// An indexer's minimum seeders is part of the file: a change to it is planned,
+// the same number is not a change, and a file may leave it out.
+func TestIndexerMinSeedersInTheFile(t *testing.T) {
+	c := fakeMediarium(t, map[string]string{"/api/indexers": `[
+ {"id":1,"name":"Tor","kind":"torznab","baseUrl":"https://tor.example","protocol":"torrent","enabled":true,"hasApiKey":true,"priority":25,"minSeeders":5}
+]`})
+	cases := []struct {
+		name, yaml, want string
+	}{
+		{"a new number is a change", "indexers:\n  - name: Tor\n    minSeeders: 10\n", "indexers[Tor].minSeeders"},
+		{"turning it off is a change", "indexers:\n  - name: Tor\n    minSeeders: 0\n", "indexers[Tor].minSeeders"},
+		{"the same number is not", "indexers:\n  - name: Tor\n    minSeeders: 5\n", ""},
+		{"leaving it out changes nothing", "indexers:\n  - name: Tor\n    priority: 25\n", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := planText(t, c, tc.yaml)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.want == "" && got != "" {
+				t.Fatalf("expected no change, got %q", got)
+			}
+			if tc.want != "" && !strings.Contains(got, tc.want) {
+				t.Fatalf("expected a change to %q, got %q", tc.want, got)
+			}
+		})
+	}
+	if _, err := planText(t, c, "indexers:\n  - name: Tor\n    minSeedrs: 3\n"); err == nil {
+		t.Fatal("a misspelt key should be refused")
+	}
+}

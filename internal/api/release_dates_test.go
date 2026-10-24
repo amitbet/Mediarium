@@ -48,6 +48,43 @@ func TestMovieDetailCarriesReleaseDates(t *testing.T) {
 	}
 }
 
+// The country for release dates follows the info language until it is set,
+// then wins over it; a bad code is refused and clearing it goes back to the
+// info language. A date from the US shows the (US) tag when the country is not
+// the US, and a country with no date and no US date shows none.
+func TestReleaseCountrySetting(t *testing.T) {
+	server, base, admin := loginNewServer(t)
+	server.TestSetTMDBBaseURL("k", releaseDatesTMDB(t).URL)
+	dates := func() map[string]any {
+		return getJSON[map[string]any](t, admin, base+"/api/tmdb/movies/603")["releaseDates"].(map[string]any)
+	}
+	region := func() any { return getJSON[map[string]any](t, admin, base+"/api/settings")["releaseCountryEffective"] }
+
+	if region() != "US" || dates()["region"] != "US" {
+		t.Fatalf("empty setting follows the English info language, got %v", dates())
+	}
+	putJSONStatus(t, admin, base+"/api/settings", map[string]any{"infoLanguage": "de-DE"}, http.StatusOK)
+	if region() != "DE" {
+		t.Fatalf("empty setting follows the German info language, got %v", region())
+	}
+	// India with an English info language: no Indian dates, so the US ones with the tag.
+	putJSONStatus(t, admin, base+"/api/settings", map[string]any{"infoLanguage": "en-US", "releaseCountry": "IN"}, http.StatusOK)
+	got := dates()
+	if got["region"] != "IN" || got["cinema"] != "1999-03-31" || got["cinemaRegion"] != "US" || got["digitalRegion"] != "US" {
+		t.Fatalf("India falls back to the US and says so, got %v", got)
+	}
+	for _, bad := range []string{"ZZ", "india", "USA", "xx"} {
+		putJSONStatus(t, admin, base+"/api/settings", map[string]any{"releaseCountry": bad}, http.StatusBadRequest)
+	}
+	if st := getJSON[map[string]any](t, admin, base+"/api/settings"); st["releaseCountry"] != "IN" {
+		t.Fatalf("a refused code leaves the setting alone, got %v", st["releaseCountry"])
+	}
+	putJSONStatus(t, admin, base+"/api/settings", map[string]any{"releaseCountry": ""}, http.StatusOK)
+	if region() != "US" {
+		t.Fatalf("clearing goes back to the info language, got %v", region())
+	}
+}
+
 // A monitored movie shows up on the calendar a second time on its digital
 // date, and both entries say which they are.
 func TestCalendarShowsDigitalReleaseDate(t *testing.T) {

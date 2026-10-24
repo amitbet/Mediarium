@@ -2,6 +2,7 @@ import { Outlet, useLocation } from 'react-router-dom'
 import { isAdmin } from '../../api'
 import { useAuth } from '../../AuthContext'
 import TipLabel from '../../components/TipLabel'
+import { useFindOnPage } from '../../findOnPage'
 import { t } from '../../i18n'
 import { pageBlurb, pageHelp, pageParts } from '../../settingsNav'
 import '../../settings.css'
@@ -11,6 +12,7 @@ import '../../settings.css'
 // phones the top bar has no room for the name, so it is repeated here.
 export default function SettingsLayout() {
   const { pathname } = useLocation()
+  useFindOnPage()
   const { user } = useAuth()
   const admin = isAdmin(user)
   const parts = pageParts(pathname, admin)

@@ -9,7 +9,8 @@ import (
 // pickKey is what automation compares releases by when choosing the best one:
 // the language first (a release with no language tag or only English before
 // one that adds another language, whatever their quality), then the quality
-// tier, then the profile's preferred-term score. Equal keys are settled by
+// tier (its rank in the profile's own order, so the qualities of a group tie
+// and are told apart by the built-in order), then the profile's preferred-term score. Equal keys are settled by
 // preferOver (indexer priority, protocol, then a cached release).
 //
 // cached sits between the tier and the score, and is only ever non-zero when
@@ -22,7 +23,7 @@ import (
 // among two otherwise equal torrents the one with more seeders wins (see
 // preferOver). A release whose seeders are not known is never counted as dead.
 type pickKey struct {
-	alive, language, tier, cached, score int
+	alive, language, tier, sub, cached, score int
 }
 
 // above reports whether k beats other.
@@ -36,6 +37,9 @@ func (k pickKey) above(other pickKey) bool {
 	if k.tier != other.tier {
 		return k.tier > other.tier
 	}
+	if k.sub != other.sub {
+		return k.sub > other.sub
+	}
 	if k.cached != other.cached {
 		return k.cached > other.cached
 	}
@@ -44,7 +48,7 @@ func (k pickKey) above(other pickKey) bool {
 
 // keyFor is the pickKey of a release that profile accepts.
 func keyFor(profile quality.Profile, rel parser.Release, res *indexers.Result) pickKey {
-	k := pickKey{alive: 1, language: profile.LanguageRank(rel), tier: quality.Rank(quality.Classify(rel)), score: profile.Score(res.Title)}
+	k := pickKey{alive: 1, language: profile.LanguageRank(rel), tier: profile.TierRank(quality.Classify(rel)), sub: quality.Rank(quality.Classify(rel)), score: profile.Score(res.Title)}
 	if res.SeedersKnown && !res.Cached && res.Seeders <= 0 {
 		k.alive = 0
 	}

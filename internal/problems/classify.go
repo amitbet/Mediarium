@@ -58,6 +58,8 @@ func CodeFor(err error, fallback string) string {
 		return CodePar2Failed
 	case hasAny(msg, "couldn't unpack"):
 		return CodeUnpackFailed
+	case hasAny(msg, "looks like a fake or broken release"):
+		return CodeImportIncomplete
 	case hasAny(msg, "couldn't find the movie file", "couldn't find the episode", "no video file", "couldn't find any music"):
 		return CodeImportNoVideo
 	case hasAny(msg, "a file already exists at"):

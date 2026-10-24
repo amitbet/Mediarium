@@ -95,6 +95,8 @@ func (s *Server) pauseItem(item queue.Item) error {
 		return errNotRunning
 	}
 	if s.pipelines.interrupt(item.ID, false, false, stopWait) {
+		s.pauseUsenetJob(item)
+		s.pauseClientTorrent(item)
 		return nil
 	}
 	// Nothing was running it. It may still have finished a moment ago: then
@@ -105,6 +107,8 @@ func (s *Server) pauseItem(item queue.Item) error {
 		}
 		return err
 	}
+	s.pauseUsenetJob(item)
+	s.pauseClientTorrent(item)
 	return nil
 }
 
@@ -143,7 +147,9 @@ func (s *Server) stopItem(item queue.Item, deleteFiles bool) error {
 	if item.Status != queue.StatusQueued && item.Status != queue.StatusDownloading && item.Status != queue.StatusImporting && item.Status != queue.StatusPaused {
 		return finished
 	}
+	ref, inClient := s.clientRefFor(item) // before the folder with its hash can go
 	if s.pipelines.interrupt(item.ID, true, deleteFiles, stopWait) {
+		s.removeFromClient(ref, inClient, false)
 		return nil
 	}
 	// Only while it has not finished: a download that completed a moment ago
@@ -155,6 +161,7 @@ func (s *Server) stopItem(item queue.Item, deleteFiles bool) error {
 	if !stopped {
 		return finished
 	}
+	s.removeFromClient(ref, inClient, false)
 	s.torrents.stopQueue(item.ID)
 	s.releaseTitleClaims(item)
 	if deleteFiles {
@@ -167,6 +174,8 @@ func (s *Server) stopItem(item queue.Item, deleteFiles bool) error {
 // partial files and removes it from the list. It does not wait for the
 // pipeline to finish: it sets the final state itself.
 func (s *Server) discardItem(item queue.Item) {
+	ref, inClient := s.clientRefFor(item)
+	defer s.removeFromClient(ref, inClient, false)
 	if !s.pipelines.interrupt(item.ID, true, true, stopWait) {
 		s.torrents.stopQueue(item.ID)
 	}
@@ -892,10 +901,10 @@ type bulkQueueResponse struct {
 	Failed []bulkQueueFailure `json:"failed"`
 }
 
-// handleBulkQueue does one thing (pause, resume, stop, remove from the list, or send to the front)
-// to several downloads at once. Each one is tried on its own: one that can't
-// be done (say, pausing a finished download) is listed in "failed" and the
-// rest still go through.
+// handleBulkQueue does one thing (pause, resume, stop, retry, remove from the
+// list, or send to the front) to several downloads at once. Each one is tried
+// on its own: one that can't be done (say, pausing a finished download) is
+// listed in "failed" and the rest still go through.
 func (s *Server) handleBulkQueue(w http.ResponseWriter, r *http.Request) {
 	var req bulkQueueRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -903,9 +912,9 @@ func (s *Server) handleBulkQueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch req.Action {
-	case "pause", "resume", "stop", "front", "remove":
+	case "pause", "resume", "stop", "retry", "front", "remove":
 	default:
-		writeError(w, http.StatusBadRequest, `Choose "pause", "resume", "stop", "front" or "remove".`)
+		writeError(w, http.StatusBadRequest, `Choose "pause", "resume", "stop", "retry", "front" or "remove".`)
 		return
 	}
 	if len(req.IDs) == 0 {
@@ -926,6 +935,24 @@ func (s *Server) handleBulkQueue(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	resp := bulkQueueResponse{Failed: []bulkQueueFailure{}}
+	if req.Action == "retry" {
+		// Retry is a new grab, like Retry on one download, which doesn't take
+		// queueControlMu either: grabbing can take it itself.
+		for _, id := range ids {
+			item, err := s.QueueRepo.Get(id)
+			if err != nil {
+				resp.Failed = append(resp.Failed, bulkQueueFailure{ID: id, Error: "This download no longer exists."})
+				continue
+			}
+			if _, err := s.retryQueueItem(item); err != nil {
+				resp.Failed = append(resp.Failed, bulkQueueFailure{ID: id, Error: err.Error()})
+				continue
+			}
+			resp.Done++
+		}
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
 	queueControlMu.Lock()
 	defer queueControlMu.Unlock()
 	for _, id := range ids {

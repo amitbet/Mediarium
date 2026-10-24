@@ -104,6 +104,12 @@ func (t Torrent) Done() bool {
 	return false
 }
 
+// Paused reports whether the torrent is paused (stopped, on qBittorrent 5)
+// before it has everything.
+func (t Torrent) Paused() bool {
+	return t.State == "pausedDL" || t.State == "stoppedDL"
+}
+
 // Failed reports whether the client gave up on the torrent.
 func (t Torrent) Failed() bool {
 	return t.State == "error" || t.State == "missingFiles"
@@ -261,17 +267,24 @@ type AddOptions struct {
 
 // ShareLimits is when the client itself should stop seeding one torrent.
 // A zero field means no limit of that kind.
+//
+// NoSeed means the torrent is not to be shared at all: the client is told to
+// stop it at ratio 0, which is right when it finishes.
 type ShareLimits struct {
-	Ratio float64
-	Time  time.Duration
+	Ratio  float64
+	Time   time.Duration
+	NoSeed bool
 }
 
 // Set reports whether there is anything to send.
-func (l ShareLimits) Set() bool { return l.Ratio > 0 || l.Time > 0 }
+func (l ShareLimits) Set() bool { return l.NoSeed || l.Ratio > 0 || l.Time > 0 }
 
 // ratioValue and minutesValue are the numbers qBittorrent wants: -1 is no
 // limit of that kind, the time is in whole minutes (at least one).
 func (l ShareLimits) ratioValue() string {
+	if l.NoSeed {
+		return "0"
+	}
 	if l.Ratio <= 0 {
 		return "-1"
 	}
@@ -279,6 +292,9 @@ func (l ShareLimits) ratioValue() string {
 }
 
 func (l ShareLimits) minutesValue() string {
+	if l.NoSeed {
+		return "-1"
+	}
 	if l.Time <= 0 {
 		return "-1"
 	}

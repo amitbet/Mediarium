@@ -109,18 +109,20 @@ func TestFitLanguageSeveralLanguages(t *testing.T) {
 // a wanted language. With it off, nothing changes from FitLanguage.
 func TestFitLanguageOnly(t *testing.T) {
 	const (
-		untagged   = "Movie.2020.1080p.BluRay.x264-GRP"
-		english    = "Movie.2020.ENG.1080p.BluRay.x264-GRP"
-		german     = "Movie.2020.GERMAN.1080p.BluRay.x264-GRP"
-		germanEng  = "Movie.2020.GERMAN.ENG.1080p.BluRay.x264-GRP"
-		italian    = "Movie.2020.ITA.1080p.BluRay.x264-GRP"
-		bareMulti  = "Movie.2020.MULTi.1080p.BluRay.x264-GRP"
-		bareDual   = "Movie.2020.DUAL.1080p.BluRay.x264-GRP"
-		multiDeEn  = "Movie.2020.MULTi.GERMAN.ENG.1080p.BluRay.x264-GRP"
-		multiItEn  = "Movie.2020.MULTi.ITA.ENG.1080p.BluRay.x264-GRP"
-		germanDL   = "Movie.2020.German.DL.1080p.BluRay.x264-GRP"
-		subtitled  = "Movie.2020.VOSTFR.1080p.BluRay.x264-GRP"
-		titleWords = "The.Italian.Job.2003.1080p.BluRay.x264-GRP"
+		untagged  = "Movie.2020.1080p.BluRay.x264-GRP"
+		english   = "Movie.2020.ENG.1080p.BluRay.x264-GRP"
+		german    = "Movie.2020.GERMAN.1080p.BluRay.x264-GRP"
+		germanEng = "Movie.2020.GERMAN.ENG.1080p.BluRay.x264-GRP"
+		italian   = "Movie.2020.ITA.1080p.BluRay.x264-GRP"
+		bareMulti = "Movie.2020.MULTi.1080p.BluRay.x264-GRP"
+		bareDual  = "Movie.2020.DUAL.1080p.BluRay.x264-GRP"
+		multiDeEn = "Movie.2020.MULTi.GERMAN.ENG.1080p.BluRay.x264-GRP"
+		multiItEn = "Movie.2020.MULTi.ITA.ENG.1080p.BluRay.x264-GRP"
+		germanDL  = "Movie.2020.German.DL.1080p.BluRay.x264-GRP"
+
+		germanBDRipDL = "Movie.2020.German.BDRip.DL.1080p.x265.AAC-2BA"
+		subtitled     = "Movie.2020.VOSTFR.1080p.BluRay.x264-GRP"
+		titleWords    = "The.Italian.Job.2003.1080p.BluRay.x264-GRP"
 	)
 	tests := []struct {
 		name      string
@@ -166,7 +168,19 @@ func TestFitLanguageOnly(t *testing.T) {
 		{"German then Italian, on: untagged is turned down", untagged, "German,Italian", true, false, 0},
 		{"German then Italian, on: English tag is turned down", english, "German,Italian", true, false, 0},
 		{"German then Italian, off: untagged is a fallback", untagged, "German,Italian", false, true, 2 + 8},
-		{"German then Italian, on: multi naming Italian is taken", multiItEn, "German,Italian", true, true, 2 + 4},
+		{"German then Italian, on: multi naming Italian is taken, above Italian alone", multiItEn, "German,Italian", true, true, 4 + 4},
+
+		// Several languages: a multi release that names one also carries the others.
+		{"German then English: German.DL goes above plain German", germanDL, "German,English", true, true, 4 + 8},
+		{"German then English: German.BDRip.DL goes above plain German", germanBDRipDL, "German,English", false, true, 4 + 8},
+		{"German then English: multi German+English goes above plain German", multiDeEn, "German,English", true, true, 4 + 8},
+		{"German then English: plain German", german, "German,English", false, true, 3 + 8},
+		{"English then German: German.DL is not turned down", germanDL, "English,German", false, true, 1 + 8},
+		{"English then German, on: German.DL needs German named", germanDL, "English,German", true, true, 4 + 4},
+		{"English then German: plain German", german, "English,German", true, true, 3 + 4},
+		{"English then German: untagged English first", untagged, "English,German", true, true, 3 + 8},
+		{"German then English: multi without either is turned down when only", bareMulti, "German,English", true, false, 0},
+		{"one language: German.BDRip.DL stays behind plain German", germanBDRipDL, "German", true, true, 2},
 
 		// No language wanted: the switch has nothing to hold against a release.
 		{"no language, on: everything is taken", german, "", true, true, 3},

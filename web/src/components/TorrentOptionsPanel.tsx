@@ -7,6 +7,7 @@ import Switch from './Switch'
 import { useToast } from './Toast'
 import '../torrentcontrols.css'
 import TipLabel from './TipLabel'
+import { parseUploadLimit } from '../seedLimits'
 
 const KINDS: ['movie' | 'tv' | 'music' | 'book', string][] = [
   ['movie', t('Movies')],
@@ -51,7 +52,7 @@ export default function TorrentOptionsPanel({ listenPort, variant = 'activity' }
 
   const adopt = (o: TorrentOptions) => {
     setOpts(o)
-    setUpload(o.uploadLimitKB > 0 ? String(o.uploadLimitKB) : '')
+    setUpload(o.uploadLimitKB === null ? '' : String(o.uploadLimitKB))
     setCats(o.categories)
     setByKind(o.categoryByKind)
   }
@@ -75,9 +76,11 @@ export default function TorrentOptionsPanel({ listenPort, variant = 'activity' }
     }
   }
 
-  const uploadNumber = Number(upload.trim().replace(',', '.'))
-  const uploadValue = upload.trim() === '' ? 0 : Math.round(uploadNumber)
-  const uploadBad = upload.trim() !== '' && (!Number.isFinite(uploadNumber) || uploadNumber < 0)
+  // -1 is an empty box (no limit), 0 switches uploading off.
+  const parsedUpload = parseUploadLimit(upload)
+  const uploadBad = parsedUpload === undefined
+  const uploadValue = parsedUpload ?? 0
+  const savedUpload = opts.uploadLimitKB === null ? -1 : opts.uploadLimitKB
   const catsChanged = JSON.stringify(cats) !== JSON.stringify(opts.categories) || JSON.stringify(byKind) !== JSON.stringify(opts.categoryByKind)
 
   return (
@@ -149,16 +152,18 @@ export default function TorrentOptionsPanel({ listenPort, variant = 'activity' }
             className="to-limit"
             onSubmit={(e) => {
               e.preventDefault()
-              if (!uploadBad) void save({ uploadLimitKB: uploadValue }, uploadValue > 0 ? t('Upload limit saved.') : t('Upload is no longer limited.'))
+              if (!uploadBad) void save({ uploadLimitKB: uploadValue }, uploadValue > 0 ? t('Upload limit saved.') : uploadValue === 0 ? t('Uploading is switched off.') : t('Upload is no longer limited.'))
             }}
           >
             <label>
-              <TipLabel text={t('Caps how fast the built-in client uploads, for all torrents together. Empty means no limit.')} learnMore="downloads#speed-limits">{t('Upload limit (KB/s)')}</TipLabel>
-              <input inputMode="numeric" value={upload} placeholder={t('No limit')} onChange={(e) => setUpload(e.target.value)} aria-invalid={uploadBad} />
+              <TipLabel text={t('Caps how fast the built-in client uploads, for all torrents together. Empty means no limit. 0 switches uploading off completely; downloading keeps working.')} learnMore="downloads#speed-limits">{t('Upload limit (KB/s)')}</TipLabel>
+              <input type="number" min={0} step={1} inputMode="numeric" value={upload} placeholder={t('Unlimited')} onChange={(e) => setUpload(e.target.value)} aria-invalid={uploadBad} />
             </label>
-            <button className="btn-sm" type="submit" disabled={busy || uploadBad || uploadValue === opts.uploadLimitKB}>
+            <button className="btn-sm" type="submit" disabled={busy || uploadBad || uploadValue === savedUpload}>
               {t('Save')}
             </button>
+            {uploadBad && <small className="hint" role="alert">{t('Use a whole number from 0, or leave it empty for no limit.')}</small>}
+            {upload.trim() === '0' && <small className="hint">{t("Some trackers need you to share. Private trackers may ban accounts that don't seed.")}</small>}
             <small className="hint">{t('Applies in the same hours as the download limit in Settings. Each torrent can have its own limits under Details.')}</small>
           </form>
           <div className="to-cats">

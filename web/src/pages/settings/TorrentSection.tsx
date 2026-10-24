@@ -6,6 +6,7 @@ import { firstError, numberRange } from '../../validate'
 import { FieldError, FormProblem, useValidation } from '../../useValidation'
 import { t } from '../../i18n'
 import TipLabel from '../../components/TipLabel'
+import { isZeroLimit } from '../../seedLimits'
 
 // What the torrent port is doing right now, in plain words. The wording comes
 // from portStatus so it can be tested.
@@ -21,8 +22,8 @@ function PortStatus({ status }: { status: DownloadsStatus['torrent'] | null }) {
 
 export default function TorrentSection({ status }: { status: DownloadsStatus['torrent'] | null }) {
   const [listenPort, setListenPort] = useState('58264')
-  const [seedRatioLimit, setSeedRatioLimit] = useState('0')
-  const [seedTimeLimitH, setSeedTimeLimitH] = useState('0')
+  const [seedRatioLimit, setSeedRatioLimit] = useState('')
+  const [seedTimeLimitH, setSeedTimeLimitH] = useState('')
   const toast = useToast()
   // Saving before the current values have arrived would overwrite them with the defaults.
   const [loaded, setLoaded] = useState(false)
@@ -33,14 +34,8 @@ export default function TorrentSection({ status }: { status: DownloadsStatus['to
       listenPort.trim() === '' && t('Enter a port number, or 0 for the default (58264).'),
       numberRange(listenPort, t('The listen port'), { min: 0, max: 65535 }),
     ),
-    seedRatioLimit: firstError(
-      seedRatioLimit.trim() === '' && t('Enter a seed ratio, or 0 for no limit.'),
-      numberRange(seedRatioLimit, t('The seed ratio limit'), { min: 0, max: 1000, decimal: true }),
-    ),
-    seedTimeLimitH: firstError(
-      seedTimeLimitH.trim() === '' && t('Enter a number of hours, or 0 for no limit.'),
-      numberRange(seedTimeLimitH, t('The seed time limit'), { min: 0, max: 87600, decimal: true }),
-    ),
+    seedRatioLimit: numberRange(seedRatioLimit, t('The seed ratio limit'), { min: 0, max: 1000, decimal: true }),
+    seedTimeLimitH: numberRange(seedTimeLimitH, t('The seed time limit'), { min: 0, max: 87600, decimal: true }),
   }
   const v = useValidation(errors)
 
@@ -49,8 +44,8 @@ export default function TorrentSection({ status }: { status: DownloadsStatus['to
       .getSettings()
       .then((s) => {
         setListenPort(s.torrentListenPort || '58264')
-        setSeedRatioLimit(s.torrentSeedRatioLimit || '0')
-        setSeedTimeLimitH(s.torrentSeedTimeLimitH || '0')
+        setSeedRatioLimit(s.torrentSeedRatioLimit ?? '')
+        setSeedTimeLimitH(s.torrentSeedTimeLimitH ?? '')
         setLoaded(true)
       })
       .catch((e) => setLoadError(e instanceof Error ? e.message : String(e)))
@@ -82,15 +77,19 @@ export default function TorrentSection({ status }: { status: DownloadsStatus['to
       </label>
       <PortStatus status={status} />
       <label>
-        <TipLabel text={t('A finished torrent keeps sharing until it has uploaded this many times its size, or reaches the time limit. Whichever comes first stops it. An external client such as qBittorrent gets these limits too, and decides itself what to do when they are met.')} learnMore="downloads#seeding">{t('Seed ratio limit (0 = unlimited)')}</TipLabel>
-        <input aria-label={t('Seed ratio limit (0 = unlimited)')} inputMode="decimal" value={seedRatioLimit} onChange={(e) => setSeedRatioLimit(e.target.value)} {...v.bind('seedRatioLimit', seedRatioLimit, setSeedRatioLimit)} />
+        <TipLabel text={t("A finished torrent keeps sharing until it has uploaded this many times its size, or reaches the time limit. Whichever comes first stops it. Empty means no limit; 0 means don't seed at all. An external client such as qBittorrent gets these limits too, and decides itself what to do when they are met.")} learnMore="downloads#seeding">{t('Seed ratio limit')}</TipLabel>
+        <input aria-label={t('Seed ratio limit')} type="number" min={0} step="any" inputMode="decimal" placeholder={t('Unlimited')} value={seedRatioLimit} onChange={(e) => setSeedRatioLimit(e.target.value)} {...v.bind('seedRatioLimit', seedRatioLimit, setSeedRatioLimit)} />
         <FieldError v={v} name="seedRatioLimit" />
       </label>
       <label>
-        <TipLabel text={t('A finished torrent stops sharing after this many hours, or when it reaches the ratio limit. Whichever comes first stops it.')} learnMore="downloads#seeding">{t('Seed time limit, hours (0 = unlimited)')}</TipLabel>
-        <input aria-label={t('Seed time limit, hours (0 = unlimited)')} inputMode="decimal" value={seedTimeLimitH} onChange={(e) => setSeedTimeLimitH(e.target.value)} {...v.bind('seedTimeLimitH', seedTimeLimitH, setSeedTimeLimitH)} />
+        <TipLabel text={t("A finished torrent stops sharing after this many hours, or when it reaches the ratio limit. Whichever comes first stops it. Empty means no limit; 0 means don't seed at all.")} learnMore="downloads#seeding">{t('Seed time limit, hours')}</TipLabel>
+        <input aria-label={t('Seed time limit, hours')} type="number" min={0} step="any" inputMode="decimal" placeholder={t('Unlimited')} value={seedTimeLimitH} onChange={(e) => setSeedTimeLimitH(e.target.value)} {...v.bind('seedTimeLimitH', seedTimeLimitH, setSeedTimeLimitH)} />
         <FieldError v={v} name="seedTimeLimitH" />
       </label>
+      <small className="hint">{t("Leave a box empty for no limit. 0 means don't seed: the torrent stops as soon as it has downloaded.")}</small>
+      {(isZeroLimit(seedRatioLimit) || isZeroLimit(seedTimeLimitH)) && (
+        <small className="hint">{t("Some trackers need you to share. Private trackers may ban accounts that don't seed.")}</small>
+      )}
       {loadError && <p className="error-text">{t('Could not load the current values: {error}', { error: loadError })}</p>}
       <button className="primary" onClick={save} disabled={!loaded || saving}>
         {t('Save')}

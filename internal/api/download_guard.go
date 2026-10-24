@@ -24,6 +24,9 @@ import (
 type alreadyDownloadingError struct {
 	release string
 	paused  bool
+	// item is the download in the way (zero when it is not known), so a person
+	// can be offered to cancel it and grab the other release in one step.
+	item queue.Item
 }
 
 func (e alreadyDownloadingError) Error() string {
@@ -61,7 +64,7 @@ func (s *Server) checkMovieNotDownloading(movieID int64) error {
 	}
 	for _, it := range items {
 		if it.MovieID == movieID && downloadOpen(it.Status) {
-			return alreadyDownloadingError{release: it.ReleaseTitle, paused: it.Status == queue.StatusPaused}
+			return alreadyDownloadingError{release: it.ReleaseTitle, paused: it.Status == queue.StatusPaused, item: it}
 		}
 	}
 	return nil
@@ -85,7 +88,7 @@ func (s *Server) checkEpisodesNotDownloading(seriesID int64, hintSeason, hintEpi
 		}
 		busySeason, busyEpisodes := resolveTVTarget(it.ReleaseTitle, it.Season, it.Episode)
 		if busySeason == season && episodesOverlap(episodes, busyEpisodes) {
-			return alreadyDownloadingError{release: it.ReleaseTitle, paused: it.Status == queue.StatusPaused}
+			return alreadyDownloadingError{release: it.ReleaseTitle, paused: it.Status == queue.StatusPaused, item: it}
 		}
 	}
 	return nil

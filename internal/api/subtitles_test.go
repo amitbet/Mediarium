@@ -152,7 +152,7 @@ func TestEpisodeSubtitleSearchUsesSeriesAndEpisodeNumbers(t *testing.T) {
 	env.server.TestSetSubtitlesBaseURL("fixture-key", fake.srv.URL)
 
 	eps, _ := env.server.MovieRepo.ListEpisodes(env.seriesID)
-	results := getJSON[[]map[string]any](t, env.client, fmt.Sprintf("%s/api/episodes/%d/subtitles?lang=en", env.baseURL, eps[0].ID))
+	results := subtitleSearchResults(t, env.client, fmt.Sprintf("%s/api/episodes/%d/subtitles?lang=en", env.baseURL, eps[0].ID))
 	if len(results) != 1 {
 		t.Fatalf("expected the fake English subtitle, got %+v", results)
 	}

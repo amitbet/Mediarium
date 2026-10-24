@@ -218,6 +218,30 @@ func (c *Client) ReleaseGroupReleases(ctx context.Context, releaseGroupID string
 	return out.Releases, nil
 }
 
+// HasOfficialRelease says whether a release group has at least one release
+// with the status Official. It is one request asking for a single official
+// release; only when there is none does it ask a second time whether the
+// group has any release at all, because a group without releases (an
+// announced album) is not a bootleg and counts as official.
+func (c *Client) HasOfficialRelease(ctx context.Context, releaseGroupID string) (bool, error) {
+	var out struct {
+		Releases []Release `json:"releases"`
+	}
+	q := url.Values{"release-group": {releaseGroupID}, "status": {"official"}, "limit": {"1"}}
+	if err := c.get(ctx, "/ws/2/release", q, &out); err != nil {
+		return false, fmt.Errorf("look for official releases of release group %s: %w", releaseGroupID, err)
+	}
+	if len(out.Releases) > 0 {
+		return true, nil
+	}
+	out.Releases = nil
+	q = url.Values{"release-group": {releaseGroupID}, "limit": {"1"}}
+	if err := c.get(ctx, "/ws/2/release", q, &out); err != nil {
+		return false, fmt.Errorf("look for releases of release group %s: %w", releaseGroupID, err)
+	}
+	return len(out.Releases) == 0, nil
+}
+
 // GetRelease looks up one release with its tracklist.
 func (c *Client) GetRelease(ctx context.Context, releaseID string) (Release, error) {
 	var r Release

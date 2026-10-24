@@ -10,6 +10,7 @@ import { useAutosaveSetting } from '../../useAutosave'
 import QualityProfilesSection from '../../components/QualityProfiles'
 import SizeLimitsCard from '../../components/SizeLimitsCard'
 import MusicProfilesSection from '../../components/MusicProfiles'
+import MusicFiltersCard from '../../components/MusicFiltersCard'
 import QuietForAWhile from '../../components/QuietForAWhile'
 import { t } from '../../i18n'
 import TipLabel from '../../components/TipLabel'
@@ -111,7 +112,7 @@ function LanguageSection() {
     <section className="card">
       <h2><TipLabel help="quality#audio-language">{t('Audio language')}</TipLabel></h2>
       <p style={{ color: 'var(--text-dim)' }}>
-        {t("List the languages you'd watch in, best first. A release in an earlier language is picked over one in a later language, and releases with two or more audio tracks count when one of them matches. Releases with no language in the name count as English. Releases only in some other language, like GERMAN, are skipped.")}
+        {t("List the languages you'd watch in, best first. A release in an earlier language is picked over one in a later language, and releases with two or more audio tracks count when one of them matches. With one language, a release that names only that language is picked over a multi-language one. With several, like German and English, a multi-language release that has the first one is picked over a plain one, because it also carries the others. Releases with no language in the name count as English. Releases only in some other language, like GERMAN, are skipped.")}
       </p>
       <ol className="lang-order">
         {list.map((l, i) => (
@@ -187,6 +188,7 @@ export default function QualitySettings() {
       <LanguageSection />
       <SizeLimitsCard />
       <MusicProfilesSection />
+      <MusicFiltersCard />
       <AdvancedSection value={advanced.value} loaded={advanced.loaded} saving={advanced.saving} change={(v) => void advanced.change(v)} />
     </div>
   )

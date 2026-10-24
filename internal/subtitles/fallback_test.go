@@ -39,7 +39,8 @@ func TestSubDLFallsBackToImdbThenName(t *testing.T) {
 			}
 			return miss
 		}, []string{"tmdb_id", "imdb_id", "film_name"}, 1},
-		{"nothing works", func(q map[string][]string) string { return miss }, []string{"tmdb_id", "imdb_id", "film_name"}, 0},
+		// Each lookup is tried again with fewer filters before giving up.
+		{"nothing works", func(q map[string][]string) string { return miss }, []string{"tmdb_id", "imdb_id", "film_name", "tmdb_id", "imdb_id", "film_name"}, 0},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -54,10 +55,10 @@ func TestSubDLFallsBackToImdbThenName(t *testing.T) {
 					}
 				}
 				mu.Unlock()
-				if q.Get("film_name") != "" && (q.Get("year") != "1999" || q.Get("film_name") != "The Sixth Sense") {
+				if q.Get("film_name") != "" && ((q.Get("year") != "1999" && q.Get("hi") != "") || q.Get("film_name") != "The Sixth Sense") {
 					t.Errorf("name search: %s", q.Encode())
 				}
-				if q.Get("type") != "movie" || q.Get("languages") != "EN" {
+				if q.Get("type") != "movie" || (q.Get("languages") != "EN" && q.Get("hi") != "") {
 					t.Errorf("type/languages: %s", q.Encode())
 				}
 				fmt.Fprint(w, tc.answers(q))
@@ -97,5 +98,51 @@ func TestSubDLPages(t *testing.T) {
 	}
 	if len(res) != 90 || len(pages) != 3 {
 		t.Fatalf("results %d, pages %v", len(res), pages)
+	}
+}
+
+// SubDL download paths come in more shapes than "/subtitle/<id>-<id>.zip":
+// any plain path under /subtitle/ is fine, a query, a ".." part or another
+// start is not.
+func TestSubDLLinkShapes(t *testing.T) {
+	for link, want := range map[string]bool{
+		"/subtitle/3197651-3213944.zip":       true,
+		"/subtitle/3197651-3213944.1.zip":     true,
+		"/subtitle/sd1638677/3213944":         true,
+		"/subtitle/a%20b.zip":                 true,
+		"/subtitle/3197651-3213944.zip?x=1":   false,
+		"/subtitle/../etc/passwd":             false,
+		"/subtitle/a/../b.zip":                false,
+		"/other/3197651.zip":                  false,
+		"https://evil.example/subtitle/1.zip": false,
+		"":                                    false,
+	} {
+		if got := ValidSubDLLink(link); got != want {
+			t.Errorf("ValidSubDLLink(%q) = %v, want %v", link, got, want)
+		}
+	}
+	if got := shortSample("/subtitle/1.zip?api_key=SECRET"); strings.Contains(got, "SECRET") || strings.Contains(got, "?") {
+		t.Errorf("sample shows the query: %q", got)
+	}
+}
+
+// SubDL's "url" may carry a query or a fragment, or come with the download
+// host in front: only the path is asked for.
+func TestSubDLDownloadPathDropsQueryAndHost(t *testing.T) {
+	for in, want := range map[string]string{
+		"/subtitle/3672321-8589191.zip":                         "/subtitle/3672321-8589191.zip",
+		"/subtitle/3672321-8589191.zip?download=1&x=y":          "/subtitle/3672321-8589191.zip",
+		"/subtitle/3672321-8589191.zip#top":                     "/subtitle/3672321-8589191.zip",
+		"https://dl.subdl.com/subtitle/3672321-8589191.zip?a=b": "/subtitle/3672321-8589191.zip",
+		"//dl.subdl.com/subtitle/3672321-8589191.zip":           "/subtitle/3672321-8589191.zip",
+		"  /subtitle/3672321-8589191.zip  ":                     "/subtitle/3672321-8589191.zip",
+	} {
+		got := downloadPath(in)
+		if got != want || !ValidSubDLLink(got) {
+			t.Errorf("downloadPath(%q) = %q (valid %v), want %q", in, got, ValidSubDLLink(got), want)
+		}
+	}
+	if got := shortSample("/subtitle/1.zip?api_key=SECRET"); strings.Contains(got, "SECRET") {
+		t.Errorf("sample shows the query: %q", got)
 	}
 }

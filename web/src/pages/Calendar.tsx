@@ -10,6 +10,7 @@ import { copyText } from '../components/CopyBox'
 import { useKinds, useModules } from '../ModulesContext'
 import { t, tx } from '../i18n'
 import { useUrlState } from '../useUrlState'
+import { COMMON_ZONES, deviceZone, readZonePref, resolveZone, writeZonePref } from '../airTime'
 import { useLive } from '../useLive'
 
 type Show = 'all' | 'movie' | 'episode' | 'album' | 'book'
@@ -31,6 +32,13 @@ export default function Calendar() {
   const missingOnly = ui.missing === '1'
   const setMissingOnly = (v: boolean) => patchUi({ missing: v ? '1' : '' })
   const [feedOpen, setFeedOpen] = useState(false)
+  // Which time zone the days and times are read in: this device's, or one picked here (kept in this browser only).
+  const [zonePref, setZonePref] = useState(readZonePref)
+  const zone = resolveZone(zonePref)
+  const pickZone = (z: string) => {
+    setZonePref(z)
+    writeZonePref(z)
+  }
   // The private calendar address belongs to an account that can change things.
   const viewer = isViewer(useAuth().user)
   const kinds = useKinds()
@@ -79,10 +87,41 @@ export default function Calendar() {
             </label>
           </div>
           {entries.length === 0 && <p style={{ color: 'var(--text-dim)' }}>{t('Nothing is scheduled yet. Monitored movies and shows appear here once their release or air dates are known.')}</p>}
-          <CalendarGrid entries={shown} />
+          <CalendarGrid entries={shown} zone={zone} />
+          <div className="cal-foot">
+            {entries.some((e) => e.kind === 'episode' && e.airAt) && <ZonePicker pref={zonePref} onPick={pickZone} />}
+            <p className="field-hint cal-credit">
+              {tx('Air times from {link}', {
+                link: (
+                  <a href="https://www.tvmaze.com" target="_blank" rel="noopener noreferrer">
+                    TVmaze
+                  </a>
+                ),
+              })}
+            </p>
+          </div>
         </>
       )}
     </div>
+  )
+}
+
+// Which time zone episode days and times are shown in. Episodes TVmaze has a time for move to the day they
+// air in this zone; the choice stays in this browser.
+function ZonePicker({ pref, onPick }: { pref: string; onPick: (zone: string) => void }) {
+  const zones = pref && !COMMON_ZONES.includes(pref) ? [pref, ...COMMON_ZONES] : COMMON_ZONES
+  return (
+    <label className="inline-field cal-zone">
+      {t('Show times in')}
+      <select value={pref} onChange={(e) => onPick(e.target.value)}>
+        <option value="">{t('This device ({zone})', { zone: deviceZone() })}</option>
+        {zones.map((z) => (
+          <option key={z} value={z}>
+            {z === 'UTC' ? t('UTC') : z.replace(/_/g, ' ')}
+          </option>
+        ))}
+      </select>
+    </label>
   )
 }
 

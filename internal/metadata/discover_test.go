@@ -44,6 +44,18 @@ func TestDiscoverQueryParams(t *testing.T) {
 		{"tv range from only, page capped", true, metadata.DiscoverQuery{YearFrom: 2020, Page: 9999}, map[string]string{
 			"first_air_date.gte": "2020-01-01", "first_air_date.lte": "", "page": "500",
 		}, "/discover/tv"},
+		{"movie korean, 7+, long", false, metadata.DiscoverQuery{Language: "ko", MinRating: 7, Runtime: metadata.RuntimeLong}, map[string]string{
+			"with_original_language": "ko", "vote_average.gte": "7", "vote_count.gte": "100", "with_runtime.gte": "121", "with_runtime.lte": "",
+		}, "/discover/movie"},
+		{"tv japanese, 8+, short", true, metadata.DiscoverQuery{Language: "ja", MinRating: 8, Runtime: metadata.RuntimeShort}, map[string]string{
+			"with_original_language": "ja", "vote_average.gte": "8", "vote_count.gte": "50", "with_runtime.lte": "89", "with_runtime.gte": "",
+		}, "/discover/tv"},
+		{"movie 90 to 120", false, metadata.DiscoverQuery{Runtime: metadata.RuntimeMedium}, map[string]string{
+			"with_runtime.gte": "90", "with_runtime.lte": "120", "vote_count.gte": "",
+		}, "/discover/movie"},
+		{"best rated keeps the higher vote floor", false, metadata.DiscoverQuery{MinRating: 6, Sort: metadata.SortRating}, map[string]string{
+			"vote_average.gte": "6", "vote_count.gte": "200", "sort_by": "vote_average.desc",
+		}, "/discover/movie"},
 	}
 	for _, tc := range cases {
 		var total int
@@ -86,5 +98,46 @@ func TestGenresListSorted(t *testing.T) {
 	}
 	if _, err := c.Genres(context.Background(), "books"); err == nil {
 		t.Fatal("unknown kind should be an error")
+	}
+}
+
+func TestDiscoverFilterValidation(t *testing.T) {
+	languages := map[string]bool{"": true, "ko": true, "en": true, "yue": true, "cn": true, "K": false, "k": false, "korean": false, "k0": false, "ko ": false, "ko&x": false, "é": false, "KO": false}
+	for in, want := range languages {
+		if got := metadata.ValidLanguage(in); got != want {
+			t.Errorf("ValidLanguage(%q) = %v, want %v", in, got, want)
+		}
+	}
+	ratings := map[int]bool{0: true, 6: true, 7: true, 8: true, 9: true, 1: false, 5: false, 10: false, -1: false}
+	for in, want := range ratings {
+		if got := metadata.ValidMinRating(in); got != want {
+			t.Errorf("ValidMinRating(%d) = %v, want %v", in, got, want)
+		}
+	}
+	runtimes := map[string]bool{"": true, "under90": true, "90to120": true, "over120": true, "120": false, "Over120": false, "over120&x=1": false}
+	for in, want := range runtimes {
+		if got := metadata.ValidRuntime(in); got != want {
+			t.Errorf("ValidRuntime(%q) = %v, want %v", in, got, want)
+		}
+	}
+}
+
+// Two browses that differ only in a new filter must not share a cached page.
+func TestDiscoverFiltersHaveOwnCacheEntries(t *testing.T) {
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.Write([]byte(`{"page":1,"total_pages":1,"results":[]}`))
+	}))
+	defer srv.Close()
+	c := metadata.NewWithBaseURL("k", srv.URL)
+	ctx := context.Background()
+	for _, q := range []metadata.DiscoverQuery{{}, {Language: "ko"}, {MinRating: 7}, {Runtime: metadata.RuntimeLong}, {Language: "ko"}} {
+		if _, err := c.DiscoverTV(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if hits != 4 {
+		t.Fatalf("want 4 TMDB calls (the last browse is cached), got %d", hits)
 	}
 }

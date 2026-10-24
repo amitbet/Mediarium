@@ -26,9 +26,11 @@ import (
 func (s *Server) setupSearchExtras() {
 	s.delays = delay.NewStore(s.db, nil)
 	setPreferredProtocol(s.delayConfig().PreferredProtocol)
+	s.loadMinSizeCheck()
 	s.setCachedPolicy()
 	tr := s.IndexerRepo.Tracker()
 	s.QueueRepo.SetOnEnqueue(func(it queue.Item) { tr.NoteGrab(it.NZBURL) })
+	s.QueueRepo.SetIndexerOf(s.indexerOfRelease)
 }
 
 // ---- size limits ----
@@ -37,8 +39,8 @@ func (s *Server) setupSearchExtras() {
 // only when the table is on and a release has a size; episodes says how many
 // episodes a release holds (0 for a movie). It also returns the reason the
 // first refused release gave, "" when none was refused.
-func (s *Server) applySizeTable(results []indexers.Result, runtime func() float64, episodes func(res indexers.Result) int) ([]indexers.Result, string) {
-	table := s.sizeLimits()
+func (s *Server) applySizeTable(kind string, results []indexers.Result, runtime func() float64, episodes func(res indexers.Result) int) ([]indexers.Result, string) {
+	table := s.sizeLimitsFor(kind)
 	if !table.Enabled || len(results) == 0 {
 		return results, ""
 	}
@@ -75,8 +77,8 @@ func (s *Server) sizeRejections(table quality.SizeLimits, minutes float64, profi
 	}
 	var out []string
 	tier := quality.Classify(parser.Parse(title))
-	if !quality.SizePlausible(tier, size, episodes) {
-		out = append(out, fmt.Sprintf("smaller than a real %s release is likely to be", tier))
+	if !builtinSizeOK(tier, size, episodes, minutes) {
+		out = append(out, fmt.Sprintf("smaller than a real %s release is likely to be (you can turn this check off in Settings > Library > Quality)", tier))
 	}
 	if !profile.SizeAllowed(size) {
 		out = append(out, fmt.Sprintf("larger than the %q profile's limit of %s GB", profile.Name, trimFloat(profile.MaxSizeGB)))
@@ -91,7 +93,7 @@ func trimFloat(v float64) string { return fmt.Sprintf("%g", v) }
 
 // movieSizeRejections is sizeRejections for the releases of a movie.
 func (s *Server) movieSizeRejections(ctx context.Context, m library.Movie, profile quality.Profile) func(title string, size int64) []string {
-	table := s.sizeLimits()
+	table := s.sizeLimitsFor("movie")
 	var minutes float64
 	return func(title string, size int64) []string {
 		if table.Enabled && minutes == 0 {
@@ -111,11 +113,11 @@ func episodeCount(mapper func(parser.Release) parser.Release, rel parser.Release
 
 // tvSizeRejections is sizeRejections for the releases of a show.
 func (s *Server) tvSizeRejections(ctx context.Context, series library.Series, profile quality.Profile) func(title string, size int64) []string {
-	table := s.sizeLimits()
+	table := s.sizeLimitsFor("tv")
 	mapper := s.releaseMapper(series)
 	var minutes float64
 	return func(title string, size int64) []string {
-		if table.Enabled && minutes == 0 {
+		if (table.Enabled || minSizeCheckOn()) && minutes == 0 {
 			minutes = s.episodeRuntime(ctx, series)
 		}
 		return s.sizeRejections(table, minutes, profile, title, size, episodeCount(mapper, parser.Parse(title)))
@@ -123,17 +125,6 @@ func (s *Server) tvSizeRejections(ctx context.Context, series library.Series, pr
 }
 
 // ---- delay profile ----
-
-// highestRank is the rank of the best quality a profile allows.
-func highestRank(p quality.Profile) int {
-	top := 0
-	for _, t := range p.Allowed {
-		if r := quality.Rank(t); r > top {
-			top = r
-		}
-	}
-	return top
-}
 
 // holdBack takes out of results the releases an automatic search must leave
 // alone for now because of the delay profile, and remembers them so the title
@@ -168,7 +159,7 @@ func (s *Server) holdBack(remember bool, it delay.Item, profile quality.Profile,
 		rel := delay.Release{
 			Protocol: string(res.Protocol),
 			Posted:   res.PublishDate,
-			Highest:  quality.Rank(quality.Classify(res.Parsed())) >= highestRank(by),
+			Highest:  by.TierRank(quality.Classify(res.Parsed())) >= by.HighestRank(),
 		}
 		if res.PublishDate.IsZero() {
 			rel.FirstSeen = s.delays.FirstSeen(it, res.Title)
@@ -265,7 +256,7 @@ func (s *Server) limitMovieResults(ctx context.Context, m library.Movie, profile
 // limitMovie is limitMovieResults that also says what it took out.
 func (s *Server) limitMovie(ctx context.Context, m library.Movie, profile quality.Profile, mode limitMode, results []indexers.Result) ([]indexers.Result, limitReport) {
 	var rep limitReport
-	results, rep.size = s.applySizeTable(results, func() float64 { return s.movieRuntime(ctx, m) }, func(indexers.Result) int { return 0 })
+	results, rep.size = s.applySizeTable("movie", results, func() float64 { return s.movieRuntime(ctx, m) }, func(indexers.Result) int { return 0 })
 	if mode != limitDry {
 		results = s.markCached(ctx, results) // only reorders: see debrid_cache.go
 	}
@@ -299,7 +290,8 @@ func (s *Server) limitTVResults(series library.Series, season, episode int, prof
 func (s *Server) limitTV(series library.Series, season, episode int, profile quality.Profile, current *upgradeBase, mode limitMode, results []indexers.Result) ([]indexers.Result, limitReport) {
 	var rep limitReport
 	mapper := s.releaseMapper(series)
-	results, rep.size = s.applySizeTable(results, func() float64 { return s.episodeRuntime(context.Background(), series) },
+	s.warmEpisodeRuntime(series, results)
+	results, rep.size = s.applySizeTable("tv", results, func() float64 { return s.episodeRuntime(context.Background(), series) },
 		func(res indexers.Result) int { return episodeCount(mapper, res.Parsed()) })
 	if mode != limitDry {
 		results = s.markCached(context.Background(), results) // only reorders: see debrid_cache.go
@@ -471,6 +463,9 @@ func (s *Server) searchRoutes(admin routeGroup, member routeGroup) {
 	admin.HandleFunc("GET /api/quality/size-limits", s.handleGetSizeLimits)
 	admin.HandleFunc("PUT /api/quality/size-limits", s.handlePutSizeLimits)
 	admin.HandleFunc("POST /api/quality/size-limits/reset", s.handleResetSizeLimits)
+	admin.HandleFunc("GET /api/quality/min-size-check", s.handleGetMinSize)
+	admin.HandleFunc("PUT /api/quality/min-size-check", s.handlePutMinSize)
+	admin.HandleFunc("GET /api/quality/size-limits/trash/{list}", s.handleTrashSizes)
 	admin.HandleFunc("POST /api/indexers/{id}/resume", s.handleResumeIndexer)
 	admin.HandleFunc("GET /api/stats/indexers", s.handleIndexerStats)
 	member.HandleFunc("GET /api/search/waiting", s.handleSearchWaiting)

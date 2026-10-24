@@ -83,7 +83,7 @@ func TestIRCAnnounceHoldsAnEpisodeUnderTheDelayProfile(t *testing.T) {
 	}
 	conn := e.connect(t, nil)
 	postJSONMethod[map[string]any](t, e.client, http.MethodPut, e.base+"/api/search/delay", map[string]any{"preferredProtocol": "usenet", "torrentMinutes": 90}, http.StatusOK)
-	postJSONMethod[map[string]any](t, e.client, http.MethodPut, e.base+"/api/quality/size-limits", map[string]any{"enabled": true, "rows": []any{}}, http.StatusOK)
+	postJSONMethod[map[string]any](t, e.client, http.MethodPut, e.base+"/api/quality/size-limits?kind=tv", map[string]any{"enabled": true, "rows": []any{}}, http.StatusOK)
 	line := func(rel string, id int, size string) string {
 		return fmt.Sprintf("[TV/HD] %s - https://tracker.example/details.php?id=%d - %s", rel, id, size)
 	}

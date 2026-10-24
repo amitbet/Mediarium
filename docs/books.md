@@ -12,7 +12,7 @@ You can also pick them in the first-run wizard, on the **What do you want to man
 
 ## Adding a book
 
-Open **Library**, then the **Ebooks** or **Audiobooks** tab, and press **Add**. Type a title or an author's name. The results come from [Open Library](https://openlibrary.org), with their covers. Press **Add** on the right one.
+Open **Library**, then the **Ebooks** or **Audiobooks** tab, and press **Add**. Type a title or an author's name. The results come from [Open Library](https://openlibrary.org), with their covers. If Open Library can't read what you typed (it answers 422 to text such as an unclosed bracket or quote, or a lone colon), Mediarium searches again with just the words, and if that is refused too the search box says "Open Library couldn't read that search" instead of showing an empty list. Press **Add** on the right one.
 
 - From the Ebooks tab the book is added as an ebook, from the Audiobooks tab as an audiobook. When the other format is switched on too, tick **Get the audiobook too** (or **Get the ebook too**) to want both.
 - Mediarium starts looking for it straight away. After that, the automatic search tries again on its usual schedule for every book still missing.
@@ -102,7 +102,11 @@ Switch on **Follow this author** there and their new books are added by themselv
 
 ## Which release is picked
 
-Mediarium searches for the author and title together, and when that finds nothing, for the title alone (some indexers don't index authors). Either way, a release has to name the book's title and the author's surname. Small words like "the" and "of" don't count, so "Tolkien - Hobbit" still matches *The Hobbit*. A release of another book by the same author, or the other format, is left out.
+Mediarium searches for the author and title together, and when that finds nothing, for the title alone (some indexers don't index authors). The second search leaves out any indexer that failed or timed out in the first one, since it would only take as long again.
+
+Only the indexers that can do books are asked. A site added from the site list says in its definition which categories it has, so one that lists no books (a movie or TV site) is not asked for an ebook, and one with no audio is not asked for an audiobook; an audio site counts as able to hold audiobooks. Newznab and Torznab indexers are always asked, because Mediarium does not keep their capabilities. The release list names the indexers that were left out ("2 indexers that don't do books or audiobooks were skipped: ..."), and says so when none of your indexers lists books. The same filter keeps album searches away from sites without audio.
+
+When you press **Choose a release**, the search stops after 25 seconds and shows what the quicker indexers found by then, with a note naming the ones that did not answer, instead of failing after 30 seconds with nothing. Both searches share those 25 seconds. Either way, a release has to name the book's title and the author's surname. Small words like "the" and "of" don't count, so "Tolkien - Hobbit" still matches *The Hobbit*. A release of another book by the same author, or the other format, is left out.
 
 Among the matches, the file type decides:
 
@@ -259,6 +263,8 @@ Comics are books that are a pile of pictures: a `.cbz` (a ZIP of pages), a `.cbr
 
 The search box at the top of every page finds books too (under **Books**, after movies, shows and artists). A book you have opens its page; one you don't opens the add window.
 
+Pressing Enter in the search box opens the full results page (`/search?q=...`). While ebooks or audiobooks are switched on it has a **Books** tab next to **Movies and shows** and **Releases**, with the number of books found in its name (**Books (12)**). It lists the same Open Library results as the box, with the cover, author and year, the edition banner, and the same **Add** button (books you already have are listed first under **In your library** and open their page). The tab is in the address (`/search?q=dune&tab=books`), so a link or a reload comes back to it, and the tab is not there at all when both ebooks and audiobooks are off. With movies and TV both switched off, the page opens on the Books tab.
+
 **Upcoming > Wanted** lists every book still missing in a format you want, with **Search now**, and a **Books** filter chip. Books have no upgrades, so they only show under **Missing**.
 
 The dashboard has an **Ebooks** and an **Audiobooks** card with how many books you have in each format and how many are missing, and the missing ones count in the greeting card's **wanted** number. A card is dimmed with "Off" while its format is switched off. Book downloads show in **Activity** like everything else, named after the book with "Ebook" or "Audiobook" and the author underneath.
@@ -300,10 +306,10 @@ The dashboard has an **Ebooks** and an **Audiobooks** card with how many books y
 | GET | `/api/books/{id}` | One book |
 | PUT | `/api/books/{id}/want` | `{"format": "ebook" or "audiobook", "wanted": bool}` |
 | POST | `/api/books/{id}/search?format=` | Search now for one format |
-| GET | `/api/books/{id}/releases?format=` | The matching releases, best first |
+| GET | `/api/books/{id}/releases?format=` | The matching releases, best first. With `detail=1` the answer is `{"results", "sources", "unanswered", "warnings", "skipped"}`: how many indexers were asked, which did not answer, and which were left out because they don't list books |
 | POST | `/api/books/{id}/grab` | `{"format", "releaseTitle", "downloadUrl", "sizeBytes", "protocol"}` |
 | DELETE | `/api/books/{id}?deleteFiles=` | Remove a book (administrators) |
-| POST | `/api/books/{id}/cover` | Give the book a cover by uploading a picture: a multipart form with the picture in `file` (JPEG or PNG, up to 8 MB). Answers the book. Needs permission to manage |
+| POST | `/api/books/{id}/cover` | Give the book a cover by uploading a picture: a multipart form with the picture in `file` (JPEG, PNG or WebP, up to 8 MB; it is kept as a JPEG). Answers the book. Needs permission to manage |
 | POST | `/api/books/{id}/cover/link` | The same from a link: `{"url": "https://..."}`. Only the public internet is fetched; a link to this machine or the home network is refused with 400. Needs permission to manage |
 | GET | `/api/books/{id}/cover/editions` | The covers Open Library has for the book: `editions` (`coverId`, `url`) and `current`, the one shown now (0 when the book shows a picture of its own). Needs permission to manage |
 | PUT | `/api/books/{id}/cover/edition` | Show one of those covers: `{"coverId": 123}`. 400 for a cover that isn't in the list |

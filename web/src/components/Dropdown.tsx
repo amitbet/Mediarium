@@ -4,6 +4,10 @@ import Icon, { type IconName } from './Icon'
 export interface DropdownOption {
   value: string
   label: string
+  // Shown dimmed (an indexer with nothing to list) or with a warning sign (one
+  // that did not answer).
+  dim?: boolean
+  warn?: boolean
 }
 
 interface Props {
@@ -93,6 +97,7 @@ export default function Dropdown({ value, options, onChange, label, disabled, ti
         aria-controls={id}
       >
         {icon && <Icon name={icon} size={15} className="dd-lead" />}
+        {current?.warn && <Icon name="warning" size={14} className="dd-warn" />}
         <span>{current?.label}</span>
         <Icon name="chevron-down" size={15} className="dd-chev" />
       </button>
@@ -103,14 +108,15 @@ export default function Dropdown({ value, options, onChange, label, disabled, ti
               key={o.value}
               role="option"
               aria-selected={o.value === value}
-              className={`${i === active ? 'active' : ''}${o.value === value ? ' selected' : ''}`}
+              className={`${i === active ? 'active' : ''}${o.value === value ? ' selected' : ''}${o.dim ? ' dim' : ''}`}
               onMouseEnter={() => setActive(i)}
               onMouseDown={(e) => {
                 e.preventDefault()
                 pick(i)
               }}
             >
-              {o.label}
+              {o.warn && <Icon name="warning" size={14} className="dd-warn" />}
+              <span className="dd-text">{o.label}</span>
               {o.value === value && <Icon name="check" size={14} />}
             </li>
           ))}

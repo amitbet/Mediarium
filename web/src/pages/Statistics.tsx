@@ -7,6 +7,8 @@ import KindGlyph from '../components/KindGlyph'
 import Loading from '../components/Loading'
 import OverTime from '../components/OverTime'
 import { locale, plural, t } from '../i18n'
+import { useConfirm } from '../components/ConfirmProvider'
+import { useToast } from '../components/Toast'
 import '../stats.css'
 import TipLabel from '../components/TipLabel'
 
@@ -25,12 +27,39 @@ function Ring({ pct }: { pct: number }) {
 export default function Statistics() {
   const [s, setS] = useState<LibraryStats | null>(null)
   const [error, setError] = useState('')
-  useEffect(() => {
+  const admin = isAdmin(useAuth().user)
+  const confirm = useConfirm()
+  const toast = useToast()
+  const load = () =>
     api
       .libraryStats()
       .then(setS)
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+  useEffect(() => {
+    void load()
   }, [])
+
+  // Starts the download numbers again from zero. Nothing else is touched.
+  async function reset() {
+    const ok = await confirm({
+      title: t('Reset the statistics?'),
+      body: (
+        <p>
+          {t('The download numbers on this page and on the dashboard start again from zero: how many downloads were grabbed, finished and failed, how big they were, and the share from Usenet. Your library, your history and your files are not touched.')}
+        </p>
+      ),
+      confirmLabel: t('Reset statistics'),
+      danger: true,
+    })
+    if (!ok) return
+    try {
+      await api.resetStats()
+      toast.success(t('Statistics reset.'))
+      await load()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    }
+  }
 
   if (error) return <p className="error-text">{error}</p>
   if (!s) return <Loading height={300} />
@@ -112,7 +141,7 @@ export default function Statistics() {
         </section>
         <section className="card">
           <h2>{t('Downloads by month')}</h2>
-          {s.months.length === 0 && <p style={{ color: 'var(--text-dim)' }}>{t('No downloads in the history yet.')}</p>}
+          {s.months.length === 0 && <p style={{ color: 'var(--text-dim)' }}>{t('No downloads counted yet.')}</p>}
           <div className="bar-list">
             {s.months.map((m) => (
               <div key={m.month} className="bar-row">
@@ -127,7 +156,17 @@ export default function Statistics() {
               </div>
             ))}
           </div>
-          {s.historyKeptDays > 0 && <p className="field-hint">{plural(s.historyKeptDays, 'The history is kept for {n} day, so older months are not counted.', 'The history is kept for {n} days, so older months are not counted.')}</p>}
+          {(s.totals.grabs > 0 || s.totals.completed > 0 || s.totals.failed > 0) && (
+            <p className="stats-totals">
+              <b>{t('{grabbed} grabbed, {done} done, {failed} failed, {size} downloaded', { grabbed: s.totals.grabs, done: s.totals.completed, failed: s.totals.failed, size: formatBytes(s.totals.bytes) })}</b>
+            </p>
+          )}
+          <p className="field-hint">{t('These numbers are counted as downloads happen, so clearing the history list does not change them.')}</p>
+          {admin && (
+            <button type="button" className="btn-sm btn-danger" style={{ marginTop: 10 }} onClick={() => void reset()}>
+              {t('Reset statistics')}
+            </button>
+          )}
         </section>
       </div>
       <IndexerStats />

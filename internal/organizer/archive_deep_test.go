@@ -24,6 +24,11 @@ func TestFindPrimaryArchivesDeep(t *testing.T) {
 		filepath.Join("Torrent Name", "Sample", "sample.zip"),
 		filepath.Join(".unpack-7z-123", "inner.zip"),
 		filepath.Join("Torrent Name", "notes.txt"),
+		filepath.Join("Split", "Movie.7z.001"),
+		filepath.Join("Split", "Movie.7z.002"),
+		filepath.Join("Split", "Movie.7z.011"),
+		filepath.Join("SplitPadded", "x.7z.0001"),
+		filepath.Join("SplitPadded", "x.7z.0002"),
 	} {
 		full := filepath.Join(dir, name)
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
@@ -42,6 +47,8 @@ func TestFindPrimaryArchivesDeep(t *testing.T) {
 		filepath.Join(dir, "Torrent Name", "release.part1.rar"): true,
 		filepath.Join(dir, "Torrent Name", "old.rar"):           true,
 		filepath.Join(dir, "Torrent Name", "CD2", "disc.zip"):   true,
+		filepath.Join(dir, "Split", "Movie.7z.001"):             true,
+		filepath.Join(dir, "SplitPadded", "x.7z.0001"):          true,
 	}
 	if len(got) != len(want) {
 		t.Fatalf("found %v, want %d archives", got, len(want))

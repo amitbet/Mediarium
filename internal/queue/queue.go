@@ -108,7 +108,15 @@ type Repo struct {
 	// onEnqueue, when set, is told about every release added to the line, with
 	// its download address as written (used to count grabs per indexer).
 	onEnqueue func(Item)
+	// indexerOf, when set, names the indexer of a release that was added
+	// without one.
+	indexerOf func(url string) (int64, bool)
 }
+
+// SetIndexerOf sets a function that says which indexer gave the release at a
+// URL. A release added without an indexer gets the one it names, so the
+// indexer's seeding rules and statistics can follow the download.
+func (r *Repo) SetIndexerOf(f func(url string) (int64, bool)) { r.indexerOf = f }
 
 // SetOnEnqueue sets a function that is called after each release is added.
 func (r *Repo) SetOnEnqueue(f func(Item)) { r.onEnqueue = f }
@@ -202,6 +210,11 @@ func (r *Repo) Enqueue(item Item) (int64, error) {
 	storedURL, err := r.sealURL(item.NZBURL)
 	if err != nil {
 		return 0, err
+	}
+	if !item.IndexerID.Valid && r.indexerOf != nil {
+		if id, ok := r.indexerOf(item.NZBURL); ok {
+			item.IndexerID = sql.NullInt64{Int64: id, Valid: true}
+		}
 	}
 	// The new item goes to the back of the line: one number past the highest
 	// place anyone has taken, and always above 0 (0 and below mark resumed

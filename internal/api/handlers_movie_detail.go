@@ -62,6 +62,11 @@ type movieDetailPayload struct {
 	// FolderPath is the full folder of the movie's files in the library (as
 	// Mediarium sees it), or where they go when it has none.
 	FolderPath string `json:"folderPath,omitempty"`
+	// FileInfo is what the movie's file holds (video, audio and subtitle
+	// tracks); left out until the file has been read (media_info.go).
+	FileInfo *fileInfoPayload `json:"fileInfo,omitempty"`
+	// ShortFile is set when the file is far shorter than the movie should be.
+	ShortFile *shortFileNote `json:"shortFile,omitempty"`
 
 	// From TMDB. ReleaseStatus is TMDB's own status ("Released", "In
 	// Production"...), kept apart from Status above, the library state.
@@ -128,6 +133,10 @@ func (s *Server) handleTMDBMovieDetail(w http.ResponseWriter, r *http.Request) {
 		payload.Status = string(libMovie.Status)
 		payload.Quality = libMovie.Quality
 		payload.FilePath = fileLabel(r, libMovie.FilePath)
+		if libMovie.Status == library.StatusDownloaded {
+			payload.FileInfo = s.movieFileInfo(libMovie.FilePath)
+			payload.ShortFile = s.shortFileOf(libMovie.FilePath)
+		}
 		if isAdminRequest(r) { // only administrators see where the files lie
 			payload.FolderPath = s.movieFolderFor(libMovie)
 		}

@@ -5,11 +5,12 @@ import Icon from './Icon'
 import { useToast } from './Toast'
 import TipLabel from './TipLabel'
 
-type Service = '' | 'realdebrid' | 'torbox'
+type Service = '' | 'realdebrid' | 'torbox' | 'premiumize'
 
 const KEY_HELP: Record<Exclude<Service, ''>, { label: string; where: string; url: string }> = {
   realdebrid: { label: 'Real-Debrid', where: 'real-debrid.com/apitoken', url: 'https://real-debrid.com/apitoken' },
   torbox: { label: 'TorBox', where: 'torbox.app/settings', url: 'https://torbox.app/settings' },
+  premiumize: { label: 'Premiumize', where: 'premiumize.me/account', url: 'https://www.premiumize.me/account' },
 }
 
 // Settings > Downloading: send torrent releases to a debrid service, which
@@ -22,7 +23,7 @@ export default function DebridCard() {
   const [key, setKey] = useState('')
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<{ ok: boolean; account?: DebridAccount; error?: string } | null>(null)
-  // TorBox can say which releases it already has: ask, and prefer those.
+  // TorBox and Premiumize can say which releases they already have: ask, and prefer those.
   const [preferCached, setPreferCached] = useState(true)
   const [lowerScore, setLowerScore] = useState(false)
   const [savedCached, setSavedCached] = useState({ preferCached: true, cachedLowerScore: false })
@@ -84,10 +85,10 @@ export default function DebridCard() {
   return (
     <fieldset className="group torrent">
       <legend>
-        <Icon name="cloud" size={14} /> <TipLabel help="downloads#debrid-services-real-debrid-torbox">{t('Debrid service')}</TipLabel>
+        <Icon name="cloud" size={14} /> <TipLabel help="downloads#debrid-services-real-debrid-torbox-premiumize">{t('Debrid service')}</TipLabel>
       </legend>
       <p style={{ marginTop: 0 }}>
-        {t('A debrid service (Real-Debrid, TorBox) downloads torrents on its own fast servers. Mediarium then downloads the finished files from it over https, so no torrent traffic leaves your home and nothing is seeded from here. The built-in torrent client can stay off.')}
+        {t('A debrid service (Real-Debrid, TorBox, Premiumize) downloads torrents on its own fast servers. Mediarium then downloads the finished files from it over https, so no torrent traffic leaves your home and nothing is seeded from here. The built-in torrent client can stay off.')}
       </p>
       <div className="form-cols">
         <label>
@@ -102,6 +103,7 @@ export default function DebridCard() {
             <option value="">{t('None (download torrents here)')}</option>
             <option value="realdebrid">Real-Debrid</option>
             <option value="torbox">TorBox</option>
+            <option value="premiumize">Premiumize</option>
           </select>
         </label>
         {service && (
@@ -132,13 +134,13 @@ export default function DebridCard() {
           </label>
         )}
       </div>
-      {service === 'torbox' && (
+      {(service === 'torbox' || service === 'premiumize') && (
         <>
           <label className="check-hint">
             <input type="checkbox" checked={preferCached} onChange={(e) => setPreferCached(e.target.checked)} />
             <span>
-              <TipLabel help="downloads#releases-that-are-already-cached-torbox">{t('Prefer releases TorBox already has')}</TipLabel>
-              <small>{t('Mediarium asks TorBox which of the torrents it found are already stored there, marks them "Cached" in the release list, and picks one of those over an equal release that has to be downloaded first. It never picks a worse quality for it. Only the torrents\' hashes are sent.')}</small>
+              <TipLabel help="downloads#releases-that-are-already-cached-torbox-and-premiumize">{t('Prefer releases {name} already has', { name: help?.label ?? '' })}</TipLabel>
+              <small>{t('Mediarium asks {name} which of the torrents it found are already stored there, marks them "Cached" in the release list, and picks one of those over an equal release that has to be downloaded first. It never picks a worse quality for it. Only the torrents\' hashes are sent.', { name: help?.label ?? '' })}</small>
             </span>
           </label>
           {preferCached && (
@@ -174,7 +176,10 @@ export default function DebridCard() {
                     ? t('Premium until {date}.', { date: new Date(result.account.expires).toLocaleDateString(locale()) })
                     : t('Premium.')
                   : t('This account is not premium, so most downloads will be refused.'),
-              ].join(' ')
+                result.account.fairUse ? t('{percent}% of this month\'s fair-use limit is used.', { percent: Math.round(result.account.fairUse * 100) }) : '',
+              ]
+              .filter(Boolean)
+              .join(' ')
             : result.error}
         </div>
       )}

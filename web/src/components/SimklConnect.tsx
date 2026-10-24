@@ -1,19 +1,34 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, type SimklStatus } from '../api'
-import { t, tx } from '../i18n'
+import { t } from '../i18n'
 import { pollPin } from '../pinPoll'
 import { useConfirm } from './ConfirmProvider'
+import { copyText } from './CopyBox'
+import Icon from './Icon'
+import TestButton from './TestButton'
 import { useToast } from './Toast'
 
 // Settings > Info, lists and subtitles > Import lists: connect the Simkl
 // account whose lists a Simkl import list reads. The person enters a short
-// code at simkl.com/pin; the sign-in itself is kept on the server and never
-// sent to the browser.
+// code on Simkl's site (the server works out which of Simkl's two sign-ins the
+// app uses); the sign-in itself is kept on the server and never sent to the
+// browser.
+
+// Minutes and seconds left, such as 9:05.
+function clock(ms: number): string {
+  const total = Math.max(0, Math.ceil(ms / 1000))
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
+}
+
 export default function SimklConnect({ hasClientId, onChanged }: { hasClientId: boolean; onChanged?: () => void }) {
   const toast = useToast()
   const confirm = useConfirm()
   const [st, setSt] = useState<SimklStatus | null>(null)
-  const [pin, setPin] = useState<{ code: string; url: string } | null>(null)
+  const [pin, setPin] = useState<{ code: string; url: string; endsAt: number } | null>(null)
+  const [now, setNow] = useState(() => Date.now())
+  const [copied, setCopied] = useState(false)
+  const [name, setName] = useState('')
+  const wait = useRef(5000)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const stopPoll = useRef<() => void>(() => undefined)
@@ -34,25 +49,42 @@ export default function SimklConnect({ hasClientId, onChanged }: { hasClientId: 
     }
   }, [])
 
+  // The countdown to the code running out.
+  useEffect(() => {
+    if (!pin) return
+    setNow(Date.now())
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [pin])
+
+  async function copyCode(code: string) {
+    setCopied(await copyText(code))
+    setTimeout(() => setCopied(false), 2200)
+  }
+
   async function connect() {
     setError('')
     setBusy(true)
     try {
       const p = await api.simklStartPin()
       if (gone.current) return
-      setPin({ code: p.code, url: p.url })
+      setPin({ code: p.code, url: p.fullUrl || p.url, endsAt: Date.now() + p.expiresIn * 1000 })
+      setCopied(false)
+      wait.current = Math.max(3, p.interval || 5) * 1000
       stopPoll.current()
       stopPoll.current = pollPin({
         check: async () => {
           const r = await api.simklPinStatus(p.code)
-          return r.done && r.status ? r.status : undefined
+          if (r.interval) wait.current = Math.max(3, r.interval) * 1000
+          return r.done && r.status ? { status: r.status, name: r.name ?? '' } : undefined
         },
         lifeSeconds: p.expiresIn,
-        everyMs: Math.max(3, p.interval || 5) * 1000,
-        onDone: (status) => {
+        delayMs: () => wait.current,
+        onDone: ({ status, name }) => {
           setPin(null)
           setSt(status)
-          toast.success(t('Simkl account connected.'))
+          setName(name)
+          toast.success(name ? t('Connected to Simkl as {name}.', { name }) : t('Simkl account connected.'))
           onChanged?.()
         },
         onExpired: () => {
@@ -89,6 +121,7 @@ export default function SimklConnect({ hasClientId, onChanged }: { hasClientId: 
     try {
       await api.simklDisconnect()
       setSt({ connected: false, unreadable: false, hasClientId })
+      setName('')
       toast.success(t('Simkl account disconnected.'))
       onChanged?.()
     } catch (e) {
@@ -104,26 +137,35 @@ export default function SimklConnect({ hasClientId, onChanged }: { hasClientId: 
       <h3 style={{ margin: '0 0 6px' }}>{t('Your Simkl account')}</h3>
       {st.connected ? (
         <>
-          <p style={{ margin: '0 0 10px' }}>{t('Your Simkl account is connected.')}</p>
-          <button disabled={busy} onClick={() => void disconnect()}>
-            {t('Disconnect')}
-          </button>
+          <p style={{ margin: '0 0 10px' }}>{name ? t('Connected as {name}.', { name }) : t('Your Simkl account is connected.')}</p>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <button disabled={busy} onClick={() => void disconnect()}>
+              {t('Disconnect')}
+            </button>
+            <TestButton label={t('Test connection')} run={() => api.simklTest()} />
+          </div>
         </>
       ) : pin ? (
         <>
-          <p style={{ margin: '0 0 8px' }}>
-            {tx('Open {link} and enter this code:', {
-              link: (
-                <a href={pin.url} target="_blank" rel="noreferrer">
-                  {pin.url.replace(/^https:\/\//, '')}
-                </a>
-              ),
-            })}
+          <p style={{ margin: '0 0 8px' }}>{t('Open Simkl, enter this code and approve the sign-in.')}</p>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', margin: '0 0 10px' }}>
+            <p aria-live="polite" style={{ margin: 0, fontSize: '1.8rem', fontWeight: 700, letterSpacing: '0.2em' }}>
+              <code style={{ userSelect: 'all' }}>{pin.code}</code>
+            </p>
+            <button type="button" className="btn-sm btn-with-icon" onClick={() => void copyCode(pin.code)}>
+              {copied && <Icon name="check" size={14} />}
+              {copied ? t('Copied') : t('Copy')}
+            </button>
+            <a className="btn-link primary-look" href={pin.url} target="_blank" rel="noreferrer">
+              <Icon name="open" size={15} /> {t('Open Simkl and enter this code')}
+            </a>
+          </div>
+          <p role="status" style={{ color: 'var(--text-dim)', margin: '0 0 4px' }}>
+            {t('Waiting for you to approve it on Simkl…')}
           </p>
-          <p aria-live="polite" style={{ margin: '0 0 10px', fontSize: '1.8rem', fontWeight: 700, letterSpacing: '0.2em' }}>
-            <code>{pin.code}</code>
+          <p style={{ color: 'var(--text-dim)', margin: '0 0 10px', fontSize: '0.85rem' }}>
+            {t('The code runs out in {time}.', { time: clock(pin.endsAt - now) })}
           </p>
-          <p style={{ color: 'var(--text-dim)', margin: '0 0 10px' }}>{t('Waiting for you to enter the code…')}</p>
           <button onClick={cancel}>{t('Cancel')}</button>
         </>
       ) : (
@@ -133,7 +175,7 @@ export default function SimklConnect({ hasClientId, onChanged }: { hasClientId: 
             {hasClientId ? t('Not connected yet. Connect your account so Mediarium can read your Simkl lists.') : t('Add your Simkl client ID above first.')}
           </p>
           <button className="primary" disabled={busy || !hasClientId} onClick={() => void connect()}>
-            {t('Connect my Simkl account')}
+            {error ? t('Start again') : t('Connect my Simkl account')}
           </button>
         </>
       )}

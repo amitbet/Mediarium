@@ -43,15 +43,30 @@ func DiskHave(videoPath string) HaveMap {
 	if videoPath == "" {
 		return out
 	}
-	dir := filepath.Dir(videoPath)
-	prefix := strings.ToLower(filepath.Base(strings.TrimSuffix(videoPath, filepath.Ext(videoPath)))) + "."
-	entries, err := os.ReadDir(dir)
+	entries, err := os.ReadDir(filepath.Dir(videoPath))
 	if err != nil {
 		return out
 	}
+	names := make([]string, 0, len(entries))
 	for _, e := range entries {
-		name := strings.ToLower(e.Name())
-		if e.IsDir() || !strings.HasPrefix(name, prefix) {
+		if !e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	return DiskHaveFromNames(videoPath, names)
+}
+
+// DiskHaveFromNames is DiskHave for a folder listing already in hand: names
+// are the files in the video's folder.
+func DiskHaveFromNames(videoPath string, names []string) HaveMap {
+	out := HaveMap{}
+	if videoPath == "" {
+		return out
+	}
+	prefix := strings.ToLower(filepath.Base(strings.TrimSuffix(videoPath, filepath.Ext(videoPath)))) + "."
+	for _, n := range names {
+		name := strings.ToLower(n)
+		if !strings.HasPrefix(name, prefix) {
 			continue
 		}
 		ext := filepath.Ext(name)

@@ -13,8 +13,8 @@ type MovieReleaseDates struct {
 	Cinema  string `json:"cinema,omitempty"`
 	Digital string `json:"digital,omitempty"`
 	// Region is the country asked for. CinemaRegion and DigitalRegion name the
-	// country a date really came from when it was not that one (the US or the
-	// earliest anywhere, since a small country often lists nothing).
+	// country a date really came from when it was not that one (only ever the
+	// US, since a small country often lists nothing).
 	Region        string `json:"region,omitempty"`
 	CinemaRegion  string `json:"cinemaRegion,omitempty"`
 	DigitalRegion string `json:"digitalRegion,omitempty"`
@@ -60,32 +60,21 @@ func (d *MovieDetail) earliest(country string, types []int) string {
 	return ""
 }
 
-// earliestAnywhere is earliest over every country.
-func (d *MovieDetail) earliestAnywhere(types []int) (date, country string) {
-	for _, c := range d.ReleaseDates.Results {
-		got := d.earliest(c.Country, types)
-		if got != "" && (date == "" || got < date || (got == date && c.Country < country)) {
-			date, country = got, c.Country
-		}
-	}
-	return date, country
-}
-
 // ReleaseDatesFor gives the cinema and digital dates in a country. A date the
-// country does not list falls back to the US, then to the earliest anywhere.
+// country does not list falls back to the US (and is tagged as coming from
+// there). There is no other fallback: a date from some random country means
+// nothing to the person, so a date neither lists stays empty.
 func (d *MovieDetail) ReleaseDatesFor(region string) MovieReleaseDates {
 	region = strings.ToUpper(region)
 	out := MovieReleaseDates{Region: region}
 	pick := func(types []int) (string, string) {
-		for _, c := range []string{region, "US"} {
-			if got := d.earliest(c, types); got != "" {
-				if c == region {
-					return got, ""
-				}
-				return got, c
-			}
+		if got := d.earliest(region, types); got != "" {
+			return got, ""
 		}
-		return d.earliestAnywhere(types)
+		if got := d.earliest("US", types); got != "" {
+			return got, "US"
+		}
+		return "", ""
 	}
 	out.Cinema, out.CinemaRegion = pick(cinemaTypes)
 	out.Digital, out.DigitalRegion = pick(digitalTypes)

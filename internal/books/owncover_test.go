@@ -60,7 +60,7 @@ func fixtureGIF(t *testing.T) []byte {
 }
 
 func TestPrepareOwnCover(t *testing.T) {
-	webp := append([]byte("RIFF\x24\x00\x00\x00WEBPVP8 "), make([]byte, 40)...)
+	brokenWebP := append([]byte("RIFF\x24\x00\x00\x00WEBPVP8 "), make([]byte, 40)...)
 	pngHalf := fixturePNG(t, 60, 90)
 	pngHalf = pngHalf[:len(pngHalf)/2] // starts like a picture, ends nowhere
 	tooBig := append(fixturePNG(t, 10, 10), make([]byte, books.MaxOwnCoverBytes)...)
@@ -76,7 +76,8 @@ func TestPrepareOwnCover(t *testing.T) {
 		{name: "a JPEG", data: fixtureJPEG(t, 90, 60), maxW: 90, maxH: 60},
 		{name: "a big picture is cut down", data: fixturePNG(t, 1600, 2400), maxW: 800, maxH: 1200},
 		{name: "a GIF", data: fixtureGIF(t), wantErr: books.ErrCoverFormat},
-		{name: "a WebP picture", data: webp, wantErr: books.ErrCoverFormat},
+		{name: "a WebP picture", data: webpCover(t), maxW: 16, maxH: 24},
+		{name: "a WebP picture that is cut off", data: brokenWebP, wantErr: books.ErrCoverUnreadable},
 		{name: "a web page", data: []byte("<html><body>not a picture</body></html>"), wantErr: books.ErrCoverFormat},
 		{name: "nothing at all", data: nil, wantErr: books.ErrCoverFormat},
 		{name: "a PNG that is cut off", data: pngHalf, wantErr: books.ErrCoverUnreadable},

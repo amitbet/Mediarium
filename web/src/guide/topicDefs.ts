@@ -126,11 +126,12 @@ export const TOPICS: TopicDef[] = [
   {
     id: 'media-servers',
     title: 'Media servers and apps',
-    summary: 'Plex, Jellyfin, Emby, Silo and others; Overseerr and phone apps; running a script after an import.',
+    summary: 'Plex, Jellyfin, Emby, Silo and others; Overseerr and phone apps; chat and voice assistants; a script after an import.',
     group: 'People and apps',
     sources: [
       { file: 'media-servers.md' },
       { file: 'other-apps.md', title: 'Overseerr, dashboards and phone apps' },
+      { file: 'mcp.md', title: 'Chat programs and voice assistants (MCP)' },
       { file: 'scripts.md', title: 'Running a script after each import' },
     ],
   },

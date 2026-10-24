@@ -31,6 +31,17 @@ function namingFormat(value: string): string | null {
   return null
 }
 
+// The quick check for a folder format: the same brace check, with the wording for folders.
+function folderFormat(value: string): string | null {
+  const v = value.trim()
+  if (v === '') return null
+  if (/[\\/]/.test(v)) return t("A folder name can't contain / or \\. Season folders are made for you, so only write the name of the title's folder.")
+  const opens = (v.match(/\{/g) ?? []).length
+  const closes = (v.match(/\}/g) ?? []).length
+  if (opens !== closes) return t('A { or } is missing. Wrap each token in curly braces, like {Movie Title}.')
+  return null
+}
+
 // One of the two Library pages shares this form: the folders, or the naming rules.
 // Each page saves only its own fields.
 function LibrarySection({ part, onSettings }: { part: 'folders' | 'naming'; onSettings?: (s: SettingsData) => void }) {
@@ -53,10 +64,13 @@ function LibrarySection({ part, onSettings }: { part: 'folders' | 'naming'; onSe
   const [namingPreset, setNamingPreset] = useState('plex')
   const [customFormat, setCustomFormat] = useState('')
   const [episodeFormat, setEpisodeFormat] = useState('')
+  const [movieFolder, setMovieFolder] = useState('')
+  const [seriesFolder, setSeriesFolder] = useState('')
   const [keepOriginalNames, setKeepOriginalNames] = useState(false)
   const [illegalCharMode, setIllegalCharMode] = useState('strip')
   const [illegalCharReplacement, setIllegalCharReplacement] = useState('-')
   const [importConflictPolicy, setImportConflictPolicy] = useState('skip')
+  const [checkDuration, setCheckDuration] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [saving, setSaving] = useState(false)
   const toast = useToast()
@@ -78,6 +92,8 @@ function LibrarySection({ part, onSettings }: { part: 'folders' | 'naming'; onSe
   const namingErrors = {
     customFormat: namingPreset === 'custom' ? firstError(required(customFormat, t('Add a naming format, for example {Movie Title} ({Year}).')), namingFormat(customFormat)) : null,
     episodeFormat: namingPreset === 'custom' ? namingFormat(episodeFormat) : null,
+    movieFolder: namingPreset === 'custom' ? folderFormat(movieFolder) : null,
+    seriesFolder: namingPreset === 'custom' ? folderFormat(seriesFolder) : null,
     illegalCharReplacement:
       illegalCharMode === 'replace'
         ? firstError(
@@ -112,10 +128,13 @@ function LibrarySection({ part, onSettings }: { part: 'folders' | 'naming'; onSe
         setNamingPreset(s.namingPreset || 'plex')
         setCustomFormat(s.movieNameFormat)
         setEpisodeFormat(s.episodeNameFormat ?? '')
+        setMovieFolder(s.movieFolderFormat ?? '')
+        setSeriesFolder(s.seriesFolderFormat ?? '')
         setKeepOriginalNames(s.keepOriginalNames === true)
         setIllegalCharMode(s.illegalCharMode || 'strip')
         setIllegalCharReplacement(s.illegalCharReplacement || '-')
         setImportConflictPolicy(s.importConflictPolicy || 'skip')
+        setCheckDuration(s.checkDuration !== false)
       })
       .catch((e) => setLoadError(e instanceof Error ? e.message : String(e)))
   }, [setSettings])
@@ -141,10 +160,13 @@ function LibrarySection({ part, onSettings }: { part: 'folders' | 'naming'; onSe
               namingPreset,
               movieNameFormat: customFormat,
               episodeNameFormat: episodeFormat,
+              movieFolderFormat: movieFolder,
+              seriesFolderFormat: seriesFolder,
               keepOriginalNames,
               illegalCharMode,
               illegalCharReplacement,
               importConflictPolicy,
+              checkDuration,
             },
       )
       setSettings(updated)
@@ -362,8 +384,25 @@ function LibrarySection({ part, onSettings }: { part: 'folders' | 'naming'; onSe
             </label>
             <small style={{ color: 'var(--text-dim)' }}>{t('What to do when a download would replace a file already in your library. With Skip, a title that looks for better versions still takes a better file in place of the old one.')}</small>
           </div>
+          <div className="grid-form">
+            <label className="check-row">
+              <input type="checkbox" checked={checkDuration} onChange={(e) => setCheckDuration(e.target.checked)} />
+              <span>{t('Check that the video is as long as the episode or movie')}</span>
+            </label>
+            <small style={{ color: 'var(--text-dim)' }}>{t('Before a download is imported, Mediarium reads how long the video is. If it is under half of the episode or movie length, it is a fake or cut off, so it is not imported, the release is blocklisted and another one is tried.')}</small>
+          </div>
         </div>
-        {namingPreset === 'custom' && <NamingBuilder movieFormat={customFormat} setMovieFormat={setCustomFormat} episodeFormat={episodeFormat} setEpisodeFormat={setEpisodeFormat} v={v} />}
+        {namingPreset === 'custom' && <NamingBuilder
+            movieFormat={customFormat}
+            setMovieFormat={setCustomFormat}
+            episodeFormat={episodeFormat}
+            setEpisodeFormat={setEpisodeFormat}
+            movieFolder={movieFolder}
+            setMovieFolder={setMovieFolder}
+            seriesFolder={seriesFolder}
+            setSeriesFolder={setSeriesFolder}
+            v={v}
+          />}
         <div style={{ marginTop: 14 }}>
           <button className="primary" onClick={save} disabled={saving}>
             {t('Save')}

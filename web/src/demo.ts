@@ -95,7 +95,7 @@ const MOVIE_SEEDS: Seed[] = [
 
 const SERIES_SEEDS: (Seed & { episodes: number; have: number })[] = [
   { id: 101, title: 'The Clean Floor', year: 2022, genres: ['Drama', 'Mystery'], rating: 8.7, overview: OV, state: 'downloaded', episodes: 19, have: 19 },
-  { id: 102, title: 'Salt & Static', year: 2022, genres: ['Drama', 'Comedy'], rating: 8.3, overview: OV, state: 'downloading', episodes: 28, have: 20, progress: 41 },
+  { id: 102, title: 'Salt & Static', year: 2022, genres: ['Drama', 'Comedy'], rating: 8.3, overview: OV, state: 'downloading', episodes: 28, have: 17, progress: 41 },
   { id: 103, title: 'The Cartographer’s Daughter', year: 2024, genres: ['Drama', 'War'], rating: 8.6, overview: OV, state: 'downloaded', episodes: 10, have: 10 },
   { id: 104, title: 'Ember Road', year: 2022, genres: ['Science Fiction', 'Action'], rating: 8.4, overview: OV, state: 'searching', episodes: 24, have: 12 },
   { id: 105, title: 'Paper Ghosts', year: 2022, genres: ['Crime', 'Drama'], rating: 8.2, overview: OV, state: 'pending', episodes: 30, have: 0, noPoster: true },
@@ -129,11 +129,16 @@ const movies: Movie[] = MOVIE_SEEDS.map((s) => ({
   posterUrl: s.noPoster ? undefined : poster(s.id),
   status: s.state === 'downloaded' ? 'downloaded' : s.state === 'downloading' ? 'downloading' : 'missing',
   quality: s.quality,
+  sizeBytes: s.state === 'downloaded' ? 4.2e9 + (s.id % 7) * 1.3e9 : undefined,
   monitored: s.state !== 'added',
   filePath: s.state === 'downloaded' ? `/movies/${s.title} (${s.year})/${s.title} (${s.year}).mkv` : undefined,
 }))
 
+// What a downloaded demo episode takes on disk.
+const episodeBytes = (i: number) => (1.2 + (i % 5) * 0.35) * 1e9
+
 const series: Series[] = SERIES_SEEDS.map((s) => ({
+  sizeBytes: Array.from({ length: Math.min(s.have, 20) }, (_, i) => episodeBytes(i)).reduce((a, b) => a + b, 0) * Math.max(1, s.have / 20),
   id: s.id,
   tmdbId: 9500 + s.id,
   title: s.title,
@@ -143,7 +148,7 @@ const series: Series[] = SERIES_SEEDS.map((s) => ({
   monitored: true,
   episodeCount: s.episodes,
   downloadedCount: s.have,
-  showStatus: s.id === 101 || s.id === 106 ? 'ended' : 'continuing',
+  showStatus: s.id === 101 || s.id === 106 ? 'ended' : s.id === 104 ? 'canceled' : 'continuing',
 }))
 
 // Recently added titles for the dashboard, newest first, with where each stands.
@@ -226,8 +231,8 @@ const discoverPool = (offset: number, tv: boolean): DiscoverMovie[] => {
 }
 
 const calendar: CalendarEntry[] = [
-  { kind: 'episode', id: 1, seriesId: 102, season: 3, episode: 9, title: 'Salt & Static', subtitle: 'S03E09 · Second Service', releaseDate: day(1), status: 'missing', posterUrl: poster(102) },
-  { kind: 'episode', id: 2, seriesId: 104, season: 2, episode: 5, title: 'Ember Road', subtitle: 'S02E05 · The Long Fuse', releaseDate: day(2), status: 'missing', posterUrl: poster(104) },
+  { kind: 'episode', id: 1, seriesId: 102, season: 3, episode: 9, title: 'Salt & Static', subtitle: 'S03E09 · Second Service', releaseDate: day(1), airAt: `${day(1)}T21:00:00Z`, status: 'missing', posterUrl: poster(102) },
+  { kind: 'episode', id: 2, seriesId: 104, season: 2, episode: 5, title: 'Ember Road', subtitle: 'S02E05 · The Long Fuse', releaseDate: day(1), airAt: `${day(2)}T05:00:00Z`, status: 'missing', posterUrl: poster(104) },
   { kind: 'movie', id: 3, movieId: 10, tmdbId: 9010, title: 'Tidewalker', releaseDate: day(3), release: 'cinema', status: 'downloading', posterUrl: poster(10) },
   { kind: 'movie', id: 3, movieId: 10, tmdbId: 9010, title: 'Tidewalker', releaseDate: day(24), release: 'digital', status: 'downloading', posterUrl: poster(10) },
   { kind: 'episode', id: 4, seriesId: 101, season: 3, episode: 1, title: 'The Clean Floor', subtitle: 'S03E01 · Season premiere', releaseDate: day(5), status: 'missing', posterUrl: poster(101) },
@@ -305,10 +310,12 @@ function seriesDetail(id: number): SeriesDetail | null {
     episode: (i % 10) + 1,
     title: `Episode ${i + 1}`,
     overview: OV,
-    airDate: day(-300 + i * 7),
+    airDate: day(id === 102 ? -130 + i * 8 : -300 + i * 7),
     status: i < seed.have ? 'downloaded' : 'missing',
     quality: i < seed.have ? '1080p WEB-DL' : undefined,
-    monitored: true,
+    sizeBytes: i < seed.have ? episodeBytes(i) : undefined,
+    // One demo show is set to "only episodes that haven't aired yet".
+    monitored: id === 102 ? -130 + i * 8 >= 0 : true,
   }))
   return { ...s, episodes: eps }
 }
@@ -407,6 +414,41 @@ function titleSearch(q: string): TitleResult[] {
   return out
 }
 
+// A made-up interactive search: scored releases, with the formats that gave
+// each score and the reasons an automatic search would skip it.
+function demoReleases() {
+  const rel = (title: string, o: Record<string, unknown>) => ({ title, indexerName: 'Indexer One', protocol: 'usenet', downloadUrl: 'demo-' + title, sizeBytes: 12e9, publishDate: ago(300), ...o })
+  const limits = { minScore: 0, upgradeUntil: 300 }
+  return [
+    rel('Saltwind.Part.Two.2024.1080p.BluRay.REMUX.DTS-HD.MA.5.1.AVC-KESTREL', {
+      resolution: '1080p', source: 'BluRay', best: true, sizeBytes: 31e9, formatScore: 350, ...limits,
+      formats: [{ name: 'Remux Tier 01', score: 300 }, { name: 'DTS-HD MA', score: 50 }], acceptedBy: { profileId: 1, profileName: 'HD 1080p', fallback: false },
+    }),
+    rel('Saltwind.Part.Two.2024.1080p.BluRay.x265-FuN', {
+      resolution: '1080p', source: 'BluRay', codec: 'x265', sizeBytes: 9e9, formatScore: 0, ...limits,
+      formats: [], terms: [{ term: 'x265-FuN', score: 100 }, { term: 'x265', score: 50 }],
+      reasons: [{ kind: 'notBest', text: 'The best match has a higher score: 350 against 150. Best match: Remux Tier 01 +300, DTS-HD MA +50. This release: x265-FuN +100, x265 +50.' }],
+    }),
+    rel('Saltwind.Part.Two.2024.1080p.WEB-DL.DDP5.1.H.265-LUMEN', {
+      indexerName: 'Indexer Two', protocol: 'torrent', seeders: 41, peers: 6, resolution: '1080p', source: 'WEB-DL', codec: 'x265', sizeBytes: 4.2e9, formatScore: -50, ...limits,
+      formats: [{ name: 'x265 (HD)', score: -50 }],
+      reasons: [{ kind: 'profile', text: 'scores -50 with custom formats, and the "HD 1080p" profile needs at least 0' }],
+      rejections: ['scores -50 with custom formats, and the "HD 1080p" profile needs at least 0'],
+    }),
+    rel('Saltwind.Part.Two.2024.2160p.WEB-DL.DV.HDR10Plus.H.265-ORBIT', {
+      resolution: '2160p', source: 'WEB-DL', codec: 'x265', sizeBytes: 21e9, formatScore: 0, ...limits,
+      formats: [],
+      reasons: [{ kind: 'quality', text: "WEBDL-2160p isn't allowed by the \"HD 1080p\" profile" }, { kind: 'size', text: "larger than the \"HD 1080p\" profile's limit of 15 GB" }],
+      rejections: ["WEBDL-2160p isn't allowed by the \"HD 1080p\" profile", "larger than the \"HD 1080p\" profile's limit of 15 GB"],
+    }),
+    rel('Saltwind.Part.Two.2024.1080p.WEB-DL.DDP5.1.H.264-TINDER', {
+      indexerName: 'Indexer Two', protocol: 'torrent', seeders: 1, peers: 0, belowMinSeeders: true, minSeeders: 3, resolution: '1080p', source: 'WEB-DL', codec: 'x264', sizeBytes: 6.8e9, blocklisted: true, formatScore: 0, ...limits,
+      formats: [],
+      reasons: [{ kind: 'blocklist', text: 'This release failed before and is on the blocklist, so automatic searches leave it out.' }, { kind: 'seeders', text: 'Its seeder count (1) is below the minimum of 3 set for its indexer, so automatic searches leave it out.' }],
+    }),
+  ]
+}
+
 // Installs the demo layer over fetch. Anything it does not know is passed
 // through untouched (login, settings, etc. stay real).
 export function installDemo() {
@@ -441,6 +483,16 @@ export function installDemo() {
         return json([])
       case /^\/api\/(movies|series)\/\d+\/files$/.test(p):
         return json({ folder: '', files: [] })
+      case /^\/api\/movies\/\d+\/search$/.test(p):
+        return json({
+          results: demoReleases(),
+          sources: 2,
+          unanswered: [],
+          searched: [
+            { indexerId: 1, name: 'Indexer One', kind: 'usenet', status: 'found', count: demoReleases().length, ms: 900 },
+            { indexerId: 2, name: 'Indexer Two', kind: 'torrent', status: 'empty', count: 0, ms: 600 },
+          ],
+        })
       case p === '/api/movies':
         return json(movies)
       case /^\/api\/movies\/\d+$/.test(p):

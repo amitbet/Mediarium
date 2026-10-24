@@ -1,5 +1,6 @@
 import type { QualityProfile } from '../api'
 import { t } from '../i18n.ts'
+import { cutoffText } from '../qualityOrder.ts'
 
 // A one-line, plain-language description of what a quality profile gets you.
 export function profileBlurb(p: QualityProfile): string {
@@ -9,7 +10,7 @@ export function profileBlurb(p: QualityProfile): string {
   if (n.startsWith('720')) return t('Smaller files (about 1 to 4 GB a movie). Good for phones, tablets and slow connections.')
   if (n.startsWith('1080')) return t('Full HD, the sweet spot for most TVs (about 4 to 15 GB a movie). Recommended.')
   if (n.startsWith('4k') || n.includes('2160') || n.includes('ultra')) return t('Best picture for 4K TVs (about 15 to 60 GB a movie). Only takes 4K, so a title waits until a 4K release exists.')
-  return t('Up to {cutoff}. A profile you made.', { cutoff: p.cutoff })
+  return t('Up to {cutoff}. A profile you made.', { cutoff: cutoffText(p.cutoff, p.qualityOrder) })
 }
 
 // How good a profile aims to be, from its cutoff: 720p < 1080p < 4K.

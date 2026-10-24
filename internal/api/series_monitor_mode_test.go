@@ -82,3 +82,39 @@ func TestSeriesMonitorModeFromTheShowPage(t *testing.T) {
 		t.Fatalf("changing monitoring queued %d downloads", len(q))
 	}
 }
+
+// A show with a monitored episode is a monitored show: switching on one
+// episode or a season from the show page switches the show on.
+func TestMonitoringAnEpisodeSwitchesTheShowOn(t *testing.T) {
+	server, base, client := loginNewServer(t)
+	s, err := server.MovieRepo.AddSeries(library.Series{TMDBID: 6, Title: "Show", Year: 2020, Monitored: true}, []library.Episode{
+		{Season: 1, Episode: 1, AirDate: "2020-01-01"},
+		{Season: 2, Episode: 1, AirDate: "2020-02-01"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eps, _ := server.MovieRepo.ListEpisodes(s.ID)
+	off := func() {
+		t.Helper()
+		if err := server.MovieRepo.SetSeriesMonitored(s.ID, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	on := func() bool { got, _ := server.MovieRepo.GetSeries(s.ID); return got.Monitored }
+
+	off()
+	putJSONStatus(t, client, base+"/api/episodes/"+itoa(eps[0].ID)+"/monitored", map[string]any{"monitored": false}, 200)
+	if on() {
+		t.Fatal("unmonitoring an episode must not switch the show on")
+	}
+	putJSONStatus(t, client, base+"/api/episodes/"+itoa(eps[0].ID)+"/monitored", map[string]any{"monitored": true}, 200)
+	if !on() {
+		t.Fatal("monitoring an episode should switch the show on")
+	}
+	off()
+	putJSONStatus(t, client, base+"/api/series/"+itoa(s.ID)+"/seasons/2/monitored", map[string]any{"monitored": true}, 200)
+	if !on() {
+		t.Fatal("monitoring a season should switch the show on")
+	}
+}

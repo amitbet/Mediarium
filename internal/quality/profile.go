@@ -140,10 +140,17 @@ func Classify(r parser.Release) Tier {
 // a file at or above the cutoff, the hunting loop stops looking for
 // upgrades.
 type Profile struct {
-	ID      int64 // 0 for a profile that isn't stored (the built-in presets in tests)
-	Name    string
+	ID   int64 // 0 for a profile that isn't stored (the built-in presets in tests)
+	Name string
+	// Allowed is the qualities the profile takes. With a QualityOrder it is
+	// worked out from it (every tier in the order).
 	Allowed []Tier
-	Cutoff  Tier
+	// Cutoff is the quality at which upgrading stops. With a QualityOrder the
+	// whole item (a quality or a group) the tier is in is the cutoff.
+	Cutoff Tier
+	// QualityOrder is the profile's own order of qualities and groups, best
+	// first (see order.go). Empty: the built-in order, nothing else changes.
+	QualityOrder []QualityItem
 	// UpgradeAllowed is false for "grab once and stop": a downloaded item is
 	// never searched again for a better release.
 	UpgradeAllowed bool
@@ -334,6 +341,20 @@ func (p Profile) Score(title string) int {
 	return total
 }
 
+// PreferredHits are the preferred terms the title matches, in the order the
+// profile lists them, each with its score. Score adds them up (next to the
+// custom formats), so this is where a release's score comes from.
+func (p Profile) PreferredHits(title string) []Preferred {
+	norm := normalizeForMatch(title)
+	var hits []Preferred
+	for _, pr := range p.Preferred {
+		if containsTerm(norm, pr.Term) {
+			hits = append(hits, pr)
+		}
+	}
+	return hits
+}
+
 // AllowsTier reports whether a quality tier is in this profile's allow-list.
 func (p Profile) AllowsTier(t Tier) bool { return p.allows(t) }
 
@@ -347,7 +368,7 @@ func (p Profile) Accepts(r parser.Release) bool {
 // ReachedCutoff reports whether a release already meets or exceeds this
 // profile's cutoff — the hunting loop should stop upgrading past this.
 func (p Profile) ReachedCutoff(r parser.Release) bool {
-	return Rank(Classify(r)) >= Rank(p.Cutoff)
+	return p.ReachedCutoffTier(Classify(r))
 }
 
 // IsUpgrade reports whether candidate is a better (and still profile-
@@ -361,7 +382,7 @@ func (p Profile) IsUpgrade(current, candidate parser.Release) bool {
 // (e.g. a stored movie's quality column) rather than a fresh release to
 // classify.
 func (p Profile) ReachedCutoffTier(t Tier) bool {
-	return Rank(t) >= Rank(p.Cutoff)
+	return p.TierRank(t) >= p.TierRank(p.Cutoff)
 }
 
 // IsUpgradeOverTier is IsUpgrade for call sites that only have a
@@ -381,7 +402,7 @@ func (p Profile) IsUpgradeOverTier(currentTier Tier, candidate parser.Release) b
 	if p.ReachedCutoffTier(currentTier) {
 		return false
 	}
-	return Rank(Classify(candidate)) > Rank(currentTier)
+	return p.TierRank(Classify(candidate)) > p.TierRank(currentTier)
 }
 
 // Keys of the built-in presets returned by Presets.
@@ -528,7 +549,7 @@ func sameDefinition(a, b Profile) bool {
 	if a.Name != b.Name || a.Cutoff != b.Cutoff || a.UpgradeAllowed != b.UpgradeAllowed ||
 		len(a.MustContain) != 0 || len(a.MustNotContain) != 0 || len(a.Preferred) != 0 || len(a.Fallback) != 0 ||
 		len(b.MustContain) != 0 || len(b.MustNotContain) != 0 || len(b.Preferred) != 0 || len(b.Fallback) != 0 ||
-		len(a.FormatScores) != 0 || a.MinFormatScore != 0 || a.CutoffFormatScore != 0 || a.NoSeasonPacks ||
+		len(a.QualityOrder) != 0 || len(b.QualityOrder) != 0 || len(a.FormatScores) != 0 || a.MinFormatScore != 0 || a.CutoffFormatScore != 0 || a.NoSeasonPacks ||
 		len(b.FormatScores) != 0 || b.MinFormatScore != 0 || b.CutoffFormatScore != 0 || b.NoSeasonPacks {
 		return false
 	}

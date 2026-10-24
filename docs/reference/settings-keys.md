@@ -8,6 +8,7 @@ The keys the app stores in its settings table. You normally change these from th
 |---|---|
 | `apps.links` | JSON list of add-ons: other programs next to Mediarium with a link to each (name, address, how it opens) |
 | `audiobooks.path` | audiobooks library folder; falls back to the AUDIOBOOKS_DIR env default (/audiobooks) when unset |
+| `auth.auto_signin` | "oidc" sends visitors who are not signed in straight to the single sign-on provider from the sign-in page (add ?no-redirect=1 to the address to see the normal page); unset or empty leaves it off. Only a signed-in browser session can set it, and only while single sign-on works |
 | `auth.idle_days` | browser sessions not used for this many days (1 to 7) end and the person signs in again. Unset or "0" leaves it off. API keys, calendar feeds and e-reader passwords are not affected |
 | `auth.ldap` | encrypted; sign-in with a directory (LDAP or Active Directory) (JSON: enabled, server, bind account and password, filters, attribute names, account rules). Off unless enabled is true. Only a signed-in browser session can read or set it, not an API key. MEDIARIUM_DISABLE_SSO=1 overrides it |
 | `auth.local_signin` | "0" turns the username and password form off (only possible once an administrator has signed in with another method); anything else (including unset) leaves it on |
@@ -31,9 +32,9 @@ The keys the app stores in its settings table. You normally change these from th
 | `cleanup.rules` | the cleanup rules (JSON: enabled, moviesWatchedDays, moviesUnwatchedDays, episodesWatchedDays, keepTags); off unless enabled is true |
 | `debrid.api_key` | encrypted; the debrid service's API key |
 | `debrid.cached_lower_score` | "1" lets a cached release win over an uncached one of the same quality even when the profile's preferred terms score it lower; unset or "0" only breaks ties between equal scores |
-| `debrid.prefer_cached` | "0" stops asking TorBox which releases it already has (no tag, no ranking); "1" or unset (with TorBox as the service) asks and ranks a cached release ahead of an equal one that is not. Real-Debrid has no such check |
-| `debrid.service` | "" (off), "realdebrid" or "torbox": torrent releases go to that service instead of the built-in client |
-| `downloadclient.category` | the category torrents are added with; unset = "mediarium" |
+| `debrid.prefer_cached` | "0" stops asking TorBox or Premiumize which releases it already has (no tag, no ranking); "1" or unset (with TorBox or Premiumize as the service) asks and ranks a cached release ahead of an equal one that is not. Real-Debrid has no such check |
+| `debrid.service` | "" (off), "realdebrid", "torbox" or "premiumize": torrent releases go to that service instead of the built-in client |
+| `downloadclient.category` | the category torrents are added with; unset = "mediarium" (when no kind has a category of its own either) |
 | `downloadclient.category_books` | category for books; unset = the main category |
 | `downloadclient.category_movies` | category for movies; unset = the main category |
 | `downloadclient.category_music` | category for music; unset = the main category |
@@ -44,9 +45,10 @@ The keys the app stores in its settings table. You normally change these from th
 | `downloadclient.password` | encrypted; never shown or logged |
 | `downloadclient.remote_path` | path mapping: a folder as the download client reports it, e.g. /downloads; unset = no mapping |
 | `downloadclient.remove_after_import` | "1" removes a torrent from the client once it's imported; unset or "0" leaves it seeding |
+| `downloadclient.remove_on_stop` | "0" leaves a stopped or removed download's torrent in the client; unset or "1" removes it too (only an unfinished torrent Mediarium added itself) |
 | `downloadclient.url` | the client's web address, e.g. http://192.168.1.10:8080 |
 | `downloadclient.username` | the client's web login |
-| `downloads.concurrent` | how many downloads run at the same time, Usenet and torrents together: 1 to 5; unset = 1 |
+| `downloads.concurrent` | how many downloads run at the same time, Usenet and torrents together: 1 to 500; unset = 1 |
 | `downloads.hours` | when new downloads may start, "1-7" (from 1:00 to 7:00, server time); outside it they wait in line. Unset = any time |
 | `downloads.min_free_gb` | no new download starts while the downloads folder has less free space than this many GB; unset = 5, "0" = off |
 | `downloads.newest_first` | "1": among the downloads the automatic searches added, newer releases start first; unset = in the order they were added |
@@ -66,7 +68,13 @@ The keys the app stores in its settings table. You normally change these from th
 | `downloads.temp_dir_previous` | earlier temporary folders (a JSON list), kept so downloads that started there are still found |
 | `ebooks.path` | ebooks library folder; falls back to the EBOOKS_DIR env default (/ebooks) when unset |
 | `flaresolverr.url` | e.g. http://flaresolverr:8191; unset = none |
+| `formats.trash_auto_update` | "1" re-reads the TRaSH Guides once a day and updates the custom formats that came from them; unset or "0" only updates on request |
+| `formats.trash_every_days` | how often the daily update reads the guides: "1" every day (the default) or "7" every week |
+| `formats.trash_last_check` | what the last check of the TRaSH Guides found, as JSON (shown under the switch on the Custom formats card) |
+| `formats.trash_last_update` | when the TRaSH Guides were last read for the daily update (RFC 3339) |
+| `import.check_duration` | "0" turns off the check that a video is about as long as its episode or movie before it is imported (Settings > Library > File names and importing); anything else, including unset, leaves it on |
 | `info.language` | the language titles, plots, genres and posters are read in, as a TMDB tag like "de-DE" (en-US when unset); file and folder names always use the English title |
+| `info.release_country` | the country release dates are read for, as a code like "IN"; unset = the country of the info language |
 | `legal.acknowledged_at` |  |
 | `library.default_profile_id` | id of the stored quality profile used by items with no profile of their own |
 | `library.default_profile_id_tv` | id of the quality profile shows with none of their own use; unset = the same default as movies |
@@ -83,6 +91,7 @@ The keys the app stores in its settings table. You normally change these from th
 | `library.keep_original_names` | "1" keeps the file name an imported video came with (folders are still named by the preset; a random, obfuscated name falls back to the preset); unset or "0" renames as the preset says |
 | `library.metadata_files` | JSON: movies and tv, each {nfo, artwork}, and replace (true replaces files Mediarium wrote earlier); unset = nothing is written |
 | `library.movie_copies_path` | where second copies of movies go (a 4K copy next to the 1080p one); unset = second copies of movies are off |
+| `library.movie_folder_format` | token string; unset = "{Movie Title} ({Year})" |
 | `library.movie_name_format` | token string, used when preset=custom |
 | `library.movies_extra_paths` | more movie folders next to the main one (a JSON list of paths); each movie says which one its files go to |
 | `library.movies_path` |  |
@@ -91,17 +100,22 @@ The keys the app stores in its settings table. You normally change these from th
 | `library.quality_profile` | legacy: an old preset key (any-1080p, ultra-hd, any); only read once to pick the initial default profile |
 | `library.roots_confirmed` | library folders Mediarium has seen with their .mediarium-root marker (a JSON list); one that loses its marker is refused until it is back |
 | `library.season_packs` | "1" looks for a season pack once a season has ended (a show can say otherwise for itself); unset or "0" leaves it off |
+| `library.series_folder_format` | the same for a new show; unset = "{Series Title} ({Year})" |
 | `library.trash_days` | days removed titles' files stay in the recycle bin (.mediarium-trash in the library folder); unset = 7, "0" = delete straight away |
 | `library.tv_copies_path` | the same for shows |
 | `library.tv_extra_paths` | the same for shows |
 | `library.tv_path` | falls back to the TV_DIR env default when unset |
 | `library.unmonitor_downloaded` | "1" stops monitoring a movie once it is downloaded; unset or "0" keeps it monitored |
 | `library.unmonitor_finished_shows` | "1" stops monitoring a show once it has ended and every monitored episode is in; unset or "0" keeps it monitored |
+| `mcp.enabled` | "1" lets AI assistants connect to the MCP address (POST /mcp) with an administrator's API key; unset or "0" keeps it off. Only a signed-in browser session can switch it on, not an API key |
 | `mediaservers.client_id` | set by the app, not user-editable |
 | `metadata.simkl_client_id` | encrypted; the Client ID of a Simkl app (own, or the one a release ships with) |
+| `metadata.simkl_expires` | when the access token runs out (Unix seconds), when Simkl said; unset for a token that does not expire |
+| `metadata.simkl_refresh` | encrypted; the refresh token Simkl gave with the access token, when it gave one |
 | `metadata.simkl_token` | encrypted; the access token of the connected Simkl account |
 | `metadata.tmdb_api_key` | encrypted |
 | `metadata.trakt_client_id` | encrypted |
+| `metadata.tvmaze_air_times` | "0" stops Mediarium looking up the time episodes air on TVmaze (the calendar then only knows days); anything else (including unset) leaves it on |
 | `modules.audiobooks` | "1" switches it on; unset or "0" leaves it off |
 | `modules.ebooks` | "1" switches it on; unset or "0" leaves it off |
 | `modules.movies` | "0" switches movies off; anything else (including unset) leaves them on |
@@ -110,8 +124,11 @@ The keys the app stores in its settings table. You normally change these from th
 | `monitor.interval_minutes` | minutes between connection checks of your Usenet providers and indexers; unset = 30, "0" = off, under 5 is raised to 5 |
 | `music.default_profile_id` | id of the music profile artists without one of their own use; unset = the first |
 | `music.enabled` | older name of modules.music; still honoured while modules.music is unset, and kept in step with it |
+| `music.hide_bootlegs` | "1" also leaves out release groups whose releases are all bootlegs, promotions or pseudo-releases (one MusicBrainz request per group); unset = list them |
+| `music.hide_secondary` | secondary types (live, remix, compilation...) left out, comma separated keys, "none" = hide none; unset = hide all of them |
 | `music.lyrics_online` | "0" stops the player asking LRCLIB for lyrics a file doesn't have; anything else (including unset) leaves it on |
 | `music.path` | music library folder; falls back to the MUSIC_DIR env default (/music) when unset |
+| `music.show_types` | release types the artist pages list and following adds, a comma separated list of album, ep, single; unset = all three |
 | `network.proxy` | e.g. "socks5://user:pass@10.0.0.2:1080" |
 | `network.proxy_for` | e.g. "torrents,indexers" |
 | `notify.digest_day` | the day of the weekly summary, "0" (Sunday) to "6"; unset = no summary |
@@ -119,16 +136,19 @@ The keys the app stores in its settings table. You normally change these from th
 | `notify.digest_sent` | when the last one was sent, RFC 3339 (kept by Mediarium, not a setting to edit) |
 | `notify.on_problems` | "1" sends a notification (to the targets that listen for Health) when a new error is added to the problem log; unset or "0" sends none |
 | `notify.quiet_hours` | hours when everyday messages wait, "23-7" (server time); unset = none. Problems are always sent at once |
+| `notify.trashsync_always` | "1" also sends a message when a check of the TRaSH Guides changed nothing (to the targets that listen for that event); unset or "0" sends only when something changed. A check that failed is always sent |
 | `notify.vapid_key` | this server's key for push notifications (encrypted; made on first start) |
 | `numbering.lookup` | "0" stops Mediarium looking up scene and anime numbering (TheXEM, the anime lists, AniList) for anime on its own; on by default. The Refresh mapping button on a show's page still works |
 | `onboarding.done` | "1" once the first-run wizard completes |
 | `quality.language` | the audio language wanted, as a name like "English" (the default when unset); a release clearly in another language only is not picked automatically |
 | `quality.language_only` | "1" takes only releases that say they are in a wanted audio language (no untagged, English-only or bare multi releases unless English is wanted); unset or "0" keeps those as a lower-ranked fallback |
-| `quality.size_limits` | size limits per quality in MB per minute of runtime (JSON: enabled, limits); applied only while enabled is true |
+| `quality.size_limits` | size limits per quality for movies in MB per minute of runtime (JSON: enabled, limits); applied only while enabled is true |
+| `quality.size_limits_tv` |  |
 | `requests.options` | JSON: notifyRequester (tell people when their request or report is answered), quotaCount (requests per period, 0 = no limit), quotaPeriod (day or week), fourK (let people ask for a 4K copy), fourKProfileId (the quality profile of that copy), reports (let people report a problem with a title) |
 | `scripts.after_import` | JSON: script (a file name in /config/scripts; empty = off) and timeoutSec (default 300). Only a signed-in browser session can set it, not an API key |
 | `scripts.last_run` | what the last run did (JSON; set by the app, not user-editable) |
 | `search.delay_profile` | delay profile (JSON: preferredProtocol, usenetMinutes, torrentMinutes, bypassIfHighestQuality): automatic searches hold back releases of the less liked protocol for that many minutes; unset or 0 minutes = no wait |
+| `search.min_size_check` | "0" turns the built-in minimum size per quality off (Settings > Library > Quality > Size limits); anything else, including unset, leaves it on |
 | `server.public_url` | the address you open Mediarium at from your own devices (like https://mediarium.example.com); links in notification messages use it; unset = no links |
 | `stats.choice` | the administrator's answer about sharing anonymous usage numbers: "yes", "no", or unset when not asked yet. Nothing is sent unless it is "yes" (see docs/usage-stats.md) |
 | `stats.install_id` | a random number made when the answer is yes, sent with the numbers so one install counts once; set by the app, cleared on "no" and by "Reset my ID" |
@@ -156,11 +176,11 @@ The keys the app stores in its settings table. You normally change these from th
 | `torrent.listen_port` | TCP+UDP port for incoming peers; unset or "0" = 58264 |
 | `torrent.pack_only_wanted` | "1" downloads only the episodes of the wanted show and season from a pack; unset or "0" = the whole pack |
 | `torrent.port_mapping` | "0" stops the built-in client asking the router (UPnP, NAT-PMP) to open its port; anything else (including unset) leaves it on. Never used with a VPN or proxy |
-| `torrent.seed_ratio_limit` | e.g. "2.0"; "0" = unlimited |
-| `torrent.seed_time_limit_h` | hours; "0" = unlimited |
+| `torrent.seed_ratio_limit` | e.g. "2.0"; empty or unset = unlimited, "0" = do not seed |
+| `torrent.seed_time_limit_h` | hours; empty or unset = unlimited, "0" = do not seed |
 | `torrent.sequential_default` | "1" downloads every new built-in torrent in order (first to last piece) so a video can be previewed while it downloads; unset or "0" = off. A torrent can override it |
 | `torrent.skip_junk` | "0" downloads every file of a torrent; anything else (including unset) skips samples and .nfo, .txt, .exe, .url files |
-| `torrent.upload_limit_kb` | upload speed limit of the built-in client in KB/s; unset or "0" = no limit. Applies in the same hours as the download limit |
+| `torrent.upload_limit_kb` | upload speed limit of the built-in client in KB/s; empty or unset = no limit, "0" = no uploading at all. Applies in the same hours as the download limit |
 | `ui.show_advanced` | "1" shows custom formats and format scores on the Quality page; unset follows whether any custom format exists |
 | `ui.trailer_background` | unset or "1" plays the trailer behind movie and show pages for everyone, unless a browser chose otherwise; "0" switches it off for everyone |
 | `ui.trailer_sound` | "1" starts the trailer behind a title page with its sound on, where the browser allows it; unset or "0" starts it muted |
@@ -170,6 +190,24 @@ The keys the app stores in its settings table. You normally change these from th
 | `updates.last_checked_at` | when the last check ran (RFC 3339; set by the app, not user-editable) |
 | `updates.latest` | the newest release the last check found (JSON; set by the app, not user-editable) |
 | `updates.notified_version` | the version the "new version" message was last sent for (set by the app, not user-editable) |
+| `usenetclient.api_key` | encrypted; SABnzbd's API key |
+| `usenetclient.category` | the category NZBs are added with; unset = "mediarium" (when no kind has a category of its own either) |
+| `usenetclient.category_books` | category for books; unset = the main category |
+| `usenetclient.category_movies` | category for movies; unset = the main category |
+| `usenetclient.category_music` | category for music; unset = the main category |
+| `usenetclient.category_tv` | category for TV shows; unset = the main category |
+| `usenetclient.kind` | "" (off), "sabnzbd" or "nzbget" |
+| `usenetclient.local_path` | path mapping: the same folder as Mediarium sees it |
+| `usenetclient.password` | encrypted; NZBGet's password (ControlPassword) |
+| `usenetclient.priority` | "low", "normal" (default), "high" or "force" |
+| `usenetclient.remote_path` | path mapping: a folder as the client reports it, e.g. /downloads/complete |
+| `usenetclient.remove_after_import` | "1" removes the job and its files from the client once imported; unset or "0" leaves them there |
+| `usenetclient.remove_on_stop` | "0" leaves a stopped or removed download's job in the client; unset or "1" removes it too (only an unfinished job Mediarium added) |
+| `usenetclient.send_url` | "1" lets the client fetch the NZB from the indexer itself; unset or "0" uploads the file |
+| `usenetclient.url` | the client's web address, e.g. http://192.168.1.10:8080 |
+| `usenetclient.use` | "1" sends Usenet releases to it; unset or "0" keeps the built-in downloader |
+| `usenetclient.username` | NZBGet's login (ControlUsername) |
+| `vpn.notice_acknowledged` |  |
 | `vpn.require_for_torrents` |  |
 | `vpn.route_indexers` | "1" sends searches, RSS, release downloads, IRC announces and debrid through the VPN, and they wait while it isn't up. Home-network addresses still connect directly |
 | `watched.status` | the last read and cleanup (JSON; set by the app, not user-editable) |

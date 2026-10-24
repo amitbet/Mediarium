@@ -249,6 +249,16 @@ A passkey signs you in with your fingerprint, face or device PIN, with no passwo
 - A passkey keeps a counter that goes up with every use. If a sign-in comes in with a counter that did not go up, the passkey may have been copied, and the sign-in is refused. Many passkeys that sync between devices always report 0; those are fine.
 - Only accounts with a password here can have passkeys. A passkey would outlive the account being turned off at the provider or in the directory.
 
+### Signing in automatically
+
+If most people sign in through single sign-on, the extra click on the sign-in page can go. Under **Settings > Account & Access > All accounts > Ways to sign in**, pick your provider in **Sign in automatically with** (the default is **Off**). Anyone who opens Mediarium without being signed in is then sent straight to the provider, and lands on the page they asked for after signing in. Password sign-in is not changed: it stays on, or off, as you set it.
+
+- **To see the normal sign-in page** (for the password form, or when the provider is down), open Mediarium with `?no-redirect=1` on the end of the address, for example `https://mediarium.example.com/?no-redirect=1`. `?disable-auth-redirect` works too. This only skips the redirect. It doesn't turn the password form on if you turned it off.
+- **After you sign out** you get the normal sign-in page once, so you aren't signed straight back in. The next visit redirects again.
+- **No redirect when something is wrong.** If the provider sends you back with an error, the sign-in page shows the error and stays. The same goes when single sign-on is switched off or isn't set up (the saved choice is kept and applies again once it works), and when the page already has a message to show, like being signed out for inactivity. If the browser was sent to the provider less than a minute ago it won't be sent again, so a provider that returns without signing anyone in can't cause a loop.
+- The first-run setup is never redirected.
+- The choice is saved as `auth.auto_signin` (`"oidc"` or empty); scripts use `autoSignIn` in `PUT /api/auth/sign-in`.
+
 ### Turning password sign-in off
 
 If everyone signs in another way, an admin can turn the password form off: **Ways to sign in > Turn off password sign-in**. The sign-in page then only shows the other ways. This can't be done by accident:

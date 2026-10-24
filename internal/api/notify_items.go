@@ -3,12 +3,15 @@ package api
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/rdborg/mediarium/internal/library"
 	"github.com/rdborg/mediarium/internal/metadata"
 	"github.com/rdborg/mediarium/internal/notify"
+	"github.com/rdborg/mediarium/internal/parser"
+	"github.com/rdborg/mediarium/internal/quality"
 	"github.com/rdborg/mediarium/internal/settings"
 )
 
@@ -87,4 +90,60 @@ func fileSize(paths ...string) int64 {
 		}
 	}
 	return total
+}
+
+// releaseDetails adds what a message says about the release: its custom
+// format score and the formats it matched (when the profile has any), its
+// group and the indexer it came from. Whatever isn't known is left out.
+func (s *Server) releaseDetails(it *notify.Item, profile quality.Profile, releaseTitle, downloadURL string) {
+	if g := parser.Parse(releaseTitle).Group; g != "" {
+		it.Group = g
+	}
+	if id, ok := s.indexerOfRelease(downloadURL); ok {
+		if inst, err := s.IndexerRepo.Get(id); err == nil {
+			it.Indexer = inst.Name
+		}
+	}
+	if len(profile.Formats) == 0 {
+		return
+	}
+	total, hits := profile.FormatBreakdown(releaseTitle)
+	it.ScoreKnown, it.Score, it.Formats = true, total, formatNamesByWeight(hits)
+}
+
+// formatNamesByWeight lists the matched formats' names, the ones that move the
+// score most first.
+func formatNamesByWeight(hits []quality.FormatHit) []string {
+	sorted := append([]quality.FormatHit(nil), hits...)
+	sort.SliceStable(sorted, func(i, j int) bool { return abs(sorted[i].Score) > abs(sorted[j].Score) })
+	names := make([]string, len(sorted))
+	for i, h := range sorted {
+		names[i] = h.Name
+	}
+	return names
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
+// movieReleaseDetails is releaseDetails with the profile of a movie.
+func (s *Server) movieReleaseDetails(it *notify.Item, m library.Movie, releaseTitle, downloadURL string) {
+	profile := quality.Profile{}
+	if ps, err := s.loadProfiles(); err == nil {
+		profile = s.profileForMovie(ps, m)
+	}
+	s.releaseDetails(it, profile, releaseTitle, downloadURL)
+}
+
+// seriesReleaseDetails is releaseDetails with the profile of a show.
+func (s *Server) seriesReleaseDetails(it *notify.Item, sr library.Series, releaseTitle, downloadURL string) {
+	profile := quality.Profile{}
+	if ps, err := s.loadProfiles(); err == nil {
+		profile = s.profileForSeries(ps, sr)
+	}
+	s.releaseDetails(it, profile, releaseTitle, downloadURL)
 }

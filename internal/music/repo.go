@@ -354,6 +354,12 @@ func (r *Repo) SetAlbumImported(id int64, quality Tier, path string) error {
 	return r.execAlbum("mark imported", id, `UPDATE albums SET status = 'downloaded', quality = ?, path = ? WHERE id = ?`, string(quality), path, id)
 }
 
+// SetAlbumMissing puts an album back to wanted: no files, no quality, no
+// folder. Its tracks are left alone (the caller clears their files).
+func (r *Repo) SetAlbumMissing(id int64) error {
+	return r.execAlbum("mark missing", id, `UPDATE albums SET status = 'missing', quality = '', path = '' WHERE id = ?`, id)
+}
+
 // SetAlbumRelease records which release's tracklist the album uses.
 func (r *Repo) SetAlbumRelease(id int64, releaseMBID string) error {
 	return r.execAlbum("set release of", id, `UPDATE albums SET release_mbid = ? WHERE id = ?`, releaseMBID, id)

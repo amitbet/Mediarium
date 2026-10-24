@@ -11,6 +11,8 @@ import (
 	_ "image/gif" // covers come in all three
 	"image/jpeg"
 	_ "image/png"
+
+	_ "github.com/rdborg/mediarium/internal/webpimg" // lets image.Decode read WebP covers
 	"io"
 	"net/http"
 	"net/url"
@@ -70,7 +72,7 @@ func readZipFile(zr *zip.Reader, name string, limit int64) ([]byte, error) {
 }
 
 // EPUBCover reads the cover picture out of an EPUB file. The bytes are a
-// JPEG, PNG or GIF (checked by their content, not by the name).
+// JPEG, PNG, GIF or WebP (checked by their content, not by the name).
 func EPUBCover(file string) ([]byte, string, error) {
 	zr, err := zip.OpenReader(file)
 	if err != nil {
@@ -117,7 +119,7 @@ func coverFromZip(zr *zip.Reader) ([]byte, string, error) {
 		return nil, "", ErrNoCover
 	}
 	switch ct := http.DetectContentType(data); ct {
-	case "image/jpeg", "image/png", "image/gif":
+	case "image/jpeg", "image/png", "image/gif", "image/webp":
 		return data, ct, nil
 	}
 	return nil, "", ErrNoCover

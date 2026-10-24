@@ -14,7 +14,7 @@ The screenshots in these pages come from demo mode: the movies, shows, artists, 
 | Move over from Radarr, Sonarr, Prowlarr, SABnzbd and other apps without redoing your setup or moving files | [migrate.md](./migrate.md) |
 | Add movies and shows you already have on disk (Import existing in the Library) | [import-library.md](./import-library.md) |
 | Find something to add (Discover): more like your library, browse more, older titles, and the Add dialog | [discover.md](./discover.md) |
-| Open the torrent port (58264), seeding, Real-Debrid and TorBox, qBittorrent, RDT-Client and Decypharr, how many downloads run at once, cleaning up the downloads folder, what removing a title deletes | [downloads.md](./downloads.md) |
+| Open the torrent port (58264), seeding, Real-Debrid, TorBox and Premiumize, qBittorrent, RDT-Client and Decypharr, how many downloads run at once, cleaning up the downloads folder, what removing a title deletes | [downloads.md](./downloads.md) |
 | Send torrent traffic through the built-in WireGuard VPN, and what the kill switch does | [vpn.md](./vpn.md) |
 | Add indexers: Usenet and torrent APIs, sites from the definition list, private sites, Cloudflare and FlareSolverr | [indexers.md](./indexers.md) |
 | Grab a release the moment a tracker announces it in IRC (connections, announcement templates, the test box, limits) | [irc-announce.md](./irc-announce.md) |
@@ -39,6 +39,7 @@ The screenshots in these pages come from demo mode: the movies, shows, artists, 
 | Run a script of your own after each import (what it is told, how to try it) | [scripts.md](./scripts.md) |
 | Keep your settings in a YAML file (for git or a deploy script) and apply it | [config-file.md](./config-file.md) |
 | Connect Overseerr, Jellyseerr, Homepage, Homarr, nzb360, LunaSea or Ruddarr (apps made for Radarr, Sonarr and Lidarr) | [other-apps.md](./other-apps.md) |
+| Ask your library questions from a chat program or a voice assistant (MCP) | [mcp.md](./mcp.md) |
 | Set up notifications (email, ntfy, Gotify, Pushover, Slack, Discord, Telegram, Matrix, Home Assistant, Apprise, webhook), turn them on and off, test them | [notifications.md](./notifications.md) |
 | Find out what went wrong (a failed download, "too many connections", a full disk) and what to try, copy a report for support | [logs-and-errors.md](./logs-and-errors.md) |
 | Understand the responsible-use notice | [LEGAL.md](./LEGAL.md) |

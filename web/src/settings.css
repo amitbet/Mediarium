@@ -171,31 +171,32 @@
   .settings-content .half-cols > :nth-child(3):last-child { grid-column: 2; grid-row: 1 / span 2; }
 }
 
-/* Indexers: the Cloudflare card is a row of its own across the page; under it
-   the add form on the left and the list of indexers on the right, which has
-   the room it needs. */
-.settings-content .indexer-cols { grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); grid-template-rows: auto auto; align-items: start; }
-.settings-content .indexer-cols > :nth-child(1) { grid-column: 1; grid-row: 1; }
-.settings-content .indexer-cols > :nth-child(2) { grid-column: 2; grid-row: 1; }
-.settings-content .indexer-cols > :nth-child(3) { grid-column: 1 / -1; grid-row: 2; }
-.settings-content .flare-card .flare-field { margin-top: 4px; }
-@media (max-width: 1100px) {
-  .settings-content .indexer-cols { grid-template-columns: minmax(0, 1fr); }
-  .settings-content .indexer-cols > :nth-child(n) { grid-column: 1; grid-row: auto; }
+/* Indexers: every section is a full-width card stacked on top of the next one
+   (add form, your indexers, Cloudflare, IRC). No side-by-side columns, so one
+   card can never slide under its neighbour at any width. */
+.settings-content .indexer-cols { display: flex; flex-direction: column; gap: 20px; }
+.settings-content .indexer-cols > fieldset.group { margin: 0; min-width: 0; width: 100%; }
+.settings-content .flare-card .flare-field { margin-top: 4px; max-width: 520px; }
+/* Wide add card: search and filters on the left, the site list on the right. */
+@media (min-width: 1000px) {
+  .settings-content .indexer-add .site-picker { display: grid; grid-template-columns: minmax(240px, 320px) minmax(0, 1fr); gap: 12px 20px; align-items: start; }
+  .settings-content .indexer-add .site-picker > .toolbar { grid-column: 1; flex-direction: column; align-items: stretch; }
+  .settings-content .indexer-add .site-picker > .toolbar input { flex: none !important; width: 100%; }
+  .settings-content .indexer-add .site-picker > .site-mine, .settings-content .indexer-add .site-picker > .site-source { grid-column: 1; }
+  .settings-content .indexer-add .site-picker > .site-list { grid-column: 2; grid-row: 1 / span 6; max-height: 440px; }
 }
-
-/* The add form stays in view on a wide screen while the list scrolls, and the
-   indexers sit in a grid of compact cards: two across when the list is wide
-   enough, one when it is narrow. */
-
-@media (min-width: 1101px) {
-.settings-content .indexer-cols { grid-template-columns: minmax(300px, 0.42fr) minmax(0, 1fr); }
-  .settings-content .indexer-cols > .indexer-add { position: sticky; top: 8px; max-height: calc(100vh - 110px); overflow-y: auto; overscroll-behavior: contain; }
-}
+.settings-content .indexer-add .site-list { max-height: 320px; }
+/* Your indexers: 3 columns when the card is wide, 2 when medium, 1 on a phone. */
 .settings-content .indexer-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin: 0 0 12px; }
 .settings-content .indexer-filter { flex: 1 1 200px; min-width: 0; max-width: 360px; }
-.settings-content .indexer-cards { grid-template-columns: repeat(auto-fill, minmax(min(100%, 270px), 1fr)); align-items: start; gap: 10px; }
-.settings-content .indexer-card { gap: 8px; padding: 10px 12px; align-content: start; }
+.settings-content .indexer-cards { grid-template-columns: repeat(auto-fill, minmax(min(100%, max(260px, calc((100% - 20px) / 3))), 1fr)); align-items: stretch; gap: 10px; }
+.settings-content .indexer-card { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; }
+/* Cards in one row are the same height; the buttons (and the seeding row above them) sit at the bottom. */
+.settings-content .indexer-card > .indexer-actions { margin-top: auto; gap: 4px; }
+.settings-content .indexer-card .indexer-actions .btn-sm { padding-inline: 9px; }
+.settings-content .indexer-card > .qdetails { margin-top: auto; }
+.settings-content .indexer-card > .qdetails + .indexer-actions { margin-top: 0; }
+.settings-content .indexer-card > .qdetails summary { margin-left: 0; }
 .settings-content .indexer-top { align-items: flex-start; gap: 10px; }
 .settings-content .indexer-title { flex-wrap: wrap; gap: 2px 8px; }
 .settings-content .indexer-title strong { max-width: 100%; }
@@ -203,6 +204,20 @@
 .settings-content .indexer-info small.indexer-url { display: block; -webkit-line-clamp: unset; }
 .settings-content .indexer-priority { display: grid; gap: 2px; justify-items: end; font-size: 0.78rem; color: var(--text-dim); }
 .settings-content .indexer-priority input { width: 60px !important; padding: 4px 8px; text-align: center; }
+.settings-content .indexer-info small.idx-line, .settings-content .indexer-info summary.idx-line { display: flex; align-items: center; gap: 6px; min-width: 0; margin-top: 3px; white-space: nowrap; overflow: hidden; }
+.settings-content .indexer-info .idx-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.settings-content .indexer-info .idx-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.settings-content .indexer-info small.idx-line.ok, .settings-content .indexer-info small.idx-line.bad { color: var(--text-dim); }
+.settings-content .indexer-info small.idx-info.bad { color: var(--danger); }
+.settings-content .indexer-info .idx-line.ok .idx-dot { color: var(--success, #34d399); }
+.settings-content .indexer-info .idx-line.bad .idx-dot { color: var(--danger); }
+.settings-content .indexer-info summary.idx-line.bad { color: var(--danger); cursor: pointer; list-style: none; }
+.settings-content .indexer-info summary.idx-line::-webkit-details-marker { display: none; }
+.settings-content .indexer-info summary.idx-line { overflow: visible; padding-block: 3px; }
+.settings-content .indexer-info summary.idx-line::after { content: ""; flex: none; margin-left: auto; margin-right: 6px; width: 6px; height: 6px; border: solid currentColor; border-width: 0 2px 2px 0; transform: translateY(-2px) rotate(45deg); }
+.settings-content .indexer-info .idx-more[open] > summary.idx-line::after { transform: translateY(1px) rotate(225deg); }
+.settings-content .indexer-info .idx-line.old { opacity: 0.6; }
+.settings-content .indexer-info .idx-why { display: block; margin-top: 3px; color: var(--danger); -webkit-line-clamp: unset; }
 .settings-content .indexer-card .tile-ico { width: 32px; height: 32px; flex: none; }
 .settings-content .indexer-card .qdetails summary { font-size: 0.85rem; }
 @media (pointer: coarse) {
@@ -243,4 +258,18 @@
 label.field { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
 .settings-content label:not(.field):not(.check-hint):not(.grid-form label):not(.form-cols > label):not(.picker-row label):not(.switch-row) > :is(select, input:not([type='checkbox'], [type='radio'], [type='range'], [type='file'])) {
   margin: 4px 0 4px 10px;
+}
+
+/* A card or setting found from the search bar: lit up for a moment. */
+.find-hit {
+  border-radius: 12px;
+  box-shadow: 0 0 0 2px var(--accent), 0 0 22px color-mix(in srgb, var(--accent) 35%, transparent);
+  animation: find-hit 2.6s ease-out forwards;
+}
+@keyframes find-hit {
+  0%, 55% { box-shadow: 0 0 0 2px var(--accent), 0 0 22px color-mix(in srgb, var(--accent) 35%, transparent); }
+  100% { box-shadow: 0 0 0 2px transparent, 0 0 22px transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .find-hit { animation: none; }
 }

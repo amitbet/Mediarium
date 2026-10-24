@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -65,6 +66,7 @@ func TestAddSendsShareLimits(t *testing.T) {
 		{"time only means no ratio limit", ShareLimits{Time: 90 * time.Minute}, "abc", false, true, "-1", "90"},
 		{"under a minute rounds up", ShareLimits{Time: 10 * time.Second}, "abc", false, true, "-1", "1"},
 		{"both zero sends nothing", ShareLimits{}, "abc", false, false, "", ""},
+		{"do not seed stops it at ratio 0", ShareLimits{NoSeed: true}, "abc", false, true, "0", "-1"},
 		{"no hash: only in the add call", ShareLimits{Ratio: 1}, "", false, true, "1", "-1"},
 		{"failed limit call doesn't fail the add", ShareLimits{Ratio: 1}, "abc", true, true, "1", "-1"},
 	}
@@ -109,5 +111,29 @@ func TestAddSendsShareLimits(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A .torrent file is added with the hash worked out from its contents (lower
+// case), and the limits are set on that hash.
+func TestAddTorrentFileSetsLimitsOnItsHash(t *testing.T) {
+	file := []byte("d4:infod6:lengthi1e4:name1:a12:piece lengthi16384e6:pieces20:" + "01234567890123456789" + "ee")
+	hash := InfoHash("", file)
+	if len(hash) != 40 || hash != strings.ToLower(hash) {
+		t.Fatalf("InfoHash = %q", hash)
+	}
+	f := &shareFake{}
+	srv := httptest.NewServer(f)
+	defer srv.Close()
+	err := New(srv.URL, "u", "p", srv.Client()).Add(context.Background(),
+		AddOptions{TorrentFile: file, Hash: hash, Share: ShareLimits{Time: 2 * time.Hour}})
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if f.add["seedingTimeLimit"] != "120" || f.add["ratioLimit"] != "-1" {
+		t.Errorf("add got ratio %q time %q", f.add["ratioLimit"], f.add["seedingTimeLimit"])
+	}
+	if f.limitCall != 1 || f.limits["hashes"] != hash || f.limits["seedingTimeLimit"] != "120" {
+		t.Errorf("setShareLimits = %v (%d calls)", f.limits, f.limitCall)
 	}
 }

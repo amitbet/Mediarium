@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -129,9 +130,16 @@ func (s *Server) libraryRootProblem(root string) *libraryRootError {
 	if !fsinfo.RootReachable(root) {
 		return &libraryRootError{root: root, err: fmt.Errorf("The library folder %s can't be found, so nothing was put into it. If it is on a network drive, check that the drive is connected. If the folder is new, create it first (Settings > Library > Folders), then try again.", root)}
 	}
-	if fsinfo.HasRootMarker(root) {
+	missing, readErr := fsinfo.RootMarkerState(root)
+	if !missing && readErr == nil {
 		s.setRootConfirmed(root, true)
 		return nil
+	}
+	if readErr != nil {
+		// The folder is there but could not be read to look for the file (a
+		// network drive that stumbled). That is not the same as a lost file.
+		slog.Warn("library folder: could not look for the marker file", "folder", root, "err", readErr)
+		return &libraryRootError{root: root, err: fmt.Errorf("The library folder %s could not be read just now (%v), so nothing was put into it. If it is on a network drive, check that the drive is connected and working, then try again.", root, readErr)}
 	}
 	if slices.Contains(s.confirmedRoots(), root) {
 		return &libraryRootError{root: root, gone: true, err: fmt.Errorf("The library folder %s has lost its %s file. That usually means its drive isn't connected and this is an empty folder on the machine's own disk, so nothing was put into it. Connect the drive and try again. If the folder is the right one, add an empty file named %s to it.", root, fsinfo.RootMarker, fsinfo.RootMarker)}

@@ -16,6 +16,7 @@ const github = (name: string) => `https://github.com/${name}`
 export function helpers(): Helper[] {
   return [
     { name: 'ShuanYu', where: 'Reddit', href: reddit('ShuanYu'), ideas: [t('Different quality profiles for movies and TV, and finding missing episodes one season at a time')] },
+    { name: 'troelsdk', where: 'Reddit', href: reddit('troelsdk'), ideas: [t('Finding that the Sonarr-compatible episode list ignored the season asked for')] },
     { name: 'Embyverse', where: 'Reddit', href: reddit('Embyverse'), ideas: [t('Custom formats with TRaSH Guides import'), t('Keeping two qualities of one title')] },
     {
       name: '12_nick_12',

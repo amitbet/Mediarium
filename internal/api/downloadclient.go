@@ -69,6 +69,7 @@ type downloadClientConfig struct {
 	RemotePath        string
 	LocalPath         string
 	RemoveAfterImport bool
+	RemoveOnStop      bool
 	LinkRoot          string
 }
 
@@ -93,19 +94,29 @@ func (s *Server) downloadClientConfig() downloadClientConfig {
 		RemotePath:        get(settings.KeyDownloadClientRemotePath),
 		LocalPath:         get(settings.KeyDownloadClientLocalPath),
 		RemoveAfterImport: remove,
+		RemoveOnStop:      s.removeOnStopOn(),
 		LinkRoot:          get(settings.KeyDownloadClientLinkRoot),
 	}
 }
 
+// category is the main category. An empty one stays empty when the person gave
+// some kinds a category of their own: a kind without one then gets no category
+// at all. Only when nothing is set anywhere does the default apply.
 func (c downloadClientConfig) category() string {
-	if strings.TrimSpace(c.Category) == "" {
-		return defaultClientCategory
+	if v := strings.TrimSpace(c.Category); v != "" {
+		return v
 	}
-	return c.Category
+	for _, k := range torrentopts.Kinds {
+		if strings.TrimSpace(c.KindCategories[k]) != "" {
+			return ""
+		}
+	}
+	return defaultClientCategory
 }
 
 // categoryFor is the category a download of this kind is added with: the one
-// set for the kind, or the main category when that is empty.
+// set for the kind, or the main category when that is empty (which may itself
+// mean none, see category).
 func (c downloadClientConfig) categoryFor(kind string) string {
 	if v := strings.TrimSpace(c.KindCategories[kind]); v != "" {
 		return v
@@ -116,7 +127,10 @@ func (c downloadClientConfig) categoryFor(kind string) string {
 // allCategories lists every category Mediarium may have used: the main one and
 // those of the kinds. Torrents in any of them are Mediarium's.
 func (c downloadClientConfig) allCategories() []string {
-	out := []string{c.category()}
+	var out []string
+	if v := c.category(); v != "" {
+		out = append(out, v)
+	}
 	for _, k := range torrentopts.Kinds {
 		if v := strings.TrimSpace(c.KindCategories[k]); v != "" && !slices.Contains(out, v) {
 			out = append(out, v)
@@ -175,6 +189,12 @@ func (s *Server) downloadViaClient(ctx context.Context, queueID int64, downloadU
 	var gone time.Time
 	var t qbit.Torrent
 	var fails pollFailures
+	// firstLook: a torrent found paused when this download starts was paused
+	// by an earlier pause of the download here, so it is started again. A
+	// torrent that is paused later was paused in the client by hand: it is left
+	// alone and not mistaken for a stall. settle skips a few polls after a
+	// start, while the client's state catches up.
+	firstLook, settle, notedPause := true, 0, false
 	for {
 		var found bool
 		var err error
@@ -190,6 +210,7 @@ func (s *Server) downloadViaClient(ctx context.Context, queueID int64, downloadU
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
+			s.noteClientCheck(watchTorrentClient, label, err)
 			if !fails.tolerate(err, qbit.ErrAuth) {
 				return s.downloadClientError(label, err)
 			}
@@ -202,6 +223,7 @@ func (s *Server) downloadViaClient(ctx context.Context, queueID int64, downloadU
 			continue
 		}
 		fails.reset()
+		s.noteClientCheck(watchTorrentClient, label, nil)
 		if found {
 			gone = time.Time{}
 			if hash == "" && t.Hash != "" {
@@ -228,6 +250,28 @@ func (s *Server) downloadViaClient(ctx context.Context, queueID int64, downloadU
 			report(100)
 			return s.clientDone(queueID, t, cfg, label, incompleteDir)
 		default:
+			if t.Paused() && settle == 0 {
+				if firstLook {
+					if err := c.Resume(ctx, t.Hash); err != nil {
+						slog.Warn("download client: couldn't start a paused torrent again", "queueId", queueID, "err", err)
+					} else {
+						s.queueEvent(queueID, "download", queue.LevelInfo, fmt.Sprintf("This torrent was paused in %s, so it was started again.", label))
+					}
+					settle = 3
+				} else {
+					lastMove = time.Now() // waiting on a person, not stalled
+					if !notedPause {
+						notedPause = true
+						s.queueEvent(queueID, "download", queue.LevelInfo, fmt.Sprintf("Paused in %s. It carries on when you start it there.", label))
+					}
+				}
+			} else if !t.Paused() {
+				notedPause = false
+			}
+			firstLook = false
+			if settle > 0 {
+				settle--
+			}
 			if t.Progress != lastProgress {
 				lastProgress, lastMove = t.Progress, time.Now()
 				report(t.Progress * 100)
@@ -306,7 +350,7 @@ func (s *Server) addToClient(ctx context.Context, c qbit.API, cfg downloadClient
 // enforce it: the global limits or the indexer's own rule.
 func (s *Server) clientShareLimits(queueID int64) qbit.ShareLimits {
 	g := s.torrentSeedGoal(queueID)
-	return qbit.ShareLimits{Ratio: g.Ratio, Time: g.Time}
+	return qbit.ShareLimits{Ratio: g.Ratio, Time: g.Time, NoSeed: g.NoSeed}
 }
 
 // clientDone lays out the finished torrent's files in the download's folder.
@@ -610,6 +654,10 @@ next:
 // are symlinks (Decypharr), which the library's new links still need, or the
 // torrent was in the client before Mediarium asked for it.
 func (s *Server) afterClientImport(dir string) {
+	if id := readUsenetJob(dir); id != "" {
+		s.afterUsenetImport(id)
+		return
+	}
 	cfg := s.downloadClientConfig()
 	if !cfg.RemoveAfterImport || !s.downloadClientOn() {
 		return
@@ -661,6 +709,7 @@ type downloadClientPayload struct {
 	RemotePath        string `json:"remotePath"`
 	LocalPath         string `json:"localPath"`
 	RemoveAfterImport bool   `json:"removeAfterImport"`
+	RemoveOnStop      bool   `json:"removeOnStop"`
 	LinkRoot          string `json:"linkRoot"`
 }
 
@@ -669,9 +718,9 @@ func (s *Server) handleGetDownloadClient(w http.ResponseWriter, r *http.Request)
 	c := s.downloadClientConfig()
 	writeJSON(w, http.StatusOK, downloadClientPayload{
 		Kind: c.Kind, URL: c.URL, Username: c.Username, HasPassword: c.Password != "",
-		Category: c.category(), CategoryMovies: c.KindCategories[torrentopts.KindMovie], CategoryTV: c.KindCategories[torrentopts.KindTV],
+		Category: strings.TrimSpace(c.Category), CategoryMovies: c.KindCategories[torrentopts.KindMovie], CategoryTV: c.KindCategories[torrentopts.KindTV],
 		CategoryMusic: c.KindCategories[torrentopts.KindMusic], CategoryBooks: c.KindCategories[torrentopts.KindBook], RemotePath: c.RemotePath, LocalPath: c.LocalPath,
-		RemoveAfterImport: c.RemoveAfterImport, LinkRoot: c.LinkRoot,
+		RemoveAfterImport: c.RemoveAfterImport, RemoveOnStop: c.RemoveOnStop, LinkRoot: c.LinkRoot,
 	})
 }
 
@@ -688,6 +737,7 @@ type downloadClientRequest struct {
 	RemotePath        string `json:"remotePath"`
 	LocalPath         string `json:"localPath"`
 	RemoveAfterImport bool   `json:"removeAfterImport"`
+	RemoveOnStop      *bool  `json:"removeOnStop"` // absent keeps the saved choice (on unless switched off)
 	LinkRoot          string `json:"linkRoot"`
 }
 
@@ -780,6 +830,10 @@ func (s *Server) handlePutDownloadClient(w http.ResponseWriter, r *http.Request)
 	if req.RemoveAfterImport {
 		remove = "1"
 	}
+	removeOnStop := boolSetting(old.RemoveOnStop)
+	if req.RemoveOnStop != nil {
+		removeOnStop = boolSetting(*req.RemoveOnStop)
+	}
 	save := []kv{
 		{settings.KeyDownloadClientURL, req.URL, false},
 		{settings.KeyDownloadClientUsername, req.Username, false},
@@ -791,6 +845,7 @@ func (s *Server) handlePutDownloadClient(w http.ResponseWriter, r *http.Request)
 		{settings.KeyDownloadClientRemotePath, req.RemotePath, false},
 		{settings.KeyDownloadClientLocalPath, req.LocalPath, false},
 		{settings.KeyDownloadClientRemoveImport, remove, false},
+		{settings.KeyDownloadClientRemoveOnStop, removeOnStop, false},
 		{settings.KeyDownloadClientLinkRoot, req.LinkRoot, false},
 	}
 	switch {

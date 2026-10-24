@@ -62,3 +62,29 @@ test('an error stops it, and so does stopping it', async () => {
   stop()
   await t2.run()
 })
+
+test('waits as long as the server last asked for', async () => {
+  const waits: number[] = []
+  let wait = 5000
+  let n = 0
+  const time = fakeTime()
+  const later = time.later
+  pollPin({
+    check: async () => {
+      if (++n === 1) wait = 10000
+      return n >= 3 ? 'ok' : undefined
+    },
+    lifeSeconds: 600,
+    delayMs: () => wait,
+    onDone: () => undefined,
+    onExpired: () => assert.fail('expired'),
+    onError: () => assert.fail('error'),
+    ...time,
+    later: (fn, ms) => {
+      waits.push(ms)
+      return later(fn, ms)
+    },
+  })
+  for (let i = 0; i < 4; i++) await time.run()
+  assert.deepEqual(waits, [5000, 10000, 10000])
+})

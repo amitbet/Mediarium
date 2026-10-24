@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -69,7 +70,7 @@ func (s *Server) monitorChecks(ctx context.Context) ([]monitor.Check, error) {
 		checks = append(checks, monitor.Check{
 			Kind: monitor.KindUsenet, ID: sc.ID, Name: sc.Name,
 			Run: func(ctx context.Context) error {
-				return runProbe(ctx, func() connTestResult {
+				return runProbe(ctx, probeTimeout, func() connTestResult {
 					return testNNTP(cfg.Host, cfg.Port, cfg.UseSSL, cfg.Username, cfg.Password)
 				})
 			},
@@ -115,9 +116,9 @@ func (s *Server) probeIndexer(ctx context.Context, inst indexers.Instance) error
 	tr.NoteProbe(inst.ID)
 	if inst.IsCardigann() {
 		// a site that a definition drives has no capabilities call to ask
-		return runProbe(ctx, func() connTestResult { return s.testIndexerInstance(ctx, inst) })
+		return runProbe(ctx, s.indexerTestBudget(inst)+5*time.Second, func() connTestResult { return s.testIndexerInstance(ctx, inst) })
 	}
-	err := runProbe(ctx, func() connTestResult {
+	err := runProbe(ctx, probeTimeout, func() connTestResult {
 		cctx, cancel := context.WithTimeout(ctx, max(connTestTimeout, indexers.FeedWait(inst.BaseURL)))
 		defer cancel()
 		if err := indexers.NewNewznabClient(inst.Name, inst.BaseURL, inst.APIKey).Caps(cctx); err != nil {
@@ -132,13 +133,15 @@ func (s *Server) probeIndexer(ctx context.Context, inst indexers.Instance) error
 }
 
 // probeTimeout bounds a single monitor check, whatever the probe itself does.
-const probeTimeout = 30 * time.Second
+var probeTimeout = 30 * time.Second
 
 // runProbe runs a connection test and turns a failed result into an error. The
 // NNTP probe has no context of its own, so it runs in a goroutine the monitor
 // can stop waiting for.
-func runProbe(ctx context.Context, probe func() connTestResult) error {
-	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+// A check that is allowed longer than the usual limit is one that waits for
+// FlareSolverr, and says so when it runs out.
+func runProbe(ctx context.Context, limit time.Duration, probe func() connTestResult) error {
+	ctx, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
 	done := make(chan connTestResult, 1)
 	go func() { done <- probe() }()
@@ -149,6 +152,9 @@ func runProbe(ctx context.Context, probe func() connTestResult) error {
 		}
 		return errors.New(res.Message)
 	case <-ctx.Done():
+		if limit > probeTimeout {
+			return fmt.Errorf("The check waited %d seconds and didn't finish. If this site needs FlareSolverr, check that it is running and has internet access, then try again.", int(limit/time.Second))
+		}
 		return errors.New("the check timed out")
 	}
 }

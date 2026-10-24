@@ -1,22 +1,43 @@
-import { Fragment, useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import FallbackEditor from './FallbackEditor'
 import Icon from './Icon'
 import { useToast } from './Toast'
 import { profileBlurb, sortProfiles } from './qualityBlurb'
 import { api, type CustomFormat, type PreferredTerm, type QualityProfile } from '../api'
 import { addAnimeTerms } from '../animeGroups'
+import { hasScore, syncFormatScores, withoutScore } from '../profileScoreSync'
 import { useConfirm } from './ConfirmProvider'
 import { firstError, maxLength, required } from '../validate'
 import { FieldError, FormProblem, useValidation } from '../useValidation'
 import { useReveal } from '../useReveal'
 import { plural, t, tx } from '../i18n'
 import TipLabel from './TipLabel'
+import AddFormatsPicker from './AddFormatsPicker'
+import Collapsible from './Collapsible'
+import QualityOrderEditor from './QualityOrderEditor'
+import {
+  MAX_GROUP_NAME,
+  allowedFromRows,
+  cutoffRow,
+  cutoffText,
+  defaultRows,
+  fixedCutoff,
+  orderCounts,
+  orderFromRows,
+  orderProblem,
+  qualitiesLine,
+  rowLabel,
+  rowsFromProfile,
+  type OrderRow,
+} from '../qualityOrder'
 
 interface Draft {
   id?: number
   name: string
   allowed: string[]
   cutoff: string
+  // The profile's own quality order as rows (best first), or null for the built-in order.
+  order: OrderRow[] | null
   upgradeAllowed: boolean
   // One term per line; preferred lines are "term = score".
   mustContain: string
@@ -47,6 +68,13 @@ function parsePreferred(text: string): PreferredTerm[] {
 // Limits the server applies (internal/quality/repo.go, formats_profile.go).
 const MAX_FORMAT_SCORE = 1000000
 const wholeNumber = (s: string) => /^[+-]?\d+$/.test(s.trim())
+
+// isScored: the format is in the profile's list. A score of 0 counts: the
+// format is added and does nothing until it is raised. Only an empty box
+// leaves a format out.
+function isScored(d: Draft, id: number): boolean {
+  return hasScore(d.formatScores, id)
+}
 
 function formatScoreProblem(d: Draft | null, formats: CustomFormat[]): string | null {
   if (!d) return null
@@ -97,11 +125,12 @@ function preferredLines(text: string): string | null {
   return null
 }
 
-const draftFrom = (p: QualityProfile): Draft => ({
+const draftFrom = (p: QualityProfile, ladder: string[]): Draft => ({
   id: p.id,
   name: p.name,
   allowed: p.allowed,
   cutoff: p.cutoff,
+  order: p.qualityOrder && p.qualityOrder.length > 0 ? rowsFromProfile(ladder, p.allowed, p.qualityOrder) : null,
   upgradeAllowed: p.upgradeAllowed,
   mustContain: p.mustContain.join('\n'),
   mustNotContain: p.mustNotContain.join('\n'),
@@ -119,6 +148,7 @@ const blankDraft = (tiers: string[]): Draft => ({
   name: '',
   allowed: tiers.filter((t) => t === 'WEBDL-1080p' || t === 'Bluray-1080p'),
   cutoff: 'Bluray-1080p',
+  order: null,
   upgradeAllowed: false,
   mustContain: '',
   mustNotContain: '',
@@ -142,6 +172,14 @@ function copyName(name: string, profiles: QualityProfile[]): string {
 
 const tierLabel = (tier: string) => (tier === 'Unknown' ? t('Unknown (untagged releases)') : tier)
 
+// The head of the quality order section: how many qualities are accepted and how many groups they are in.
+function orderSummary(order: OrderRow[] | null): string {
+  if (!order) return t('Default order')
+  const { qualities, groups } = orderCounts(order)
+  const q = plural(qualities, '{n} quality', '{n} qualities')
+  return groups > 0 ? t('{qualities}, {groups}', { qualities: q, groups: plural(groups, '{n} group', '{n} groups') }) : q
+}
+
 // Editable quality profiles, Radarr/Sonarr style: which qualities are
 // acceptable, the cutoff at which upgrading stops, and whether upgrades
 // happen at all (off unless switched on). The default profile applies to
@@ -157,11 +195,26 @@ export default function QualityProfilesSection({ rev = 0, onChanged, advanced = 
   const [draft, setDraft] = useState<Draft | null>(null)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+  // Formats added with Add formats stay in the score list even while their score is empty.
+  const [addedFormats, setAddedFormats] = useState<Set<number>>(new Set())
+  // The scores the open form was loaded with, to tell what the person typed
+  // from what changed behind the form (formats imported from the Custom formats card).
+  const baseScores = useRef<Record<number, string>>({})
+  const draftRef = useRef<Draft | null>(null)
+  draftRef.current = draft
   const orderedFor = (d: Draft) => tiers.filter((t) => d.allowed.includes(t))
   const errors = {
     name: firstError(required(draft?.name, t('Give this profile a name, for example Movies 1080p.')), maxLength(draft?.name ?? '', 60, t('The name'))),
     allowed: draft && draft.allowed.length === 0 ? t('Tick at least one quality to accept.') : null,
     cutoff: draft && draft.allowed.length > 0 && !orderedFor(draft).includes(draft.cutoff) ? t('Choose the quality to stop upgrading at.') : null,
+    order: draft?.order
+      ? orderProblem(draft.order, {
+          noName: t('Give each group a name.'),
+          tooLong: (name) => t('A group name can be at most {max} characters. "{name}" is too long.', { max: MAX_GROUP_NAME, name: name.slice(0, 24) }),
+          twice: (name) => t('Two groups are called "{name}". Give them different names.', { name }),
+          none: t('Tick at least one quality to accept.'),
+        })
+      : null,
     mustContain: termLines(draft?.mustContain ?? '', 'required'),
     mustNotContain: termLines(draft?.mustNotContain ?? '', 'excluded'),
     preferred: preferredLines(draft?.preferred ?? ''),
@@ -169,6 +222,11 @@ export default function QualityProfilesSection({ rev = 0, onChanged, advanced = 
     formatScores: formatScoreProblem(draft, formats),
   }
   const v = useValidation(errors)
+  // The custom format scores are folded away until wanted; adding a format opens them.
+  const [scoresSignal, setScoresSignal] = useState(0)
+  // The quality order is folded away until wanted; switching to a custom order opens it.
+  const [orderSignal, setOrderSignal] = useState(0)
+  const scoredFormats = draft ? formats.filter((f) => isScored(draft, f.id) || addedFormats.has(f.id)).length : 0
   // Counts the times a form has been opened, so it can be scrolled into view
   // and given the cursor each time (see useReveal).
   const [opened, setOpened] = useState(0)
@@ -176,6 +234,8 @@ export default function QualityProfilesSection({ rev = 0, onChanged, advanced = 
   function openDraft(d: Draft | null) {
     v.reset()
     setDraft(d)
+    baseScores.current = d ? { ...d.formatScores } : {}
+    setAddedFormats(new Set(d ? Object.keys(d.formatScores).map(Number).filter((id) => isScored(d, id)) : []))
     if (d) setOpened((n) => n + 1)
   }
 
@@ -184,6 +244,17 @@ export default function QualityProfilesSection({ rev = 0, onChanged, advanced = 
       .listProfiles()
       .then((r) => {
         setProfiles(sortProfiles(r.profiles))
+        // A form that is open keeps what the person typed, and picks up scores
+        // added to the profile elsewhere in the meantime.
+        const cur = draftRef.current
+        const fresh = cur?.id ? r.profiles.find((p) => p.id === cur.id) : undefined
+        if (cur && fresh) {
+          const server = draftFrom(fresh, r.tiers).formatScores
+          const synced = syncFormatScores(baseScores.current, cur.formatScores, server)
+          baseScores.current = server
+          setDraft({ ...cur, formatScores: synced })
+          setAddedFormats((added) => new Set([...added, ...Object.keys(synced).map(Number).filter((id) => (synced[id] ?? '').trim() !== '')]))
+        }
         setTiers(r.tiers)
         setDefaultId(r.defaultId)
         setDefaultTvId(r.defaultTvId || 0)
@@ -205,6 +276,8 @@ export default function QualityProfilesSection({ rev = 0, onChanged, advanced = 
         name: draft.name.trim(),
         allowed: draft.allowed,
         cutoff: draft.cutoff,
+        // [] goes back to the built-in order.
+        qualityOrder: draft.order ? orderFromRows(draft.order) : [],
         upgradeAllowed: draft.upgradeAllowed,
         mustContain: linesOf(draft.mustContain),
         mustNotContain: linesOf(draft.mustNotContain),
@@ -212,7 +285,7 @@ export default function QualityProfilesSection({ rev = 0, onChanged, advanced = 
         fallback: draft.fallback,
         maxSizeGB: draft.maxSize.trim() === '' ? 0 : Number(draft.maxSize),
         formatScores: Object.entries(draft.formatScores)
-          .filter(([, s]) => s.trim() !== '' && Number(s) !== 0)
+          .filter(([, s]) => s.trim() !== '')
           .map(([id, s]) => ({ formatId: Number(id), score: Number(s) })),
         minFormatScore: draft.minFormatScore.trim() === '' ? 0 : Number(draft.minFormatScore),
         cutoffFormatScore: draft.cutoffFormatScore.trim() === '' ? 0 : Number(draft.cutoffFormatScore),
@@ -275,6 +348,21 @@ export default function QualityProfilesSection({ rev = 0, onChanged, advanced = 
   }
 
   const orderedAllowed = draft ? tiers.filter((t) => draft.allowed.includes(t)) : []
+
+  // Changes to the order also settle what is accepted and keep the cutoff valid.
+  function setOrder(rows: OrderRow[]) {
+    if (!draft) return
+    setDraft({ ...draft, order: rows, allowed: allowedFromRows(tiers, rows), cutoff: fixedCutoff(rows, draft.cutoff) })
+  }
+  function customise() {
+    if (!draft) return
+    setOrder(defaultRows(tiers, draft.allowed))
+    setOrderSignal((n) => n + 1)
+  }
+  function resetOrder() {
+    if (!draft) return
+    setDraft({ ...draft, order: null })
+  }
   const defaultProfile = profiles.find((p) => p.id === defaultId)
 
   const form = draft && (
@@ -286,7 +374,7 @@ export default function QualityProfilesSection({ rev = 0, onChanged, advanced = 
           <input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} {...v.bind('name', draft.name, (name) => setDraft({ ...draft, name }))} />
           <FieldError v={v} name="name" />
         </label>
-        <fieldset className="profile-fieldset">
+        {!draft.order && <fieldset className="profile-fieldset">
           <legend><TipLabel text={t('Only releases in these qualities are downloaded. A release in any other quality is skipped.')}>{t('Accepted qualities')}</TipLabel></legend>
           <div className="profile-tiers">
             {tiers.map((t) => (
@@ -297,16 +385,50 @@ export default function QualityProfilesSection({ rev = 0, onChanged, advanced = 
             ))}
           </div>
           <FieldError v={v} name="allowed" />
-        </fieldset>
+        </fieldset>}
+        {(advanced || draft.order) && (
+          <Collapsible
+            id="profile-quality-order"
+            label={t('Quality order and groups')}
+            showLabel
+            summary={orderSummary(draft.order)}
+            openSignal={orderSignal}
+            forceOpen={errors.order !== null}
+          >
+            {draft.order ? (
+              <QualityOrderEditor ladder={tiers} rows={draft.order} onChange={setOrder} onReset={resetOrder} />
+            ) : (
+              <div className="qo-simple">
+                <p>{t('Qualities are ranked in the usual order, best at the top. Customise it to rank them your own way, or to put several qualities in a group that counts as one rank.')}</p>
+                <button type="button" className="btn-sm" onClick={customise}>{t('Customise order and groups')}</button>
+              </div>
+            )}
+            <FieldError v={v} name="order" />
+          </Collapsible>
+        )}
         <label>
           <TipLabel text={t('Once a title has a file at this quality or better, Mediarium stops looking for upgrades. It only matters when better versions are on.')}>{t('Stop upgrading once this quality is reached')}</TipLabel>
-          <select value={draft.cutoff} onChange={(e) => setDraft({ ...draft, cutoff: e.target.value })} {...v.bind('cutoff')}>
-            {orderedAllowed.map((t) => (
-              <option key={t} value={t}>
-                {tierLabel(t)}
-              </option>
-            ))}
-          </select>
+          {draft.order ? (
+            <select
+              value={cutoffRow(draft.order, draft.cutoff)?.key ?? ''}
+              onChange={(e) => setDraft({ ...draft, cutoff: draft.order?.find((r) => r.key === e.target.value)?.tiers[0] ?? draft.cutoff })}
+              {...v.bind('cutoff')}
+            >
+              {draft.order.filter((r) => r.allowed).map((r) => (
+                <option key={r.key} value={r.key}>
+                  {rowLabel(r, tierLabel)}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <select value={draft.cutoff} onChange={(e) => setDraft({ ...draft, cutoff: e.target.value })} {...v.bind('cutoff')}>
+              {orderedAllowed.map((t) => (
+                <option key={t} value={t}>
+                  {tierLabel(t)}
+                </option>
+              ))}
+            </select>
+          )}
           <FieldError v={v} name="cutoff" />
         </label>
         <label>
@@ -373,18 +495,33 @@ export default function QualityProfilesSection({ rev = 0, onChanged, advanced = 
             </div>
           </div>
         </details>
-        {advanced && <details open={Object.values(draft.formatScores).some((s) => s.trim() !== '' && Number(s) !== 0) || draft.minFormatScore !== '' || draft.cutoffFormatScore !== ''}>
-          <summary style={{ cursor: 'pointer' }}>{t('Custom format scores (optional)')}</summary>
+        {advanced && <Collapsible
+          id="profile-format-scores"
+          label={t('Custom format scores (optional)')}
+          showLabel
+          summary={plural(scoredFormats, '{n} format', '{n} formats')}
+          openSignal={scoresSignal}
+          forceOpen={formatScoreProblem(draft, formats) !== null}
+        >
           {formats.length === 0 ? (
             <p style={{ color: 'var(--text-dim)', fontSize: '0.85rem' }}>{t('No custom formats yet. Import some under Custom formats below, from the TRaSH Guides or from Radarr or Sonarr.')}</p>
           ) : (
             <div className="grid-form" style={{ marginTop: 8 }}>
               <p style={{ color: 'var(--text-dim)', fontSize: '0.85rem', margin: 0 }}>
-                {t('A release gets the score of every format it matches. Between releases of the same quality, the higher total wins. Leave a format empty to ignore it.')}
+                {t('A release gets the score of every format it matches. Between releases of the same quality, the higher total wins. Take a format out with the bin button, or leave its box empty.')}
               </p>
+              <AddFormatsPicker
+                candidates={formats.filter((f) => !isScored(draft, f.id) && !addedFormats.has(f.id))}
+                total={formats.length}
+                onAdd={(ids, scores) => {
+                  setScoresSignal((n) => n + 1)
+                  setAddedFormats((cur) => new Set([...cur, ...ids]))
+                  setDraft({ ...draft, formatScores: { ...draft.formatScores, ...scores } })
+                }}
+              />
               <div className="format-scores">
-                {formats.map((f) => (
-                  <label key={f.id} className="format-score-row">
+                {formats.filter((f) => isScored(draft, f.id) || addedFormats.has(f.id)).map((f) => (
+                  <div key={f.id} className="format-score-row">
                     <span>
                       {f.name} <small>{f.app === 'sonarr' ? t('TV') : t('movies')}</small>
                     </span>
@@ -395,7 +532,19 @@ export default function QualityProfilesSection({ rev = 0, onChanged, advanced = 
                       placeholder="0"
                       onChange={(e) => setDraft({ ...draft, formatScores: { ...draft.formatScores, [f.id]: e.target.value } })}
                     />
-                  </label>
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      title={t('Remove {name} from this profile', { name: f.name })}
+                      aria-label={t('Remove {name} from this profile', { name: f.name })}
+                      onClick={() => {
+                        setAddedFormats((cur) => new Set([...cur].filter((x) => x !== f.id)))
+                        setDraft({ ...draft, formatScores: withoutScore(draft.formatScores, f.id) })
+                      }}
+                    >
+                      <Icon name="trash" size={15} />
+                    </button>
+                  </div>
                 ))}
               </div>
               <div className="format-thresholds">
@@ -413,7 +562,7 @@ export default function QualityProfilesSection({ rev = 0, onChanged, advanced = 
               <FieldError v={v} name="formatScores" />
             </div>
           )}
-        </details>}
+        </Collapsible>}
       </div>
       <div className="profile-form-actions">
         <button className="primary" onClick={save} disabled={saving}>
@@ -462,7 +611,7 @@ export default function QualityProfilesSection({ rev = 0, onChanged, advanced = 
                 )}
               </td>
               <td style={{ color: 'var(--text-dim)', fontSize: '0.85rem' }}>
-                {p.allowed.map(tierLabel).join(', ')}
+                {qualitiesLine(p.allowed, p.qualityOrder, tierLabel)}
                 {(p.mustContain.length > 0 || p.mustNotContain.length > 0 || p.preferred.length > 0) && (
                   <div>
                     {p.mustContain.length > 0 && <span>{t('requires: {list}.', { list: p.mustContain.join(', ') })} </span>}
@@ -486,11 +635,11 @@ export default function QualityProfilesSection({ rev = 0, onChanged, advanced = 
                   </div>
                 )}
               </td>
-              <td style={{ whiteSpace: 'nowrap' }}>{tierLabel(p.cutoff)}</td>
+              <td style={{ whiteSpace: 'nowrap' }}>{tierLabel(cutoffText(p.cutoff, p.qualityOrder))}</td>
               <td>{p.upgradeAllowed ? t('on') : t('off')}</td>
               <td style={{ whiteSpace: 'nowrap' }}>
-                <button onClick={() => openDraft(draftFrom(p))}>{t('Edit')}</button>{' '}
-                <button onClick={() => openDraft({ ...draftFrom(p), id: undefined, name: copyName(p.name, profiles) })}>{t('Duplicate')}</button>{' '}
+                <button onClick={() => openDraft(draftFrom(p, tiers))}>{t('Edit')}</button>{' '}
+                <button onClick={() => openDraft({ ...draftFrom(p, tiers), id: undefined, name: copyName(p.name, profiles) })}>{t('Duplicate')}</button>{' '}
                 {p.id !== defaultId && <button onClick={() => makeDefault(p.id)}>{t('Make default for movies')}</button>}{' '}
                 {p.id !== (defaultTvId || defaultId) && <button onClick={() => makeDefaultTv(p.id)}>{t('Make default for TV')}</button>}{' '}
                 {p.id === defaultTvId && <button onClick={() => makeDefaultTv(0)}>{t('Use the movie default for TV')}</button>}{' '}

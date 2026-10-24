@@ -46,6 +46,12 @@ function VPNSection() {
     (saved) => (saved ? t('Saved: indexer traffic now goes through the VPN.') : t('Saved: indexer traffic now connects directly.')),
     false,
   )
+  const acknowledged = useAutosaveSetting<boolean>(
+    (s) => !!s.vpnNoticeAcknowledged,
+    (v) => ({ vpnNoticeAcknowledged: v }),
+    (saved) => (saved ? t('Saved: the notice about torrenting without a VPN is hidden.') : t('Saved: the notice about torrenting without a VPN can show again.')),
+    false,
+  )
   const [flareSolverr, setFlareSolverr] = useState(false)
   useEffect(() => {
     api.getSettings().then((s) => setFlareSolverr(flareSolverrSetUp(s))).catch(() => undefined)
@@ -291,6 +297,14 @@ function VPNSection() {
           tip={t("Your indexers see the VPN's address instead of yours, and their names are looked up through the tunnel too.")}
           learnMore="downloads#indexers-through-the-vpn"
           description={t('Searches, RSS, release downloads, IRC announces and debrid go through the tunnel. Indexers on your own network still connect directly. If the VPN is down, searches wait instead of going without it.')}
+          showState
+        />
+        <Switch
+          checked={acknowledged.value}
+          onChange={acknowledged.change}
+          disabled={!acknowledged.loaded || acknowledged.saving}
+          label={t('My download client is already behind a VPN')}
+          description={t('Hides the "Torrenting without a VPN" notice on the dashboard. Switch it off to show the notice again.')}
           showState
         />
         {indexers.value && flareSolverr && (

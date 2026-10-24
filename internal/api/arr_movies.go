@@ -27,6 +27,8 @@ type arrMovieFile struct {
 	ReleaseGroup string          `json:"releaseGroup,omitempty"`
 	Quality      arrQualityModel `json:"quality"`
 	Languages    []arrLanguage   `json:"languages"`
+	// MediaInfo is what Mediarium read from the file's headers; left out until it has.
+	MediaInfo *arrMediaInfo `json:"mediaInfo,omitempty"`
 }
 
 type arrMovie struct {
@@ -63,6 +65,9 @@ type arrMovie struct {
 	Statistics          map[string]any `json:"statistics"`
 	MovieFile           *arrMovieFile  `json:"movieFile,omitempty"`
 	OriginalLanguage    arrLanguage    `json:"originalLanguage"`
+	// RemotePoster is the poster's address for a movie that is not in the
+	// library (what a lookup carries next to images).
+	RemotePoster string `json:"remotePoster,omitempty"`
 }
 
 // arrMovieContext is what turning many movies into arr objects shares.
@@ -71,10 +76,11 @@ type arrMovieContext struct {
 	tags           map[int64][]string
 	numbers        map[string]int64
 	added          map[int64]string
+	backdrops      map[int]string // saved wide pictures by TMDB id
 }
 
 func (s *Server) newArrMovieContext() arrMovieContext {
-	c := arrMovieContext{defaultProfile: s.defaultProfileID(), numbers: s.tagNumbers()}
+	c := arrMovieContext{defaultProfile: s.defaultProfileID(), numbers: s.tagNumbers(), backdrops: s.arrArtOf("movie")}
 	c.tags, _ = s.MovieRepo.AllTitleTags(library.TagMovie)
 	c.added, _ = s.MovieRepo.AddedTimes(false)
 	return c
@@ -99,7 +105,7 @@ func (s *Server) toArrMovie(m library.Movie, c arrMovieContext) arrMovie {
 	out := arrMovie{
 		ID: m.ID, Title: m.Title, OriginalTitle: m.Title, SortTitle: arrSortTitle(m.Title), CleanTitle: arrCleanTitle(m.Title),
 		TitleSlug: strconv.Itoa(m.TMDBID), Status: status, Overview: m.Overview, InCinemas: arrTime(m.ReleaseDate),
-		Images: posterImages(metadata.PosterURL(m.PosterPath)), Year: m.Year, HasFile: hasFile,
+		Images: arrCoverImages(arrRadarr, m.ID, m.PosterPath, c.backdrops[m.TMDBID]), Year: m.Year, HasFile: hasFile,
 		QualityProfileID: s.arrProfileID(m.ProfileID, c.defaultProfile), Monitored: m.Monitored, MinimumAvailability: "released",
 		IsAvailable: available, TMDBID: m.TMDBID, Genres: m.Genres, Tags: tagIDs(c.tags[m.ID], c.numbers),
 		Added: arrTime(c.added[m.ID]), AlternateTitles: []any{}, Ratings: map[string]any{},
@@ -115,13 +121,17 @@ func (s *Server) toArrMovie(m library.Movie, c arrMovieContext) arrMovie {
 		out.Path = filepath.Dir(m.FilePath)
 		out.FolderName = filepath.Base(out.Path)
 		var size int64
+		fileAdded := out.Added
 		if fi, err := os.Stat(m.FilePath); err == nil {
 			size = fi.Size()
+			// When the file arrived, so an app sorting by it ("recently downloaded") orders by the file, not by when the movie was added.
+			fileAdded = fi.ModTime().UTC().Format("2006-01-02T15:04:05Z")
 		}
 		out.SizeOnDisk = size
 		out.MovieFile = &arrMovieFile{
 			ID: m.ID, MovieID: m.ID, RelativePath: filepath.Base(m.FilePath), Path: m.FilePath, Size: size,
-			DateAdded: out.Added, Quality: arrQualityModelOf(arrRadarr, quality.Tier(m.Quality)), Languages: []arrLanguage{arrEnglish},
+			DateAdded: fileAdded, Quality: arrQualityModelOf(arrRadarr, quality.Tier(m.Quality)), Languages: []arrLanguage{arrEnglish},
+			MediaInfo: s.arrMediaInfoFor(m.FilePath),
 		}
 	}
 	files := 0
@@ -142,7 +152,7 @@ func tmdbArrMovie(m metadata.Movie) arrMovie {
 	return arrMovie{
 		Title: m.Title, OriginalTitle: m.Title, SortTitle: arrSortTitle(m.Title), CleanTitle: arrCleanTitle(m.Title),
 		TitleSlug: strconv.Itoa(m.TMDBID), Status: status, Overview: m.Overview, InCinemas: arrTime(m.ReleaseDate),
-		Images: posterImages(metadata.PosterURL(m.PosterPath)), Year: m.Year(), MinimumAvailability: "released",
+		Images: arrCoverImages(arrRadarr, 0, m.PosterPath, m.BackdropPath), RemotePoster: metadata.PosterURL(m.PosterPath), Year: m.Year(), MinimumAvailability: "released",
 		IsAvailable: available, TMDBID: m.TMDBID, Genres: genres, Tags: []int64{}, Added: "0001-01-01T00:00:00Z",
 		AlternateTitles: []any{}, Ratings: map[string]any{"tmdb": map[string]any{"value": m.VoteAverage, "votes": m.VoteCount}},
 		Statistics: map[string]any{"movieFileCount": 0, "sizeOnDisk": 0, "releaseGroups": []string{}}, OriginalLanguage: arrEnglish,
@@ -166,10 +176,35 @@ func (s *Server) arrListMovies(w http.ResponseWriter, r *http.Request) {
 		if want != 0 && m.TMDBID != want {
 			continue
 		}
-		out = append(out, s.toArrMovie(m, c))
+		a := s.toArrMovie(m, c)
+		// The real app has no such filters, but a phone app that asks for
+		// ?monitored=true&hasFile=false (its "missing" lists) means just that.
+		if v, ok := arrBoolParam(r, "monitored"); ok && a.Monitored != v {
+			continue
+		}
+		if v, ok := arrBoolParam(r, "hasFile"); ok && a.HasFile != v {
+			continue
+		}
+		out = append(out, a)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].SortTitle < out[j].SortTitle })
 	writeJSON(w, http.StatusOK, out)
+}
+
+// arrBoolParam reads a query value that is true or false (ok is false when the
+// key is missing or says neither).
+func arrBoolParam(r *http.Request, key string) (value, ok bool) {
+	for k, vals := range r.URL.Query() {
+		if strings.EqualFold(k, key) && len(vals) > 0 {
+			switch strings.ToLower(vals[0]) {
+			case "true", "1":
+				return true, true
+			case "false", "0":
+				return false, true
+			}
+		}
+	}
+	return false, false
 }
 
 func (s *Server) arrLoadMovie(w http.ResponseWriter, id int64) (library.Movie, bool) {

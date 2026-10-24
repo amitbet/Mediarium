@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
 )
 
@@ -173,8 +175,28 @@ func (r *Repo) Delete(queueID int64) error {
 	return nil
 }
 
+// Unlimited is a seeding limit that never ends the seeding. A limit is held as
+// a number: negative (Unlimited) for no limit, 0 for "do not seed at all" and
+// a positive number for the limit itself.
+const Unlimited = -1.0
+
+// ParseLimit reads a saved seeding limit. Empty text, text that is no number
+// and a negative number are Unlimited.
+func ParseLimit(v string) float64 {
+	v = strings.TrimSpace(strings.ReplaceAll(v, ",", "."))
+	if v == "" {
+		return Unlimited
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil || math.IsNaN(f) || f < 0 {
+		return Unlimited
+	}
+	return f
+}
+
 // SeedRule overrides the global seeding limit for the torrents of one indexer.
-// A nil field follows the global limit; 0 means no limit of that kind.
+// A nil field follows the global limit; Unlimited (-1) means no limit of that
+// kind even when the global one has a limit, and 0 means do not seed.
 type SeedRule struct {
 	Ratio *float64 `json:"ratio"`
 	Hours *float64 `json:"hours"`
@@ -191,11 +213,11 @@ const (
 
 // Validate checks the numbers of a rule.
 func (s SeedRule) Validate() error {
-	if s.Ratio != nil && (*s.Ratio < 0 || *s.Ratio > MaxSeedRatio) {
-		return fmt.Errorf("the seed ratio is 0 (no limit) to %g", MaxSeedRatio)
+	if s.Ratio != nil && (math.IsNaN(*s.Ratio) || (*s.Ratio < 0 && *s.Ratio != Unlimited) || *s.Ratio > MaxSeedRatio) {
+		return fmt.Errorf("the seed ratio is 0 (do not seed) to %g", MaxSeedRatio)
 	}
-	if s.Hours != nil && (*s.Hours < 0 || *s.Hours > MaxSeedHours) {
-		return fmt.Errorf("the seed time is 0 (no limit) to %g hours", MaxSeedHours)
+	if s.Hours != nil && (math.IsNaN(*s.Hours) || (*s.Hours < 0 && *s.Hours != Unlimited) || *s.Hours > MaxSeedHours) {
+		return fmt.Errorf("the seed time is 0 (do not seed) to %g hours", MaxSeedHours)
 	}
 	return nil
 }
@@ -273,7 +295,8 @@ func (r *Repo) SetSeedRule(indexerID int64, rule SeedRule) error {
 }
 
 // Goal combines the global seeding limits with an indexer's rule: a field the
-// rule leaves empty keeps the global value.
+// rule leaves empty keeps the global value. The numbers are limits as
+// ParseLimit gives them (negative = none, 0 = do not seed).
 func (s SeedRule) Goal(globalRatio, globalHours float64) (ratio, hours float64) {
 	ratio, hours = globalRatio, globalHours
 	if s.Ratio != nil {

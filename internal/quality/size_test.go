@@ -30,6 +30,37 @@ func TestSizePlausible(t *testing.T) {
 	}
 }
 
+func TestSizePlausibleRuntime(t *testing.T) {
+	gb := int64(1) << 30
+	cases := []struct {
+		name     string
+		tier     Tier
+		size     int64
+		episodes int
+		minutes  float64
+		ok       bool
+	}{
+		{"5 minute episode of 60 MB passes", TierWebDL1080p, 60 * mb, 1, 5, true},
+		{"the same release fails with an unknown runtime", TierWebDL1080p, 60 * mb, 1, 0, false},
+		{"45 minute episode behaves as before (fails)", TierWebDL1080p, 100 * mb, 1, 45, false},
+		{"45 minute episode behaves as before (passes)", TierWebDL1080p, 150 * mb, 1, 45, true},
+		{"exactly 30 minutes is not scaled", TierWebDL1080p, 100 * mb, 1, 30, false},
+		{"the floor is 15 MB for a very short episode", TierWebDL1080p, 10 * mb, 1, 1, false},
+		{"just above the floor passes", TierWebDL1080p, 16 * mb, 1, 1, true},
+		{"20 minute episode needs two thirds", TierWebDL1080p, 90 * mb, 1, 20, false},
+		{"20 minute episode, enough", TierWebDL1080p, 100 * mb, 1, 20, true},
+		{"two short episodes need twice the minimum", TierWebDL1080p, 40 * mb, 2, 5, false},
+		{"movies ignore the runtime", TierWebDL1080p, 100 * mb, 0, 5, false},
+		{"a short season pack", TierWebDL1080p, 80 * mb, SeasonPack, 5, true},
+		{"a normal season pack is unchanged", TierWebDL1080p, 3 * gb, SeasonPack, 45, true},
+	}
+	for _, tc := range cases {
+		if got := SizePlausibleRuntime(tc.tier, tc.size, tc.episodes, tc.minutes); got != tc.ok {
+			t.Errorf("%s: = %v, want %v", tc.name, got, tc.ok)
+		}
+	}
+}
+
 func TestSizeAllowed(t *testing.T) {
 	gb := int64(1) << 30
 	cases := []struct {

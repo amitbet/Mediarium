@@ -203,14 +203,25 @@ const stagingSuffix = ".mediarium-tmp"
 // A file mode set in Settings is applied to the file that ends up in the
 // library and a folder mode to the folders made for it (see internal/fileperms).
 func Import(src, destPath string, policy ConflictPolicy, isBetter func() bool) (ImportResult, error) {
-	res, err := importPlace(src, destPath, policy, isBetter)
+	res, err := importPlace(src, destPath, policy, isBetter, false)
 	if err == nil && !res.Skipped {
 		_ = fileperms.ApplyFile(res.DestPath)
 	}
 	return res, err
 }
 
-func importPlace(src, destPath string, policy ConflictPolicy, isBetter func() bool) (ImportResult, error) {
+// ImportCopy is Import without the hardlink: the file in the library is always
+// a copy of its own, so changing or removing the original never touches it.
+func ImportCopy(src, destPath string, policy ConflictPolicy, isBetter func() bool) (ImportResult, error) {
+	res, err := importPlace(src, destPath, policy, isBetter, true)
+	if err == nil && !res.Skipped {
+		_ = fileperms.ApplyFile(res.DestPath)
+	}
+	return res, err
+}
+
+// importPlace does the work of Import; noLink skips the hardlink and copies.
+func importPlace(src, destPath string, policy ConflictPolicy, isBetter func() bool, noLink bool) (ImportResult, error) {
 	// A download is only ever real files. A link (which a hostile archive could
 	// carry, pointing at the database or the encryption key) would be copied
 	// with its target's contents, so it is refused outright.
@@ -258,13 +269,15 @@ func importPlace(src, destPath string, policy ConflictPolicy, isBetter func() bo
 	if replacing {
 		target = staging
 	}
-	if err := os.Link(src, target); err == nil {
-		if replacing {
-			return finishReplace(staging, destPath, true)
+	if !noLink {
+		if err := os.Link(src, target); err == nil {
+			if replacing {
+				return finishReplace(staging, destPath, true)
+			}
+			return ImportResult{DestPath: destPath, UsedHardlink: true}, nil
+		} else if errors.Is(err, fs.ErrExist) {
+			return ImportResult{}, fmt.Errorf("hardlink %s -> %s: %w", src, target, err)
 		}
-		return ImportResult{DestPath: destPath, UsedHardlink: true}, nil
-	} else if errors.Is(err, fs.ErrExist) {
-		return ImportResult{}, fmt.Errorf("hardlink %s -> %s: %w", src, target, err)
 	}
 
 	// Any other link failure (another drive, on Windows too; a filesystem

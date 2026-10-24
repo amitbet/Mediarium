@@ -59,6 +59,18 @@ const DefaultPoliteDelay = time.Second
 // delays) against a definition-based site.
 const cardigannTimeout = 60 * time.Second
 
+// cardigannFlareSolverrTimeout is the same limit for a site that may need
+// FlareSolverr: passing a Cloudflare check alone can take a minute.
+const cardigannFlareSolverrTimeout = 150 * time.Second
+
+// SearchBudget is how long one whole search of a site may take.
+func (m *CardigannManager) SearchBudget() time.Duration {
+	if m != nil && m.FlareSolverrURL != nil && strings.TrimSpace(m.FlareSolverrURL()) != "" {
+		return cardigannFlareSolverrTimeout
+	}
+	return cardigannTimeout
+}
+
 const defaultUserAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 
 // ErrCloudflare is returned when a site shows a Cloudflare browser check
@@ -732,8 +744,13 @@ func (s *cgSession) solveChallenge(ctx context.Context, fsURL string, r cgReques
 	}
 	req.Header.Set("Content-Type", "application/json")
 	client := netguard.Client(time.Duration(flareSolverrMaxTimeout)*time.Millisecond + 15*time.Second)
+	started := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
+		var nerr net.Error
+		if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &nerr) && nerr.Timeout()) {
+			return nil, fmt.Errorf("FlareSolverr didn't finish the Cloudflare check after %d seconds. Check that FlareSolverr is running and has internet access, then try again.", int(time.Since(started).Round(time.Second)/time.Second))
+		}
 		return nil, fmt.Errorf("contact FlareSolverr: %w", err)
 	}
 	defer resp.Body.Close()
@@ -749,6 +766,9 @@ func (s *cgSession) solveChallenge(ctx context.Context, fsURL string, r cgReques
 		msg := out.Message
 		if msg == "" {
 			msg = fmt.Sprintf("status %q", out.Status)
+		}
+		if strings.Contains(strings.ToLower(msg), "timeout") {
+			return nil, fmt.Errorf("FlareSolverr couldn't pass the Cloudflare check within %d seconds. Check that FlareSolverr is running and has internet access, then try again.", flareSolverrMaxTimeout/1000)
 		}
 		return nil, errors.New(msg)
 	}

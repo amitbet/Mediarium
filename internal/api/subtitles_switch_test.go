@@ -95,7 +95,7 @@ func TestSubtitleRoutesRefuseWhileTheSwitchIsOff(t *testing.T) {
 	getJSON[[]map[string]any](t, env.client, env.baseURL+"/api/subtitles/wanted")
 	getJSON[map[string]any](t, env.client, env.baseURL+"/api/subtitles/quota")
 	getJSON[map[string]any](t, env.client, env.baseURL+fmt.Sprintf("/api/movies/%d", m.ID)+"/subtitles/status")
-	if res := getJSON[[]map[string]any](t, env.client, env.baseURL+fmt.Sprintf("/api/movies/%d", m.ID)+"/subtitles?lang=en"); len(res) != 1 {
+	if res := subtitleSearchResults(t, env.client, env.baseURL+fmt.Sprintf("/api/movies/%d", m.ID)+"/subtitles?lang=en"); len(res) != 1 {
 		t.Fatalf("expected the fixture subtitle, got %v", res)
 	}
 }

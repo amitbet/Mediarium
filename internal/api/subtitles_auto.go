@@ -50,12 +50,22 @@ type subtitleItem struct {
 	season     int
 	episode    int
 	filePath   string
+
+	// releaseTitle and quality are what was recorded for the file when it was
+	// downloaded; the file name itself says nothing about the release.
+	releaseTitle string
+	quality      string
+}
+
+// hints are the facts besides the file name that tell how a subtitle fits.
+func (it subtitleItem) hints() subtitles.VideoHints {
+	return subtitles.VideoHints{ReleaseTitle: it.releaseTitle, Quality: it.quality}
 }
 
 func (it subtitleItem) ref() subtitles.Item { return subtitles.Item{Kind: it.kind, ID: it.id} }
 
 func movieSubtitleItem(m library.Movie) subtitleItem {
-	return subtitleItem{kind: "movie", id: m.ID, title: m.Title, year: m.Year, tmdbID: m.TMDBID, filePath: m.FilePath}
+	return subtitleItem{kind: "movie", id: m.ID, title: m.Title, year: m.Year, tmdbID: m.TMDBID, filePath: m.FilePath, releaseTitle: m.ReleaseTitle, quality: m.Quality}
 }
 
 func episodeSubtitleItem(sr library.Series, ep library.Episode) subtitleItem {
@@ -65,7 +75,7 @@ func episodeSubtitleItem(sr library.Series, ep library.Episode) subtitleItem {
 	}
 	return subtitleItem{
 		kind: "episode", id: ep.ID, title: sr.Title, year: sr.Year, subtitle: label,
-		parentTMDB: sr.TMDBID, seriesID: sr.ID, season: ep.Season, episode: ep.Episode, filePath: ep.FilePath,
+		parentTMDB: sr.TMDBID, seriesID: sr.ID, season: ep.Season, episode: ep.Episode, filePath: ep.FilePath, releaseTitle: ep.ReleaseTitle, quality: ep.Quality,
 	}
 }
 
@@ -496,7 +506,7 @@ func (s *Server) fetchBestSubtitle(ctx context.Context, it subtitleItem, key str
 	if err != nil {
 		return "", err
 	}
-	best := subtitles.Pick(profile.Filter(slot, results), filepath.Base(it.filePath))
+	best := subtitles.PickFor(profile.Filter(slot, results), filepath.Base(it.filePath), it.hints())
 	if best == nil {
 		return "", errNoSubtitle
 	}
@@ -715,6 +725,80 @@ func (s *Server) subtitleSweepJob(ctx context.Context) {
 			log.Printf("subtitles: look for better subtitles: %v", err)
 		}
 	}
+}
+
+// subtitleNoteText says where the subtitles of a just-imported title stand, in
+// a few plain words for the "imported" notification. have are the wanted
+// languages already there, missing the slots still without one ("nl",
+// "en.forced"), searching whether Mediarium is about to look for them.
+func subtitleNoteText(have, missing []string, searching bool) string {
+	var b strings.Builder
+	switch {
+	case len(missing) == 0 && len(have) == 0:
+		return ""
+	case len(missing) == 0:
+		return "Already there (" + strings.Join(have, ", ") + ")"
+	case len(have) > 0:
+		b.WriteString("Already there (" + strings.Join(have, ", ") + "), ")
+	default:
+		b.WriteString("None yet, ")
+	}
+	names := make([]string, len(missing))
+	for i, m := range missing {
+		names[i] = strings.ReplaceAll(m, ".", " ")
+	}
+	list := strings.Join(names, ", ")
+	if searching {
+		b.WriteString("searching for " + list)
+	} else if len(have) > 0 {
+		b.WriteString(list + " still missing")
+	} else {
+		b.WriteString("not downloaded")
+	}
+	return b.String()
+}
+
+// importSubtitleNote is the subtitle line for the "imported" notification of
+// the given items, or empty when subtitles are off or none are wanted. It must
+// be worked out before autoSubtitlesFor starts, so a subtitle that is just
+// being downloaded is not reported as already there; that download sends its
+// own "subtitles added" message.
+func (s *Server) importSubtitleNote(items ...subtitleItem) string {
+	if !s.subtitlesEnabled() || len(items) == 0 {
+		return ""
+	}
+	dismissed := s.dismissedSubtitles()
+	missingSet := map[string]bool{}
+	var missing []string
+	counted := 0
+	for _, it := range items {
+		if it.filePath == "" || dismissed[it.ref()] {
+			continue
+		}
+		counted++
+		for _, m := range s.missingSubtitleLanguages(it) {
+			if !missingSet[m] {
+				missingSet[m] = true
+				missing = append(missing, m)
+			}
+		}
+	}
+	if counted == 0 {
+		return ""
+	}
+	var have []string
+	for _, l := range s.subtitleLanguages() {
+		lacks := false
+		for m := range missingSet {
+			if m == l || strings.HasPrefix(m, l+".") {
+				lacks = true
+			}
+		}
+		if !lacks {
+			have = append(have, l)
+		}
+	}
+	return subtitleNoteText(have, missing, s.autoSubtitlesEnabled() && s.hasSubtitleSource())
 }
 
 // autoSubtitlesFor fetches the configured languages for a just-imported

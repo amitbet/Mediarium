@@ -71,6 +71,29 @@ function NumberingCard() {
   )
 }
 
+// Air times: TVmaze knows the time an episode airs, which TMDB does not.
+function AirTimesCard() {
+  const sw = useAutosaveSetting<boolean>(
+    (s) => s.tvmazeAirTimes ?? true,
+    (v) => ({ tvmazeAirTimes: v }),
+    (saved) => (saved ? t('Saved: air times are looked up on TVmaze.') : t('Saved: air times are not looked up. TVmaze is not contacted.')),
+    true,
+  )
+  return (
+    <section className="card">
+      <h2>{t('Air times')}</h2>
+      <Switch
+        checked={sw.value}
+        onChange={(v) => void sw.change(v)}
+        disabled={!sw.loaded || sw.saving}
+        label={t('Look up air times on TVmaze')}
+        description={t("TMDB only gives the day an episode airs. TVmaze also has the time, so the calendar can show each episode on the day and hour it airs in your time zone. Only the show's TheTVDB or IMDb id, or its name and year, is sent, and nothing about you. Switching this off means TVmaze is never contacted; the times already found stay until the show's dates change.")}
+        showState
+      />
+    </section>
+  )
+}
+
 export default function MetadataSettings() {
   const [s, setS] = useState<SettingsData | null>(null)
   const [error, setError] = useState('')
@@ -100,6 +123,7 @@ export default function MetadataSettings() {
       <ServiceKeyCard service="tmdb" {...TMDB_COPY} builtIn={!!s.tmdbKeyBuiltIn} configured={s.hasTmdbApiKey} onSaved={load} />
       <InfoLanguageCard />
       <NumberingCard />
+      <AirTimesCard />
       <TrailerCard />
       <HardcoverCard />
     </div>

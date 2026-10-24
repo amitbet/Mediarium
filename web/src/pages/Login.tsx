@@ -10,7 +10,8 @@ import { titleFor } from '../documentTitle'
 import { required } from '../validate'
 import { FieldError, FormProblem, useValidation } from '../useValidation'
 import { LANGUAGES, chooseLanguage, currentLanguage, plural, t, tx, type Lang } from '../i18n'
-import { withBase } from '../base'
+import { withBase, withoutBase } from '../base'
+import { SKIP_ONCE_KEY, TRIED_KEY, autoSignInUrl, shouldAutoSignIn } from '../autoSignIn'
 import { takeRestored } from '../restoreNotice'
 import { signedOutForIdle } from '../sessionEnd'
 
@@ -29,14 +30,57 @@ function takeSignInError(): string {
   }
 }
 
+// The sessionStorage may be blocked; then nothing is remembered and the page works as before.
+function readStored(key: string): string | null {
+  try {
+    return sessionStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
+function writeStored(key: string, value: string | null) {
+  try {
+    if (value === null) sessionStorage.removeItem(key)
+    else sessionStorage.setItem(key, value)
+  } catch {
+    // storage blocked: the page just does not remember
+  }
+}
+
 export default function Login() {
   const { refresh } = useAuth()
   const [methods, setMethods] = useState<SignInMethods>({ local: true, oidc: null, ldap: false, passkeys: false })
   const [problemCode] = useState(takeSignInError)
   const [restored] = useState(() => takeRestored())
   const [idle] = useState(() => signedOutForIdle()) // the server ended the session for sitting unused
+  const [skipAutoOnce] = useState(() => readStored(SKIP_ONCE_KEY) === '1') // the person just signed out
+  const [redirecting, setRedirecting] = useState(false)
   useEffect(() => {
-    api.signInMethods().then(setMethods).catch(() => undefined)
+    api
+      .signInMethods()
+      .then((m) => {
+        setMethods(m)
+        const tried = Number(readStored(TRIED_KEY))
+        const go = shouldAutoSignIn({
+          method: m.autoSignIn,
+          oidcAvailable: !!m.oidc,
+          search: window.location.search,
+          problemCode,
+          skipOnce: skipAutoOnce,
+          notice: restored || idle,
+          lastTriedAt: tried > 0 ? tried : null,
+          now: Date.now(),
+        })
+        writeStored(SKIP_ONCE_KEY, null) // after a sign-out the normal page is shown once
+        if (go) {
+          writeStored(TRIED_KEY, String(Date.now()))
+          setRedirecting(true)
+          window.location.replace(autoSignInUrl(withBase('/api/auth/oidc/start'), withoutBase(window.location.pathname), window.location.search))
+        }
+      })
+      .catch(() => undefined)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   const showForm = methods.local || methods.ldap
   async function passkeySignIn() {
@@ -88,6 +132,23 @@ export default function Login() {
     } finally {
       setBusy(false)
     }
+  }
+
+  if (redirecting) {
+    return (
+      <main className="auth-page">
+        <AmbientBackdrop level="full" />
+        <div className="auth-card">
+          <div className="auth-logo">
+            <BrandMark className="auth-mark" />
+            <span>Mediarium</span>
+          </div>
+          <p className="auth-sub" role="status">
+            {t('Taking you to {name}…', { name: methods.oidc?.name ?? t('single sign-on') })}
+          </p>
+        </div>
+      </main>
+    )
   }
 
   if (challenge) {

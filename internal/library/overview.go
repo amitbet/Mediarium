@@ -90,12 +90,14 @@ func (r *Repo) MissingMovies(ctx context.Context) (noFile int, withFile []string
 
 // The Wanted > Missing rules for an episode, as SQL over "series s CROSS JOIN
 // episodes e": the show and the episode are monitored, the episode is marked
-// missing and it has aired by the date given as the argument. The status and
+// missing and it has aired by the date given as the argument (and, when its
+// exact air time is known, that moment is less than AirSlack ahead). The status and
 // monitored terms are written out (not passed as arguments) so SQLite can use
 // the episodes_wanted index, which holds exactly those episodes; CROSS JOIN
 // makes it start from the shows, so when no show is monitored nothing is read.
 const wantedEpisodeWhere = `s.monitored = 1 AND e.status = 'missing' AND e.monitored = 1
-	AND COALESCE(e.air_date, '') <> '' AND e.air_date <= ?`
+	AND COALESCE(e.air_date, '') <> '' AND e.air_date <= ?
+	AND (e.air_at IS NULL OR e.air_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '+3 hours'))`
 
 func wantedWhere(mainOnly bool) string {
 	if mainOnly {
@@ -255,6 +257,7 @@ type CalendarEpisode struct {
 	Episode    int
 	Title      string
 	AirDate    string
+	AirAt      string // RFC 3339 UTC, "" when no time is known
 	Status     Status
 	SeriesName string
 	PosterPath string
@@ -264,7 +267,7 @@ type CalendarEpisode struct {
 // CalendarEpisodes lists the monitored episodes of monitored main shows that
 // air from from to to (both "YYYY-MM-DD", inclusive), show by show.
 func (r *Repo) CalendarEpisodes(from, to string) ([]CalendarEpisode, error) {
-	rows, err := r.db.Query(`SELECT e.id, e.series_id, e.season, e.episode, COALESCE(e.title, ''), e.air_date, e.status, s.title, COALESCE(s.poster_path, ''), s.tmdb_id
+	rows, err := r.db.Query(`SELECT e.id, e.series_id, e.season, e.episode, COALESCE(e.title, ''), e.air_date, COALESCE(e.air_at, ''), e.status, s.title, COALESCE(s.poster_path, ''), s.tmdb_id
 		FROM episodes e JOIN series s ON s.id = e.series_id
 		WHERE s.copy_of IS NULL AND s.monitored = 1 AND e.monitored = 1 AND COALESCE(e.air_date, '') <> '' AND e.air_date >= ? AND e.air_date <= ?
 		ORDER BY s.added_at DESC, s.id, e.season, e.episode`, from, to)
@@ -276,7 +279,7 @@ func (r *Repo) CalendarEpisodes(from, to string) ([]CalendarEpisode, error) {
 	for rows.Next() {
 		var e CalendarEpisode
 		var status string
-		if err := rows.Scan(&e.ID, &e.SeriesID, &e.Season, &e.Episode, &e.Title, &e.AirDate, &status, &e.SeriesName, &e.PosterPath, &e.SeriesTMDB); err != nil {
+		if err := rows.Scan(&e.ID, &e.SeriesID, &e.Season, &e.Episode, &e.Title, &e.AirDate, &e.AirAt, &status, &e.SeriesName, &e.PosterPath, &e.SeriesTMDB); err != nil {
 			return nil, fmt.Errorf("scan calendar episode: %w", err)
 		}
 		e.Status = Status(status)

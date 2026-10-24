@@ -14,6 +14,7 @@ import (
 	"github.com/rdborg/mediarium/internal/simkl"
 	"github.com/rdborg/mediarium/internal/subtitles"
 	"github.com/rdborg/mediarium/internal/trakt"
+	"github.com/rdborg/mediarium/internal/tvmaze"
 )
 
 // TestHunt and TestRSSSync re-export the unexported hunt/rssSync jobs for
@@ -21,6 +22,14 @@ import (
 // waiting on the real 30-minute/15-minute scheduler intervals.
 func (s *Server) TestHunt(ctx context.Context)    { s.hunt(ctx) }
 func (s *Server) TestRSSSync(ctx context.Context) { s.rssSync(ctx) }
+
+// SetTVmazeServer points the TVmaze client at a stand-in server.
+func (s *Server) SetTVmazeServer(baseURL string) {
+	s.tvmaze = tvmaze.New("test", tvmaze.WithBaseURL(baseURL), tvmaze.WithLimiter(tvmaze.NewLimiter(1000, time.Second)))
+}
+
+// TestSyncAirTimes runs the air-time look-up for one show.
+func (s *Server) TestSyncAirTimes(ctx context.Context, sr library.Series) { s.syncAirTimes(ctx, sr) }
 
 // TestTitleNamesJob runs the job that picks the other titles of each movie and show.
 func (s *Server) TestTitleNamesJob(ctx context.Context) { s.titleNamesJob(ctx) }

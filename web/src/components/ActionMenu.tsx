@@ -25,6 +25,7 @@ export default function ActionMenu({ label, icon, choices, onPick, disabled, tit
   const [active, setActive] = useState(0)
   const [alignRight, setAlignRight] = useState(false)
   const root = useRef<HTMLDivElement>(null)
+  const list = useRef<HTMLUListElement>(null)
   const id = useId()
 
   function openMenu() {
@@ -42,6 +43,12 @@ export default function ActionMenu({ label, icon, choices, onPick, disabled, tit
     }
     document.addEventListener('mousedown', onDoc)
     return () => document.removeEventListener('mousedown', onDoc)
+  }, [open])
+
+  // A menu that opens near the bottom of the window scrolls into view, so its
+  // last choices are not left under the edge of the screen.
+  useEffect(() => {
+    if (open) list.current?.scrollIntoView({ block: 'nearest' })
   }, [open])
 
   function pick(i: number) {
@@ -87,7 +94,7 @@ export default function ActionMenu({ label, icon, choices, onPick, disabled, tit
         <Icon name="chevron-down" size={15} />
       </button>
       {open && (
-        <ul className={`dropdown-list action-menu-list${alignRight ? ' align-right' : ''}`} role="menu" id={id} aria-label={label}>
+        <ul ref={list} className={`dropdown-list action-menu-list${alignRight ? ' align-right' : ''}`} role="menu" id={id} aria-label={label}>
           {choices.map((c, i) => (
             <li
               key={c.id}

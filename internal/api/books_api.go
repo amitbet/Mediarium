@@ -164,6 +164,11 @@ func (s *Server) handleBookSearch(w http.ResponseWriter, r *http.Request) {
 		query += " " + author
 	}
 	found, err := s.OpenLibrary.Search(r.Context(), query, 24)
+	if errors.Is(err, books.ErrBadQuery) {
+		slog.Info("open library refused a book search", "err", err)
+		writeError(w, http.StatusUnprocessableEntity, "Open Library couldn't read that search. Try fewer or simpler words.")
+		return
+	}
 	if err != nil {
 		writeUpstreamError(w, "look up books", err)
 		return
@@ -304,30 +309,100 @@ func (s *Server) handleDeleteBook(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, nil)
 }
 
+// bookSearchWait is how long a search for a book's releases may take while a
+// person waits for the page: both passes share it, and what the quick
+// indexers found by then is shown. (The page gives up after 30 seconds.)
+const bookSearchWait = 25 * time.Second
+
+// bookWaitFor is the longest a book release search a person waits for may take.
+func (s *Server) bookWaitFor() time.Duration {
+	if s.bookWait > 0 {
+		return s.bookWait
+	}
+	return bookSearchWait
+}
+
+// bookSearch is what a search for a book's releases found, and which
+// indexers it did not ask.
+type bookSearch struct {
+	Results  []indexers.Result
+	Asked    int                 // how many indexers were asked
+	Skipped  []string            // enabled indexers left out because they don't list this kind of release
+	Outcomes []indexers.Outcome  // what each indexer said, for both passes
+	All      []indexers.Instance // every indexer that could have been asked
+}
+
 // bookReleases searches the indexers for one format of a book and returns
 // the matching releases, best first.
 func (s *Server) bookReleases(ctx context.Context, b books.Book, f books.Format) ([]indexers.Result, error) {
+	found, err := s.searchBookReleases(ctx, b, f, 0)
+	return found.Results, err
+}
+
+// searchBookReleases is bookReleases with the details. Only the indexers that
+// can do this kind of release are asked: a definition-based site that lists no
+// books (or audiobooks) is left out, so a search is not held up by movie
+// sites. wait, when above zero, is the longest the whole search may take;
+// both passes share it and the releases found by then are returned.
+func (s *Server) searchBookReleases(ctx context.Context, b books.Book, f books.Format, wait time.Duration) (bookSearch, error) {
+	var found bookSearch
 	list, err := s.searchableIndexers()
 	if err != nil {
-		return nil, err
+		return found, err
+	}
+	cats := categoriesFor(f)
+	found.All = list
+	list, left := indexers.SplitByCategories(ctx, list, cats)
+	for _, inst := range left {
+		if inst.Enabled {
+			found.Skipped = append(found.Skipped, inst.Name)
+		}
+	}
+	for _, inst := range list {
+		if inst.Enabled {
+			found.Asked++
+		}
 	}
 	if len(list) == 0 {
-		return nil, nil
+		return found, nil
 	}
-	matching := func(query string) []indexers.Result {
+	if wait > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, wait)
+		defer cancel()
+	}
+	matching := func(asked []indexers.Instance, query string) []indexers.Result {
 		var out []indexers.Result
-		for _, res := range indexers.MergeResults(indexers.SearchAll(ctx, list, query, categoriesFor(f))) {
+		outcomes := indexers.SearchAll(ctx, asked, query, cats)
+		found.Outcomes = append(found.Outcomes, outcomes...)
+		for _, res := range indexers.MergeResults(outcomes) {
 			if books.Matches(res.Title, b) && books.ReleaseRank(res.Title, f) > 0 {
 				out = append(out, res)
 			}
 		}
 		return out
 	}
-	out := matching(strings.TrimSpace(b.Author + " " + b.Title))
+	out := matching(list, strings.TrimSpace(b.Author+" "+b.Title))
 	if len(out) == 0 && b.Author != "" && ctx.Err() == nil {
 		// Some indexers don't index the author: try the title alone (the
-		// release still has to name the author to match).
-		out = matching(b.Title)
+		// release still has to name the author to match). An indexer that
+		// failed or timed out the first time is not asked again: it would only
+		// take as long again.
+		failed := map[string]bool{}
+		for _, o := range found.Outcomes {
+			if o.Err != nil || o.Skipped {
+				failed[o.IndexerName] = true
+			}
+		}
+		var again []indexers.Instance
+		for _, inst := range list {
+			if !failed[inst.Name] {
+				again = append(again, inst)
+			}
+		}
+		if len(again) > 0 {
+			out = matching(again, b.Title)
+		}
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		ri, rj := books.ReleaseRank(out[i].Title, f), books.ReleaseRank(out[j].Title, f)
@@ -339,7 +414,8 @@ func (s *Server) bookReleases(ctx context.Context, b books.Book, f books.Format)
 		}
 		return out[i].Protocol == indexers.ProtocolUsenet && out[j].Protocol != indexers.ProtocolUsenet
 	})
-	return out, nil
+	found.Results = out
+	return found, nil
 }
 
 func (s *Server) handleBookReleases(w http.ResponseWriter, r *http.Request) {
@@ -352,20 +428,20 @@ func (s *Server) handleBookReleases(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, `Choose the format: "ebook" or "audiobook".`)
 		return
 	}
-	results, err := s.bookReleases(r.Context(), b, f)
+	found, err := s.searchBookReleases(r.Context(), b, f, s.bookWaitFor())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	blocked := s.searchSkipKeys()
-	out := make([]searchResultPayload, 0, len(results))
-	for _, res := range results {
+	out := make([]searchResultPayload, 0, len(found.Results))
+	for _, res := range found.Results {
 		p := s.toSearchResultPayload(res)
 		p.Blocklisted = blocked[blocklist.Key(res.Title)]
 		out = append(out, p)
 	}
 	s.markCachedPayloads(r.Context(), out)
-	writeJSON(w, http.StatusOK, out)
+	writeSearchAll(w, r, out, found.Asked, found.Outcomes, found.Skipped, found.All)
 }
 
 type bookGrabRequest struct {
@@ -448,7 +524,7 @@ func (s *Server) searchBook(bookID int64, f books.Format, retry bool) bool {
 		return false
 	}
 	blocked := s.searchSkipKeys()
-	for _, res := range filterSources(s.freshOnly(results), s.sourcesFor("")) {
+	for _, res := range filterSources(s.autoCandidates(ctx, results), s.sourcesFor("")) {
 		if searchSkips(res, blocked) {
 			continue
 		}

@@ -18,7 +18,7 @@ const blank: DownloadClientInput = {
   url: '',
   username: '',
   password: '',
-  category: 'mediarium',
+  category: '',
   categoryMovies: '',
   categoryTv: '',
   categoryMusic: '',
@@ -26,6 +26,7 @@ const blank: DownloadClientInput = {
   remotePath: '',
   localPath: '',
   removeAfterImport: false,
+  removeOnStop: true,
   linkRoot: '',
 }
 
@@ -43,6 +44,7 @@ function toInput(s: DownloadClientSettings): DownloadClientInput {
     remotePath: s.remotePath,
     localPath: s.localPath,
     removeAfterImport: s.removeAfterImport,
+    removeOnStop: s.removeOnStop,
     linkRoot: s.linkRoot,
   }
 }
@@ -163,7 +165,7 @@ export default function DownloadClientCard() {
             <label>
               {t('Category')}
               <input value={form.category} onChange={(e) => set('category', e.target.value)} placeholder="mediarium" autoComplete="off" spellCheck={false} />
-              <small className="field-help">{form.kind === 'transmission' ? t('Torrents get this label, so they are easy to find in Transmission (it needs version 3 or newer).') : t('Torrents are added in this category, so they are easy to find in the client.')}</small>
+              <small className="field-help">{form.kind === 'transmission' ? t('Torrents get this label, so they are easy to find in Transmission (it needs version 3 or newer). If you clear it and fill in a label below, a kind with none of its own gets no label. With everything empty, "mediarium" is used.') : t('Torrents are added in this category, so they are easy to find in the client. If you clear it and fill in a category below, a kind with none of its own gets no category. With everything empty, "mediarium" is used.')}</small>
             </label>
             <label>
               {t('Category for movies')}
@@ -208,6 +210,13 @@ export default function DownloadClientCard() {
               </small>
             </label>
           </div>
+          <label className="check-hint">
+            <input type="checkbox" checked={form.removeOnStop} onChange={(e) => set('removeOnStop', e.target.checked)} />
+            <span>
+              {t('When I stop or remove a download, remove it from the client too')}
+              <small>{t("Only for a torrent that Mediarium sent and that hasn't finished: it is removed with what it downloaded. A finished torrent, and one that was in the client before, stays. Blocklist & search again also removes a finished one.")}</small>
+            </span>
+          </label>
           <label className="check-hint">
             <input type="checkbox" checked={form.removeAfterImport} onChange={(e) => set('removeAfterImport', e.target.checked)} />
             <span>

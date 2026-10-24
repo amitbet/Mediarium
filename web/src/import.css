@@ -118,3 +118,21 @@
 .import-page.music-import .mi-folder { font-family: var(--font-mono); font-size: 0.72rem; color: var(--text-faint); }
 @media (max-width: 760px) { .import-page.music-import .mi-start { grid-template-columns: minmax(0, 1fr); } .mi-disc { width: 72px; height: 72px; } }
 @media (prefers-reduced-motion: reduce) { .mi-disc.spinning .kind-glyph { animation: none; } }
+
+/* by hand: where to look, and how a file comes in */
+.import-page .manual-source { display: grid; gap: 16px; padding: 16px 18px; margin: 0 0 14px; }
+.import-page .manual-folder { display: grid; gap: 6px; }
+.import-page .manual-folder > label, .import-page .manual-mode > span { font-family: var(--font-mono); font-size: 0.7rem; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-faint); }
+.import-page .manual-folder-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.import-page .manual-folder-row input { flex: 1 1 320px; min-width: 0; font-family: var(--font-mono); }
+.import-page .manual-options { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 14px 28px; }
+.import-page .manual-mode { display: grid; gap: 6px; max-width: 520px; }
+.import-page .manual-mode small { font-size: 0.8rem; color: var(--text-dim); }
+.import-page .manual-picker { display: grid; gap: 10px; padding: 12px; margin-top: 4px; border-radius: 4px 14px 14px 14px; background: color-mix(in srgb, var(--text) 3.5%, transparent); }
+.import-page .manual-picker-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.import-page .manual-picker-head code { font-family: var(--font-mono); font-size: 0.82rem; overflow-wrap: anywhere; background: none; padding: 0; }
+.import-page .manual-picker-short { display: flex; flex-wrap: wrap; gap: 6px; }
+.import-page .manual-picker-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 4px 10px; max-height: 280px; overflow: auto; }
+.import-page .manual-picker-list button { width: 100%; display: flex; align-items: center; gap: 8px; justify-content: flex-start; text-align: left; overflow-wrap: anywhere; }
+.import-page .manual-picker-empty { color: var(--text-faint); font-size: 0.84rem; }
+.import-page .manual-picker > .primary { justify-self: start; }

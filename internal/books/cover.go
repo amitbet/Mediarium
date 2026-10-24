@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/rdborg/mediarium/internal/webpimg"
 )
 
 // maxCoverBytes bounds one downloaded cover; a medium or large Open Library
@@ -95,10 +97,17 @@ func (c *Client) FetchCover(ctx context.Context, coverID int, size string) ([]by
 	if len(data) > maxCoverBytes {
 		return nil, fmt.Errorf("cover: image is larger than %d bytes", maxCoverBytes)
 	}
-	// Trust the bytes, not the header: only a real JPEG or PNG is kept.
+	// Trust the bytes, not the header: only a real JPEG, PNG or WebP is kept,
+	// and a WebP picture is kept as a JPEG.
 	switch http.DetectContentType(data) {
 	case "image/jpeg", "image/png":
 		return data, nil
+	case "image/webp":
+		jpg, err := webpimg.ToJPEG(data)
+		if err != nil {
+			return nil, fmt.Errorf("cover: %w", err)
+		}
+		return jpg, nil
 	}
 	return nil, ErrNotFound
 }

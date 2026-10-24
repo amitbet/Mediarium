@@ -101,8 +101,13 @@ func (s *Server) handleCalendarFeed(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(renderICS(entries, time.Now())))
 }
 
+// icsTimedLength is how long a timed event lasts: Mediarium does not keep
+// episode lengths, so an episode with an air time gets an hour.
+const icsTimedLength = time.Hour
+
 // renderICS writes the entries as an iCalendar file: one all-day event per
-// release or air date.
+// release or air date, and for an episode whose exact air time is known a
+// timed event (in UTC, so every calendar app shows it in its own zone).
 func renderICS(entries []calendarEntryPayload, now time.Time) string {
 	var b strings.Builder
 	line := func(s string) { b.WriteString(foldICS(s)) }
@@ -121,8 +126,14 @@ func renderICS(entries []calendarEntryPayload, now time.Time) string {
 		line("BEGIN:VEVENT")
 		line(fmt.Sprintf("UID:%s-%d@mediarium", e.Kind, e.ID))
 		line("DTSTAMP:" + stamp)
-		line("DTSTART;VALUE=DATE:" + day.Format("20060102"))
-		line("DTEND;VALUE=DATE:" + day.AddDate(0, 0, 1).Format("20060102"))
+		if at, err := time.Parse(time.RFC3339, e.AirAt); err == nil && e.Kind == "episode" {
+			at = at.UTC()
+			line("DTSTART:" + at.Format("20060102T150405Z"))
+			line("DTEND:" + at.Add(icsTimedLength).Format("20060102T150405Z"))
+		} else {
+			line("DTSTART;VALUE=DATE:" + day.Format("20060102"))
+			line("DTEND;VALUE=DATE:" + day.AddDate(0, 0, 1).Format("20060102"))
+		}
 		line("SUMMARY:" + escapeICS(icsSummary(e)))
 		line("DESCRIPTION:" + escapeICS(icsStatus(e.Status)))
 		line("TRANSP:TRANSPARENT")

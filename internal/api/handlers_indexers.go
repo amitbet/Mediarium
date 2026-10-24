@@ -33,7 +33,13 @@ type indexerPayload struct {
 	StoredSecrets []string       `json:"storedSecrets,omitempty"`
 	LastTestError string         `json:"lastTestError,omitempty"`
 	LastTestAt    string         `json:"lastTestAt,omitempty"`
-	Priority      int            `json:"priority"` // 1 to 50, lower is tried first
+	// LocalSite is set for a site from the list that runs on the person's own
+	// network: its address can be changed to their own server.
+	LocalSite bool `json:"localSite,omitempty"`
+	Priority  int  `json:"priority"` // 1 to 50, lower is tried first
+	// MinSeeders is the fewest seeders a torrent from this indexer needs to be
+	// grabbed by itself (0 = off).
+	MinSeeders int `json:"minSeeders"`
 	// Back-off: set while searches skip the indexer after repeated failures.
 	Failures    int    `json:"failures,omitempty"`    // failures in a row
 	PausedUntil string `json:"pausedUntil,omitempty"` // RFC 3339; searches skip the indexer until then
@@ -62,7 +68,7 @@ func (p indexerPayload) isCardigann() bool {
 func (s *Server) toIndexerPayload(inst indexers.Instance) indexerPayload {
 	p := indexerPayload{
 		ID: inst.ID, Name: inst.Name, Kind: string(inst.Kind), DefinitionID: inst.DefinitionID, BaseURL: inst.BaseURL,
-		Protocol: string(inst.Protocol), Enabled: inst.Enabled, LastTestError: inst.LastTestError, RequestsPerDay: inst.RequestsPerDay,
+		Protocol: string(inst.Protocol), Enabled: inst.Enabled, LastTestError: inst.LastTestError, RequestsPerDay: inst.RequestsPerDay, MinSeeders: inst.MinSeeders,
 		HasAPIKey: inst.APIKey != "", Priority: indexerRank(inst.Priority),
 	}
 	if !inst.LastTestAt.IsZero() {
@@ -77,6 +83,7 @@ func (s *Server) toIndexerPayload(inst indexers.Instance) indexerPayload {
 	p.Settings = map[string]any{}
 	// the local cache only: listing indexers must never trigger a download
 	sum, known := s.Definitions.CachedSummary(inst.DefinitionID)
+	p.LocalSite = known && sum.Local && !sum.Custom
 	for k, v := range inst.Settings {
 		secret := indexers.SecretSetting("", k)
 		if known {
@@ -128,6 +135,7 @@ func (s *Server) handleCreateIndexer(w http.ResponseWriter, r *http.Request) {
 	req.Name, req.BaseURL, req.APIKey = strings.TrimSpace(req.Name), strings.TrimSpace(req.BaseURL), strings.TrimSpace(req.APIKey)
 	if rejectBad(w,
 		checkRequestsPerDay(req.RequestsPerDay),
+		checkMinSeeders(req.MinSeeders),
 		checkRequired(req.Name, "Give this indexer a name, for example the name of the website."),
 		checkIndexerName(req.Name),
 		checkRequired(req.BaseURL, "Add the address of the indexer, for example https://api.example.com."),
@@ -144,7 +152,7 @@ func (s *Server) handleCreateIndexer(w http.ResponseWriter, r *http.Request) {
 	}
 	created, err := s.IndexerRepo.Create(indexers.Instance{
 		Name: req.Name, DefinitionID: req.DefinitionID, BaseURL: req.BaseURL, APIKey: req.APIKey, Protocol: protocol, Enabled: true,
-		RequestsPerDay: req.RequestsPerDay,
+		RequestsPerDay: req.RequestsPerDay, MinSeeders: req.MinSeeders,
 	}, nil)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -227,15 +235,14 @@ func (s *Server) createCardigannIndexer(w http.ResponseWriter, r *http.Request, 
 	if !ok {
 		return
 	}
-	if rejectBad(w, checkRequestsPerDay(req.RequestsPerDay)) {
+	if rejectBad(w, checkRequestsPerDay(req.RequestsPerDay), checkMinSeeders(req.MinSeeders)) {
 		return
 	}
 	base := strings.TrimSpace(req.BaseURL)
 	if base == "" && len(sum.Links) > 0 {
 		base = sum.Links[0]
 	}
-	if !sum.HasLink(base) {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("The address must be one of the site's own addresses: %s", strings.Join(sum.Links, ", ")))
+	if !siteAddressAllowed(w, sum, base) {
 		return
 	}
 	settingsMap, err := cardigannSettings(sum, req.Settings)
@@ -256,13 +263,48 @@ func (s *Server) createCardigannIndexer(w http.ResponseWriter, r *http.Request, 
 	}
 	created, err := s.IndexerRepo.Create(indexers.Instance{
 		Name: name, Kind: indexers.KindCardigann, DefinitionID: sum.ID, BaseURL: base, Protocol: protocol,
-		Enabled: true, Settings: settingsMap, RequestsPerDay: req.RequestsPerDay,
+		Enabled: true, Settings: settingsMap, RequestsPerDay: req.RequestsPerDay, MinSeeders: req.MinSeeders,
 	}, sum.IsSecret)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusCreated, s.toIndexerPayload(created))
+}
+
+// localSiteExample is the example address shown in messages about a site on
+// the person's own network.
+const localSiteExample = "http://192.168.1.10:3333"
+
+// siteAddressAllowed judges the address for a site from the list. A site that
+// runs on the person's own network (a BitMagnet, say) takes any web address,
+// because the one in its definition is only an example; every other site keeps
+// to the addresses its definition lists. It writes the refusal and returns
+// false when the address is not allowed.
+func siteAddressAllowed(w http.ResponseWriter, sum indexers.DefinitionSummary, addr string) bool {
+	addr = strings.TrimSpace(addr)
+	if sum.Local && !sum.Custom {
+		switch indexers.CheckLocalSiteAddress(addr) {
+		case indexers.AddrOK:
+			return true
+		case indexers.AddrEmpty:
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("Add the address of your server, for example %s.", localSiteExample))
+		case indexers.AddrTooLong:
+			writeError(w, http.StatusBadRequest, "The address is too long. It can have at most 200 characters.")
+		case indexers.AddrUserInfo:
+			writeError(w, http.StatusBadRequest, "Leave the user name and password out of the address. Sign-in details go in the site's settings.")
+		case indexers.AddrQuery:
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("Leave everything after a ? or # out of the address. Use only the server and the port, for example %s.", localSiteExample))
+		default:
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("The address has to start with http or https, then the server and, if needed, the port, for example %s.", localSiteExample))
+		}
+		return false
+	}
+	if !sum.HasLink(addr) {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("The address must be one of the site's own addresses: %s", strings.Join(sum.Links, ", ")))
+		return false
+	}
+	return true
 }
 
 type indexerUpdate struct {
@@ -275,6 +317,9 @@ type indexerUpdate struct {
 	// RequestsPerDay is the most requests a day Mediarium makes to the indexer
 	// (0 = no limit set). Left out keeps the saved value.
 	RequestsPerDay *int `json:"requestsPerDay"`
+	// MinSeeders is the fewest seeders a torrent needs to be grabbed by itself
+	// (0 = off). Left out keeps the saved value.
+	MinSeeders *int `json:"minSeeders"`
 }
 
 // handleUpdateIndexer edits a saved indexer. Every field is optional: what
@@ -315,6 +360,12 @@ func (s *Server) handleUpdateIndexer(w http.ResponseWriter, r *http.Request) {
 		}
 		inst.RequestsPerDay = *req.RequestsPerDay
 	}
+	if req.MinSeeders != nil {
+		if rejectBad(w, checkMinSeeders(*req.MinSeeders)) {
+			return
+		}
+		inst.MinSeeders = *req.MinSeeders
+	}
 	var secret indexers.Secrets
 	if inst.IsCardigann() {
 		sum, ok := s.definitionFor(r.Context(), w, inst.DefinitionID)
@@ -323,8 +374,9 @@ func (s *Server) handleUpdateIndexer(w http.ResponseWriter, r *http.Request) {
 		}
 		secret = sum.IsSecret
 		if req.BaseURL != nil && strings.TrimSpace(*req.BaseURL) != "" {
-			if !sum.HasLink(*req.BaseURL) {
-				writeError(w, http.StatusBadRequest, fmt.Sprintf("The address must be one of the site's own addresses: %s", strings.Join(sum.Links, ", ")))
+			// An address that is already saved is not checked again, so a site
+			// whose definition changed can still be renamed or switched off.
+			if v := strings.TrimSpace(*req.BaseURL); v != inst.BaseURL && !siteAddressAllowed(w, sum, v) {
 				return
 			}
 			inst.BaseURL = strings.TrimSpace(*req.BaseURL)
@@ -453,6 +505,18 @@ func (s *Server) flareSolverrSetting() string {
 	return strings.TrimSpace(v)
 }
 
+// indexerTestBudget is how long the check of one indexer may take. A site that
+// goes through FlareSolverr needs a minute or more for the Cloudflare check.
+func (s *Server) indexerTestBudget(inst indexers.Instance) time.Duration {
+	if !inst.IsCardigann() {
+		return 2 * connTestTimeout
+	}
+	if s.flareSolverrURL() != "" {
+		return 100 * time.Second
+	}
+	return 2 * connTestTimeout
+}
+
 // testIndexerInstance runs the right connection test for any kind of indexer.
 func (s *Server) testIndexerInstance(ctx context.Context, inst indexers.Instance) connTestResult {
 	if !inst.IsCardigann() {
@@ -460,14 +524,17 @@ func (s *Server) testIndexerInstance(ctx context.Context, inst indexers.Instance
 	}
 	// Passing a Cloudflare check through FlareSolverr can take up to a minute
 	// the first time; after that its cookies are reused and requests are quick.
-	timeout := 2 * connTestTimeout
-	if s.flareSolverrURL() != "" {
-		timeout = 100 * time.Second
-	}
+	timeout := s.indexerTestBudget(inst)
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	res, err := s.Cardigann.Test(ctx, inst)
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) && s.flareSolverrURL() != "" {
+			return connTestResult{Message: fmt.Sprintf("The check waited %d seconds for FlareSolverr and it didn't finish. Check that FlareSolverr is running and has internet access, then try again.", int(timeout/time.Second))}
+		}
+		if indexers.LoopbackSite(inst.BaseURL) && strings.Contains(strings.ToLower(err.Error()), "connection refused") {
+			return connTestResult{Message: fmt.Sprintf("The server refused the connection. Check it's running and the address and port are right. Inside Docker, %s is the Mediarium container itself, so use the address of the machine that runs it, for example %s.", "127.0.0.1", localSiteExample)}
+		}
 		return connTestResult{Message: plainerror.Message(err)}
 	}
 	if res.Releases == 0 {

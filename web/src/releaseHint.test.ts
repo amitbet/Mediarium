@@ -1,7 +1,7 @@
 // Run with: npm test (uses node's built-in test runner, no extra packages).
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { releaseHint } from './releaseHint.ts'
+import { bookReleaseHint, releaseHint, skippedHint } from './releaseHint.ts'
 
 const down = [{ name: 'Example NZB Site', message: 'Could not reach Example NZB Site.' }]
 
@@ -37,4 +37,22 @@ test('releases found: only a note when someone did not answer', () => {
   const h = releaseHint(2, down, 5)
   assert.equal(h?.empty, false)
   assert.equal(h?.text, '1 indexer did not answer: Example NZB Site. The list may be missing some releases.')
+})
+
+test('indexers left out of a book search are named', () => {
+  assert.equal(skippedHint([]), null)
+  assert.equal(skippedHint(['Movie Site']), "1 indexer that doesn't do books or audiobooks was skipped: Movie Site.")
+  assert.equal(skippedHint(['A', 'B', 'C']), "3 indexers that don't do books or audiobooks were skipped: A, B, C.")
+})
+
+test('a book search with every indexer left out does not say none is set up', () => {
+  const h = bookReleaseHint(0, [], 0, ['Movie Site'])
+  assert.equal(h?.text, 'None of your indexers lists books or audiobooks. Check them under')
+  assert.equal(h?.link, true)
+  assert.equal(h?.empty, true)
+  // Nothing skipped and nothing asked is still a missing setup.
+  assert.equal(bookReleaseHint(0, [], 0, [])?.text, 'No indexer is set up yet. Add one under')
+  // Otherwise it reads as before.
+  assert.equal(bookReleaseHint(2, [], 5, ['X']), null)
+  assert.match(bookReleaseHint(2, [], 0, ['X'])?.text ?? '', /^No matching releases right now/)
 })

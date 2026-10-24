@@ -89,7 +89,7 @@ func TestOnlyTheSourcesSwitchedOnAreSearched(t *testing.T) {
 			url := fmt.Sprintf("%s/api/movies/%d/subtitles?lang=en", ts.env.baseURL, m.ID)
 
 			// A manual search.
-			list := getJSON[[]map[string]any](t, ts.env.client, url)
+			list := subtitleSearchResults(t, ts.env.client, url)
 			got := map[string]bool{}
 			for _, r := range list {
 				src, _ := r["source"].(string)

@@ -225,6 +225,11 @@ func (s *Service) UpdateAccount(id int64, upd AccountUpdate) (*Account, error) {
 		if err := set(`UPDATE users SET is_admin = ? WHERE id = ?`, *upd.IsAdmin, id); err != nil {
 			return nil, err
 		}
+		if !*upd.IsAdmin {
+			if err := revokeUserGrants(tx.Exec, id); err != nil { // apps signed in over MCP as an administrator
+				return nil, err
+			}
+		}
 		if *upd.IsAdmin {
 			if err := set(`UPDATE users SET is_viewer = 0 WHERE id = ?`, id); err != nil {
 				return nil, err
@@ -239,6 +244,9 @@ func (s *Service) UpdateAccount(id int64, upd AccountUpdate) (*Account, error) {
 			if err := set(`UPDATE users SET is_admin = 0 WHERE id = ?`, id); err != nil {
 				return nil, err
 			}
+			if err := revokeUserGrants(tx.Exec, id); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if upd.Disabled != nil {
@@ -247,6 +255,9 @@ func (s *Service) UpdateAccount(id int64, upd AccountUpdate) (*Account, error) {
 		}
 		if *upd.Disabled {
 			if err := set(`DELETE FROM sessions WHERE user_id = ?`, id); err != nil {
+				return nil, err
+			}
+			if err := revokeUserGrants(tx.Exec, id); err != nil {
 				return nil, err
 			}
 		}
@@ -270,6 +281,9 @@ func (s *Service) UpdateAccount(id int64, upd AccountUpdate) (*Account, error) {
 			if err := set(q, id); err != nil {
 				return nil, err
 			}
+		}
+		if err := revokeUserGrants(tx.Exec, id); err != nil {
+			return nil, err
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -302,6 +316,9 @@ func (s *Service) DeleteAccount(id int64) error {
 		if n == 0 {
 			return ErrLastAdmin
 		}
+	}
+	if err := revokeUserGrants(tx.Exec, id); err != nil {
+		return fmt.Errorf("delete account: %w", err)
 	}
 	for _, q := range []string{
 		`DELETE FROM sessions WHERE user_id = ?`,

@@ -37,6 +37,9 @@ type Result struct {
 	Peers        int    // torrent-only (Torznab attr), 0 for usenet results
 	InfoHash     string // torrent-only, when the indexer reports it
 	Priority     int    // the indexer's priority (1 to 50, lower is preferred); set by the engine
+	// MinSeeders is the minimum the indexer was given for torrents (0 = off);
+	// set by the engine on torrent results only.
+	MinSeeders int
 	// Cached is set by the search code (never by an indexer) when the debrid
 	// service in use already has this torrent. False means "not cached or not
 	// known".

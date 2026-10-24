@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { api, type SubtitleQuota, type SubtitleResult, type SubtitleSlot } from '../api'
+import { api, type SubtitleDiagnostic, type SubtitleQuota, type SubtitleResult, type SubtitleSlot } from '../api'
 import { t } from '../i18n'
 import { languageName } from '../languages'
 import { slotName } from '../subtitleProfiles'
+import { diagnosticLine } from '../subtitleDiagnostics'
 import { SUBTITLE_FIRST_DIRECTION, sortSubtitles, subtitleFit, subtitleRating, subtitleSite, type SortDir, type SubtitleSortKey } from '../releaseSort'
 import Icon from './Icon'
 import QuotaNote from './QuotaNote'
@@ -20,6 +21,7 @@ export default function SubtitlesPanel({ kind, id }: { kind: 'movie' | 'episode'
   const [slots, setSlots] = useState<SubtitleSlot[]>([])
   const [lang, setLang] = useState('')
   const [results, setResults] = useState<SubtitleResult[] | null>(null)
+  const [diagnostics, setDiagnostics] = useState<SubtitleDiagnostic[]>([])
   const [searching, setSearching] = useState(false)
   const [sort, setSort] = useState<{ key: SubtitleSortKey; dir: SortDir } | null>(null)
   const [status, setStatus] = useState('')
@@ -47,10 +49,13 @@ export default function SubtitlesPanel({ kind, id }: { kind: 'movie' | 'episode'
     setLang(language)
     setSearching(true)
     setResults(null)
+    setDiagnostics([])
     setError('')
     setStatus('')
     try {
-      setResults(await (kind === 'movie' ? api.searchSubtitles(id, language, variant) : api.searchEpisodeSubtitles(id, language, variant)))
+      const found = await (kind === 'movie' ? api.searchSubtitles(id, language, variant) : api.searchEpisodeSubtitles(id, language, variant))
+      setResults(found.results)
+      setDiagnostics(found.diagnostics ?? [])
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -126,12 +131,24 @@ export default function SubtitlesPanel({ kind, id }: { kind: 'movie' | 'episode'
       {status && <p style={{ color: 'var(--text-dim)' }}>{status}</p>}
       {searching && <p style={{ color: 'var(--text-dim)' }}>{t('Searching…')}</p>}
       {results !== null && results.length === 0 && (
-        <p style={{ color: 'var(--text-dim)' }}>
-          {t('No {language} subtitles found.', { language: languageName(lang) })}{' '}
-          <button className="btn-sm" onClick={() => setResults(null)}>
-            {t('Close')}
-          </button>
-        </p>
+        <>
+          <p style={{ color: 'var(--text-dim)' }}>
+            {t('No {language} subtitles found.', { language: languageName(lang) })}{' '}
+            <button className="btn-sm" onClick={() => setResults(null)}>
+              {t('Close')}
+            </button>
+          </p>
+          {diagnostics.length > 0 && (
+            <details className="subtitle-details" style={{ color: 'var(--text-dim)' }}>
+              <summary>{t('Details')}</summary>
+              <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+                {diagnostics.map((d, i) => (
+                  <li key={i}>{diagnosticLine(d)}</li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </>
       )}
       {results !== null && results.length > 0 && (
         <>

@@ -384,3 +384,18 @@ func TestExtractReal7zEncrypted7z(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractSplit7zStartsFromTheFirstPiece(t *testing.T) {
+	ex := fake7z(t, listing7z("movie.mkv|4|-rw-r--r--"), "echo data > movie.mkv\n")
+	root := t.TempDir()
+	first := filepath.Join(root, "release.7z.001")
+	writeTestFile(t, first, []byte("fake"))
+	writeTestFile(t, filepath.Join(root, "release.7z.002"), []byte("fake"))
+	dest := filepath.Join(root, "dest")
+	if err := ex.Extract(first, dest); err != nil {
+		t.Fatalf("Extract(%s) = %v, want it unpacked as a 7z set", filepath.Base(first), err)
+	}
+	if got := entriesIn(t, dest); len(got) != 1 || got[0] != "movie.mkv" {
+		t.Fatalf("unpacked %v, want movie.mkv", got)
+	}
+}

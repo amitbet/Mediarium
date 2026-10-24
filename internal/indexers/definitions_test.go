@@ -272,3 +272,35 @@ func TestSavedUnsupportedMarkIsCheckedAgain(t *testing.T) {
 		t.Fatalf("a site that the engine runs fine is still marked unsupported: %+v", sum)
 	}
 }
+
+// A site list saved by an older version has no "local" mark: it is worked out
+// from the links when the list is loaded, so the address of a site on the
+// person's own network can be edited without downloading the list again.
+func TestSavedListGetsTheLocalMark(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "indexer-definitions")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	idx := DefinitionIndex{UpdatedAt: time.Now(), Builtins: builtinFingerprint(), Definitions: []DefinitionSummary{
+		{ID: "bitmagnet", Name: "BitMagnet", Links: []string{"http://127.0.0.1:3333/", "http://bitmagnet:3333/"}, Supported: true},
+		{ID: "public", Name: "Public", Links: []string{"https://public.example/"}, Supported: true},
+	}}
+	raw, _ := json.Marshal(idx)
+	if err := os.WriteFile(filepath.Join(dir, "index.json"), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := NewDefinitionStore(dir)
+	store.SourceURL = "http://127.0.0.1:1/never"
+	// A fresh list is used as it is; the marks are worked out when it is read.
+	got, _ := store.Catalogue(context.Background(), false)
+	if got == nil {
+		t.Fatal("no catalogue")
+	}
+	local := map[string]bool{}
+	for _, d := range got.Definitions {
+		local[d.ID] = d.Local
+	}
+	if !local["bitmagnet"] || local["public"] {
+		t.Errorf("local marks: %v", local)
+	}
+}

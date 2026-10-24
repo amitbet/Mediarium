@@ -34,6 +34,7 @@ export default function ServiceKeyCard({
   allowOverride,
   usingOwnKey,
   limitNote,
+  savedLabel,
   embedded,
   children,
 }: {
@@ -52,6 +53,8 @@ export default function ServiceKeyCard({
   allowOverride?: boolean
   usingOwnKey?: boolean
   limitNote?: ReactNode
+  // What the badge says once a key is saved, when "connected" would mislead (Simkl: the account is connected separately).
+  savedLabel?: string
   // Inside another card (the subtitle sources): no card, heading or badges of its own.
   embedded?: boolean
   children?: ReactNode
@@ -109,12 +112,12 @@ export default function ServiceKeyCard({
         <h2>
           {title}{' '}
           {builtIn ? (
-            <span className="req-badge included">{allowOverride ? (usingOwnKey ? t('Your own key') : t('Connected')) : t('Included')}</span>
+            <span className="req-badge included">{allowOverride ? (usingOwnKey ? t('Your own key') : (savedLabel ?? t('Connected'))) : t('Included')}</span>
           ) : (
             <span className={`req-badge ${required ? 'required' : 'optional'}`}>{required ? t('Required') : t('Optional')}</span>
           )}{' '}
           {builtIn ? null : (
-            <span className={`badge ${configured ? 'downloaded' : 'missing'}`}>{configured ? t('connected') : t('not set up')}</span>
+            <span className={`badge ${configured ? 'downloaded' : 'missing'}`}>{configured ? (savedLabel ?? t('connected')) : t('not set up')}</span>
           )}
         </h2>
       )}

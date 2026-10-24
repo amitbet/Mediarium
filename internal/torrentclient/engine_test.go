@@ -32,6 +32,7 @@ func TestSeedGoalMet(t *testing.T) {
 		{"time not reached", mediarium.SeedGoal{Time: time.Hour}, 0, gib, 59 * time.Minute, false},
 		{"either one is enough", mediarium.SeedGoal{Ratio: 5, Time: time.Hour}, gib, gib, 2 * time.Hour, true},
 		{"unknown size never meets a ratio", mediarium.SeedGoal{Ratio: 1}, gib, 0, time.Minute, false},
+		{"do not seed is met at once", mediarium.SeedGoal{NoSeed: true}, 0, gib, 0, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

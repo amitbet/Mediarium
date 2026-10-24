@@ -22,8 +22,8 @@ func IsAudioFile(path string) bool { return audioExtensions[strings.ToLower(file
 // artworkNames are the cover images kept with an album: media servers and
 // players look for these names.
 var artworkNames = map[string]bool{
-	"cover.jpg": true, "cover.jpeg": true, "cover.png": true,
-	"folder.jpg": true, "folder.jpeg": true, "folder.png": true,
+	"cover.jpg": true, "cover.jpeg": true, "cover.png": true, "cover.webp": true,
+	"folder.jpg": true, "folder.jpeg": true, "folder.png": true, "folder.webp": true,
 }
 
 // IsArtwork reports whether path is an album cover image kept on import.

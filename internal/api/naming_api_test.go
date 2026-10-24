@@ -57,3 +57,80 @@ func TestNamingFormatsFromRadarrAndSonarr(t *testing.T) {
 		t.Fatalf("token list: %d tokens, %d schemes", len(tokens), len(schemes))
 	}
 }
+
+// Every ready-made format must pass the same check a person's own format
+// does, and save, for movies and for TV. The TRaSH formats are long, so this
+// guards the length limit too.
+func TestEveryNamingSchemeSaves(t *testing.T) {
+	_, base, client := loginNewServer(t)
+	list := getJSON[map[string]any](t, client, base+"/api/settings/naming-tokens")
+	schemes, _ := list["schemes"].([]any)
+	if len(schemes) == 0 {
+		t.Fatal("no schemes")
+	}
+	for _, raw := range schemes {
+		sc, _ := raw.(map[string]any)
+		id, _ := sc["id"].(string)
+		movie, _ := sc["movie"].(string)
+		episode, _ := sc["episode"].(string)
+		t.Run(id, func(t *testing.T) {
+			saved := putJSONStatus(t, client, base+"/api/settings", map[string]any{"namingPreset": "custom", "movieNameFormat": movie, "episodeNameFormat": episode}, http.StatusOK)
+			if saved["movieNameFormat"] != movie || saved["episodeNameFormat"] != episode {
+				t.Fatalf("saved = %v", saved)
+			}
+		})
+	}
+	long := strings.Repeat("{Movie Title} ", 60)
+	bad := putJSONStatus(t, client, base+"/api/settings", map[string]any{"namingPreset": "custom", "movieNameFormat": long}, http.StatusBadRequest)
+	if msg, _ := bad["error"].(string); !strings.Contains(msg, "500 characters") {
+		t.Fatalf("too long = %v", bad)
+	}
+}
+
+// The folder formats save, preview in the sample's path, and are checked like
+// the file name formats.
+func TestFolderFormatsSavePreviewAndCheck(t *testing.T) {
+	_, base, client := loginNewServer(t)
+	list := getJSON[map[string]any](t, client, base+"/api/settings/naming-tokens")
+	folderSchemes, _ := list["folderSchemes"].([]any)
+	if len(folderSchemes) < 5 {
+		t.Fatalf("folder schemes = %v", list["folderSchemes"])
+	}
+	for _, raw := range folderSchemes {
+		sc, _ := raw.(map[string]any)
+		id, _ := sc["id"].(string)
+		movie, _ := sc["movie"].(string)
+		series, _ := sc["series"].(string)
+		saved := putJSONStatus(t, client, base+"/api/settings", map[string]any{"namingPreset": "custom", "movieFolderFormat": movie, "seriesFolderFormat": series}, http.StatusOK)
+		if saved["movieFolderFormat"] != movie || saved["seriesFolderFormat"] != series {
+			t.Fatalf("scheme %s saved = %v", id, saved)
+		}
+	}
+
+	p := getJSON[map[string]any](t, client, base+"/api/settings/naming-preview?format="+url.QueryEscape("{Movie Title} ({Year})")+"&folder="+url.QueryEscape("{Movie CleanTitle} ({Release Year}) [tmdbid-{TmdbId}]"))
+	if p["folder"] != "Example Movie (2024) [tmdbid-12345]" || p["problem"] != nil {
+		t.Fatalf("movie preview = %v", p)
+	}
+	p = getJSON[map[string]any](t, client, base+"/api/settings/naming-preview?kind=tv&folder="+url.QueryEscape("{Series TitleYear} {tmdb-{TmdbId}}"))
+	if p["folder"] != "Example Show (2023) {tmdb-67890}/Season 01" || p["problem"] != nil {
+		t.Fatalf("show preview = %v", p)
+	}
+	// Without a folder format the preview shows the usual folder.
+	p = getJSON[map[string]any](t, client, base+"/api/settings/naming-preview?kind=tv")
+	if p["folder"] != "Example Show (2023)/Season 01" {
+		t.Fatalf("default show preview = %v", p)
+	}
+	p = getJSON[map[string]any](t, client, base+"/api/settings/naming-preview?folder="+url.QueryEscape("{Movie Title} [{Quality}]"))
+	if msg, _ := p["problem"].(string); !strings.Contains(msg, "{Quality}") {
+		t.Fatalf("quality in a folder = %v", p)
+	}
+
+	for _, bad := range []map[string]any{
+		{"namingPreset": "custom", "movieFolderFormat": "{Release Year}"},
+		{"namingPreset": "custom", "seriesFolderFormat": "{Series Title}/{Season}"},
+		{"namingPreset": "custom", "seriesFolderFormat": "{Series Title} {Made Up}"},
+		{"namingPreset": "custom", "movieFolderFormat": strings.Repeat("{Movie Title} ", 60)},
+	} {
+		putJSONStatus(t, client, base+"/api/settings", bad, http.StatusBadRequest)
+	}
+}

@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/rdborg/mediarium/internal/indexers"
 )
 
 // The shapes below are the parts of the Radarr/Sonarr v3 and Prowlarr v1
@@ -113,6 +115,24 @@ type prowlarrIndexer struct {
 	Capabilities   struct {
 		Categories []prowlarrCategory `json:"categories"`
 	} `json:"capabilities"`
+}
+
+// minSeeders is the fewest seeders Prowlarr was told a torrent indexer's
+// releases need ("minimumSeeders", also called "appMinimumSeeders" in the
+// torrent settings), 0 when it has none or the number is not usable.
+func (p prowlarrIndexer) minSeeders() int {
+	for _, name := range []string{"minimumSeeders", "torrentBaseSettings.appMinimumSeeders", "appMinimumSeeders"} {
+		raw, ok := p.field(name)
+		if !ok {
+			continue
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(raw))
+		if err != nil || n <= 0 {
+			continue
+		}
+		return indexers.ClampMinSeeders(n)
+	}
+	return 0
 }
 
 // field returns a field's value as text ("" when missing or null). Numbers

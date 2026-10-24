@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { api, can, isAdmin, type Book, type BookFormat, type BulkResult, type BulkTitle, type CollectionListItem, type Movie, type MusicArtist, type QualityProfile, type QueueItem, type Series, type SourcePref } from '../api'
+import { api, can, isAdmin, type Book, type BookFormat, type BulkResult, type BulkTitle, type CollectionListItem, type MediaSummary, type Movie, type MusicArtist, type QualityProfile, type QueueItem, type Series, type SourcePref } from '../api'
 import { useAuth } from '../AuthContext'
 import { defaultProfileFor } from '../profileDefaults'
 import { useModules, type MediaKind } from '../ModulesContext'
@@ -12,6 +12,7 @@ import BulkBar from '../components/BulkBar'
 import { BulkTagMenu, TagChips } from '../components/Tags'
 import Dropdown from '../components/Dropdown'
 import Icon, { type IconName } from '../components/Icon'
+import { isFinishedShow, isRunningShow, showRibbon, showStatusLabel } from '../showStatus'
 import KindGlyph from '../components/KindGlyph'
 import MoveToFolderDialog from '../components/MoveToFolderDialog'
 import PosterCard, { PosterFallback, type CardAction } from '../components/PosterCard'
@@ -32,6 +33,9 @@ import { useUrlState } from '../useUrlState'
 import { plural, t, tx, st } from '../i18n'
 import { compareTitles } from '../titleSort'
 import { looseIncludes } from '../looseText'
+import { largestFirst, libraryTotalText, sumBytes } from '../diskTotals'
+import { redoAnswerText, redoRequest } from '../shortFile'
+import { fileFilterOptions, fileFiltersActive, langName, matchesFileFilters, NO_FILE_FILTERS, type FileFilters } from '../fileInfo'
 
 type Kind = 'movie' | 'tv'
 type View = 'grid' | 'list'
@@ -64,7 +68,9 @@ interface Item {
   copies: number // second copies kept in another quality
   released: string // "2024-03-01", or the year alone when that is all there is
   sizeBytes: number // on disk
-  ended: boolean // a show that has finished (TMDB says Ended or Canceled)
+  showStatus: string // where a show stands (ended, canceled, continuing, upcoming), '' for movies and shows not read yet
+  media?: MediaSummary // what the files hold (codecs, HDR, audio and subtitle languages), once they have been read
+  shortFiles: number // files far shorter than the movie or episode should be (fakes, cut-off downloads)
 }
 
 // The most titles one "search now" for a selection looks up (the server enforces it).
@@ -100,7 +106,9 @@ function fromMovie(m: Movie, queue: QueueItem[]): Item {
     copies: m.copies ?? 0,
     released: m.releaseDate || (m.year ? String(m.year) : ''),
     sizeBytes: m.sizeBytes ?? 0,
-    ended: false,
+    showStatus: '',
+    media: m.media,
+    shortFiles: m.shortFile ? 1 : 0,
   }
 }
 
@@ -114,7 +122,9 @@ function fromSeries(s: Series, queue: QueueItem[]): Item {
     copies: s.copies ?? 0,
     released: s.firstAirDate || (s.year ? String(s.year) : ''),
     sizeBytes: s.sizeBytes ?? 0,
-    ended: s.showStatus === 'ended',
+    showStatus: s.showStatus ?? '',
+    media: s.media,
+    shortFiles: s.shortFiles ?? 0,
   }
 }
 
@@ -127,10 +137,16 @@ const STATE_FILTERS: { id: string; label: string; test: (i: Item) => boolean }[]
   { id: 'partial', label: t('Partial'), test: (i) => i.state.key === 'partial' },
   { id: 'added', label: t('Not monitored'), test: (i) => i.state.key === 'added' },
   { id: 'failed', label: t('Failed'), test: (i) => i.state.key === 'failed' },
+  { id: 'incomplete', label: t('Looks incomplete'), test: (i) => i.shortFiles > 0 },
 ]
 // The symbol each state filter wears (the same ones the posters' pills use).
-const FILTER_ICON: Record<string, IconName> = { all: 'grid', downloaded: 'check', downloading: 'download', pending: 'clock', searching: 'search', partial: 'download', added: 'bookmark', failed: 'warning' }
-const FILTERS: Record<Kind, { id: string; label: string; test: (i: Item) => boolean }[]> = { movie: STATE_FILTERS, tv: STATE_FILTERS }
+const FILTER_ICON: Record<string, IconName> = { ended: 'stop', continuing: 'play', all: 'grid', downloaded: 'check', downloading: 'download', pending: 'clock', searching: 'search', partial: 'download', added: 'bookmark', failed: 'warning', incomplete: 'warning' }
+// Shows can also be told apart by whether more episodes are coming.
+const SHOW_FILTERS = [
+  { id: 'ended', label: t('Ended'), test: (i: Item) => isFinishedShow(i.showStatus) },
+  { id: 'continuing', label: t('Continuing'), test: (i: Item) => isRunningShow(i.showStatus) },
+]
+const FILTERS: Record<Kind, { id: string; label: string; test: (i: Item) => boolean }[]> = { movie: STATE_FILTERS, tv: [...STATE_FILTERS, ...SHOW_FILTERS] }
 
 // Your library: movies and shows as posters or a list, with the things you do
 // most a click away on every item (search for a release, monitor, open,
@@ -154,7 +170,7 @@ export default function Library() {
   // Searching and monitoring need the "manage" permission; a viewer only looks.
   const canManage = can(me, 'manage')
   // The tab and the filters live in the address, so Back from a title brings the list back as it was.
-  const [ui, patchUi] = useUrlState({ kind: 'movie', st: 'all', q: '', genre: '', tag: '', decade: '', collection: '' })
+  const [ui, patchUi] = useUrlState({ kind: 'movie', st: 'all', q: '', genre: '', tag: '', decade: '', collection: '', ...NO_FILE_FILTERS })
   const { on } = useModules()
   const musicOn = on('music')
   const booksOn = on('ebooks') || on('audiobooks')
@@ -214,6 +230,8 @@ export default function Library() {
   const decade = ui.decade
   const setDecade = (v: string) => patchUi({ decade: v })
   const collection = ui.collection
+  // What the files hold: video codec, HDR, resolution, audio and subtitle languages (read from the files' headers).
+  const fileFilters: FileFilters = useMemo(() => ({ vc: ui.vc, hdr: ui.hdr, res: ui.res, al: ui.al, ac: ui.ac, sl: ui.sl, nal: ui.nal, nsl: ui.nsl }), [ui.vc, ui.hdr, ui.res, ui.al, ui.ac, ui.sl, ui.nal, ui.nsl])
   const setCollection = (v: string) => patchUi({ collection: v })
   // The series of films (trilogies, franchises) with a film in the library, for the Collection filter.
   const [collections, setCollections] = useState<CollectionListItem[]>([])
@@ -293,20 +311,38 @@ export default function Library() {
         (!genre || i.genres.includes(genre)) &&
         (!tag || i.tags.some((t) => t.toLowerCase() === tag.toLowerCase())) &&
         (!decade || (i.year >= Number(decade) && i.year < Number(decade) + 10)) &&
-        (!inCollection || inCollection.has(i.id)),
+        (!inCollection || inCollection.has(i.id)) &&
+        matchesFileFilters(i.media, fileFilters),
     )
     if (sort === 'title') list.sort((a, b) => compareTitles(a.title, b.title))
     else if (sort === 'released') list.sort((a, b) => b.released.localeCompare(a.released) || compareTitles(a.title, b.title))
-    else if (sort === 'size') list.sort((a, b) => b.sizeBytes - a.sizeBytes || compareTitles(a.title, b.title))
+    else if (sort === 'size') list.sort((a, b) => largestFirst(a, b, (x, y) => compareTitles(x.title, y.title)))
     else if (sort === 'status') list.sort((a, b) => a.state.key.localeCompare(b.state.key) || compareTitles(a.title, b.title))
     if (reverse) list.reverse()
     return list
-  }, [items, kind, filter, text, sort, reverse, genre, tag, decade, collection, collections])
+  }, [items, kind, filter, text, sort, reverse, genre, tag, decade, collection, collections, fileFilters])
   // Everything that narrows the list (sorting does not), and the way back.
-  const filtersActive = text.trim() !== '' || filter !== 'all' || genre !== '' || tag !== '' || decade !== '' || (kind === 'movie' && collection !== '')
+  const filtersActive =text.trim() !== '' || filter !== 'all' || genre !== '' || tag !== '' || decade !== '' || (kind === 'movie' && collection !== '') || fileFiltersActive(fileFilters)
+  // What the files of this tab take on disk, for the line at the end of the chips.
+  const totalText = useMemo(() => libraryTotalText(sumBytes(items ?? []), sumBytes(shown ?? []), filtersActive, kind), [items, shown, filtersActive, kind])
   function clearFilters() {
-    patchUi({ q: '', st: 'all', genre: '', tag: '', decade: '', collection: '' })
+    patchUi({ q: '', st: 'all', genre: '', tag: '', decade: '', collection: '', ...NO_FILE_FILTERS })
   }
+  const fileOptions = useMemo(() => fileFilterOptions(items ?? []), [items])
+  const langOption = (code: string) => ({ value: code, label: `${langName(code)} (${code.toUpperCase()})` })
+  // How many of the files have had their video and audio tracks read; the rest are read a few at a time in the background.
+  const [fileProgress, setFileProgress] = useState<{ done: number; total: number } | null>(null)
+  useEffect(() => {
+    if (!onMovies && !onTV) return
+    let stop = false
+    const look = () => api.fileDetailsStatus().then((p) => !stop && setFileProgress((prev) => (prev && prev.done === p.done && prev.total === p.total ? prev : p))).catch(() => undefined)
+    void look()
+    const timer = setInterval(() => void look(), 20000)
+    return () => {
+      stop = true
+      clearInterval(timer)
+    }
+  }, [onMovies, onTV])
   const genreOptions = useMemo(() => [...new Set((items ?? []).flatMap((i) => i.genres))].sort(), [items])
   const tagOptions = useMemo(() => [...new Set((items ?? []).flatMap((i) => i.tags))].sort((a, b) => a.localeCompare(b)), [items])
   const decadeOptions = useMemo(() => [...new Set((items ?? []).filter((i) => i.year).map((i) => Math.floor(i.year / 10) * 10))].sort((a, b) => b - a), [items])
@@ -498,6 +534,42 @@ export default function Library() {
     }
   }
 
+  // Deletes the files that look incomplete among the chosen titles (only what
+  // the view shows can be chosen) and searches for them again.
+  async function redoIncompleteChosen() {
+    const req = redoRequest(chosen)
+    if (req.files === 0) {
+      toast.info(t('None of the selected titles has a file that looks incomplete. Pick the Looks incomplete filter to find them.'))
+      return
+    }
+    const titles = chosen.filter((i) => i.shortFiles > 0)
+    const answer = await confirm({
+      title: plural(req.files, 'Delete {n} incomplete file and search again?', 'Delete {n} incomplete files and search again?'),
+      body: (
+        <>
+          <p>
+            <strong>{nameList(titles.map((i) => i.title))}</strong>
+          </p>
+          <p>{t('These files are much shorter than the movie or episode should be, so they are most likely fakes or cut-off downloads. Each one is deleted (it goes to the recycle bin if that is on), the release it came from is blocklisted when Mediarium knows it, and Mediarium searches for another.')}</p>
+          <p>{t('A real file that is short for another reason would be deleted too. Open a title first if you are not sure.')}</p>
+        </>
+      ),
+      confirmLabel: t('Delete and search again'),
+      danger: true,
+    })
+    if (!answer) return
+    setBusy(true)
+    setNote(null)
+    try {
+      toast.info(redoAnswerText(await api.redoIncomplete({ movieIds: req.movieIds, seriesIds: req.seriesIds })))
+      load()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function removeChosen() {
     const n = chosen.length
     if (n === 0) return
@@ -591,6 +663,18 @@ export default function Library() {
           <Dropdown icon="film" label={t('Collection')} value={collection} onChange={setCollection} options={[{ value: '', label: t('All collections') }, ...collections.map((c) => ({ value: String(c.id), label: c.name }))]} />
         )}
         <Dropdown icon="calendar" label={t('Year')} value={decade} onChange={setDecade} options={[{ value: '', label: t('Any year') }, ...decadeOptions.map((d) => ({ value: String(d), label: t('{decade}s', { decade: String(d) }) }))]} />
+        {fileOptions.videoCodecs.length > 0 && (
+          <>
+            <Dropdown icon="film" label={t('Video codec')} value={ui.vc} onChange={(v) => patchUi({ vc: v })} options={[{ value: '', label: t('Video codec') }, ...fileOptions.videoCodecs.map((c) => ({ value: c, label: c }))]} />
+            <Dropdown icon="sparkles" label={t('HDR')} value={ui.hdr} onChange={(v) => patchUi({ hdr: v })} options={[{ value: '', label: t('HDR') }, { value: 'SDR', label: 'SDR' }, ...(fileOptions.hdr.length > 0 ? [{ value: 'hdr', label: t('Any HDR') }] : []), ...fileOptions.hdr.map((k) => ({ value: k, label: k }))]} />
+            <Dropdown icon="monitor" label={t('Resolution')} value={ui.res} onChange={(v) => patchUi({ res: v })} options={[{ value: '', label: t('Resolution') }, ...fileOptions.resolutions.map((r) => ({ value: r, label: r }))]} />
+            <Dropdown icon="volume" label={t('Audio language')} value={ui.al} onChange={(v) => patchUi({ al: v })} options={[{ value: '', label: t('Audio language') }, ...fileOptions.audioLangs.map(langOption)]} />
+            <Dropdown icon="volume-off" label={t('Missing audio language')} value={ui.nal} onChange={(v) => patchUi({ nal: v })} options={[{ value: '', label: t('Missing audio') }, ...fileOptions.audioLangs.map((c) => ({ value: c, label: t('No {language} audio', { language: langName(c) }) }))]} />
+            <Dropdown icon="headphones" label={t('Audio codec')} value={ui.ac} onChange={(v) => patchUi({ ac: v })} options={[{ value: '', label: t('Audio codec') }, ...fileOptions.audioCodecs.map((c) => ({ value: c, label: c }))]} />
+            <Dropdown icon="chat" label={t('Subtitle language')} value={ui.sl} onChange={(v) => patchUi({ sl: v })} options={[{ value: '', label: t('Subtitles') }, ...fileOptions.subLangs.map(langOption)]} />
+            <Dropdown icon="chat" label={t('Missing subtitle language')} value={ui.nsl} onChange={(v) => patchUi({ nsl: v })} options={[{ value: '', label: t('Missing subtitles') }, ...[...new Set([...fileOptions.audioLangs, ...fileOptions.subLangs])].sort((a, b) => a.localeCompare(b)).map((c) => ({ value: c, label: t('No {language} subtitles', { language: langName(c) }) }))]} />
+          </>
+        )}
         <Dropdown
           icon="sort"
           label={t('Sort')}
@@ -648,14 +732,22 @@ export default function Library() {
         </button>
       </div>
 
+      {fileProgress && fileProgress.total > 0 && fileProgress.done < fileProgress.total && (
+        <p className="file-note">{t('Reading the video and audio details of your files in the background: {done} of {total} done. The file filters cover the files read so far.', { done: fileProgress.done.toLocaleString(), total: fileProgress.total.toLocaleString() })}</p>
+      )}
+      {totalText && (
+        <p className="lib-total-line mono">
+          <Icon name="folder" size={14} /> {totalText}
+        </p>
+      )}
       <div className="chip-row state-chips" style={{ marginBottom: 18, alignItems: 'center' }}>
         <InfoTip
           text={t(
             'Downloaded: the file is in your library.\nDownloading: coming in now.\nPending: queued and waiting its turn.\nWaiting for a release: monitored, and Mediarium keeps checking.\nPartial: some episodes are downloaded.\nNot monitored: in your library, but nothing downloads by itself.\nFailed: the last attempt failed.',
           )}
         />
-        {FILTERS[kind].map((f) => (
-          <button key={f.id} className={`chip st-${f.id}${filter === f.id ? ' active' : ''}${f.id === 'downloading' && items?.some(f.test) ? ' live' : ''}`} onClick={() => setFilter(f.id)}>
+        {FILTERS[kind].filter((f) => f.id !== 'incomplete' || filter === f.id || items?.some(f.test)).map((f) => (
+          <button key={f.id} className={`chip st-${f.id}${filter === f.id ? ' active' : ''}${f.id === 'downloading' && items?.some(f.test) ? ' live' : ''}`} onClick={() => setFilter(f.id)} title={f.id === 'incomplete' ? t('Files that are much shorter than the movie or episode should be: fakes, samples or cut-off downloads.') : undefined}>
             <Icon name={FILTER_ICON[f.id] ?? 'grid'} size={14} />
             {f.label} {items ? <small>{items.filter(f.test).length}</small> : null}
           </button>
@@ -664,6 +756,11 @@ export default function Library() {
           <button className="btn-sm" onClick={clearFilters}>
             {t('Clear filters')}
           </button>
+        )}
+        {totalText && (
+          <span className="lib-total mono" title={t('What the downloaded files take on disk')}>
+            <Icon name="folder" size={14} /> {totalText}
+          </span>
         )}
       </div>
 
@@ -725,6 +822,14 @@ export default function Library() {
                 <Icon name="download" size={15} /> {t('Replace with smaller')}
               </button>
               <InfoTip text={t('For movies you moved to a lower quality profile. Looks for a smaller release the profile accepts, downloads it, and only then removes the big file. At most 25 at a time.')} />
+            </>
+          )}
+          {shown?.some((i) => i.shortFiles > 0) && (
+            <>
+              <button className="btn-sm btn-danger btn-with-icon" disabled={!chosen.some((i) => i.shortFiles > 0) || busy} onClick={() => void redoIncompleteChosen()}>
+                <Icon name="warning" size={15} /> {t('Delete incomplete files and search again')} <small className="mono">{redoRequest(chosen).files}</small>
+              </button>
+              <InfoTip text={t('For the selected titles that have a file much shorter than the movie or episode should be. Deletes those files, blocklists their releases when known, and searches again. Only the titles you selected are touched.')} />
             </>
           )}
           <button className="btn-sm btn-danger btn-with-icon" disabled={chosen.length === 0 || busy} onClick={() => void removeChosen()}>
@@ -813,7 +918,7 @@ export default function Library() {
               kind={i.kind}
               progress={i.live ? { pct: i.live.progressPct, label: `${i.live.sizeBytes ? t('{pct}% of {size}', { pct: Math.round(i.live.progressPct), size: formatBytes(i.live.sizeBytes) }) : `${Math.round(i.live.progressPct)}%`} · ${i.live.protocol}` } : undefined}
               dim={!i.monitored}
-              ribbon={i.ended ? { label: t('Ended'), tone: 'ended' } : undefined}
+              ribbon={showRibbon(i.showStatus)}
               actions={actionsFor(i)}
               selection={selecting ? { selected: selected.has(i.key), onToggle: (e) => pick(i.key, e.shiftKey) } : undefined}
               footer={
@@ -874,6 +979,7 @@ export default function Library() {
                       <small>
                         {i.year || '—'}
                         {i.monitored ? '' : ` · ${t('unmonitored')}`}
+                        {isFinishedShow(i.showStatus) ? ` · ${showStatusLabel(i.showStatus)}` : ''}
                       </small>
                     </span>
                   </Link>

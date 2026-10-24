@@ -56,6 +56,9 @@ type musicArtistPayload struct {
 	DownloadedCount int      `json:"downloadedCount"`
 	// Albums is only set on GET /api/music/artists/{id} and the add answer.
 	Albums []musicAlbumPayload `json:"albums,omitempty"`
+	// Filter is what the artist page lists and following adds (the artist's own choice or the library's).
+	// Only set on GET /api/music/artists/{id}.
+	Filter *musicFilterPayload `json:"filter,omitempty"`
 }
 
 // musicAlbumPayload is one album, EP or single.
@@ -293,22 +296,55 @@ func (s *Server) addArtistFromMusicBrainz(ctx context.Context, mbid, monitor str
 	if err != nil {
 		return music.Artist{}, nil, err
 	}
-	groups, err := mb.ArtistReleaseGroups(ctx, mbid, nil, false)
+	all, err := mb.ArtistReleaseGroups(ctx, mbid, nil, true)
 	if err != nil {
 		return music.Artist{}, nil, err
 	}
+	// The library's filter decides what is added. Groups the bootleg test has
+	// not looked at yet are added once it has, so adding the artist does not
+	// wait for one request per release.
+	groups, later := s.passingGroups(ctx, s.libraryMusicFilter(), all, false)
 	today := time.Now().UTC().Format("2006-01-02")
-	albums := make([]music.Album, 0, len(groups))
-	for _, g := range groups {
-		albums = append(albums, music.Album{
+	toAlbum := func(g musicbrainz.ReleaseGroup) music.Album {
+		return music.Album{
 			MBID: g.ID, Title: g.Title, Type: albumType(g.PrimaryType), ReleaseDate: g.FirstReleaseDate,
 			Monitored: monitor == monitorAll || (monitor == monitorFuture && !albumReleased(g.FirstReleaseDate, today)),
-		})
+		}
 	}
-	return s.MusicRepo.AddArtist(music.Artist{
+	albums := make([]music.Album, 0, len(groups))
+	for _, g := range groups {
+		albums = append(albums, toAlbum(g))
+	}
+	artist, added, err := s.MusicRepo.AddArtist(music.Artist{
 		MBID: a.ID, Name: a.Name, SortName: a.SortName, Disambiguation: a.Disambiguation,
 		Monitored: monitor != monitorNone, MonitorNew: monitor != monitorNone, ProfileID: profileID, AddedBy: userID,
 	}, albums)
+	if err == nil && len(later) > 0 {
+		s.background(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+			defer cancel()
+			status := s.resolveGroups(ctx, groupIDs(later))
+			var more []music.Album
+			for _, g := range later {
+				if official, known := status[g.ID]; known && !official {
+					continue
+				}
+				more = append(more, toAlbum(g))
+			}
+			if _, err := s.MusicRepo.AddAlbums(artist.ID, more); err != nil {
+				slog.Warn("music: add checked releases", "artist", artist.Name, "err", err)
+			}
+		})
+	}
+	return artist, added, err
+}
+
+func groupIDs(groups []musicbrainz.ReleaseGroup) []string {
+	ids := make([]string, len(groups))
+	for i, g := range groups {
+		ids[i] = g.ID
+	}
+	return ids
 }
 
 // albumType maps a MusicBrainz primary type onto album, ep or single.
@@ -376,6 +412,8 @@ func (s *Server) handleGetArtist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := s.toMusicArtistPayload(artist, profiles, s.accountNames())
+	fp := s.artistFilterPayload(id)
+	out.Filter = &fp
 	out.Albums = make([]musicAlbumPayload, 0, len(albums))
 	for _, a := range albums {
 		out.AlbumCount++
@@ -542,8 +580,10 @@ func (s *Server) removeAlbumDownloads(albumIDs map[int64]bool, title string) err
 		if running || isActiveStatus(it.Status) {
 			cancelled++
 		}
+		ref, inClient := s.clientRefFor(it)
 		s.removeWorkDir(s.workDirFor(it.ID))
 		_ = s.QueueRepo.Delete(it.ID)
+		s.removeFromClient(ref, inClient, false)
 	}
 	if cancelled > 0 {
 		_ = s.QueueRepo.LogActivity(0, "removed", fmt.Sprintf("Cancelled %s of %s and removed their files from the downloads folder", plural(cancelled, "download"), title))

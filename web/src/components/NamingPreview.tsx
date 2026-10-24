@@ -6,7 +6,7 @@ import { tx } from '../i18n'
 // edits the tokens. Renders through the real
 // backend naming engine rather than reimplementing token substitution in
 // JS, so it can never drift from what the pipeline actually produces.
-export default function NamingPreview({ preset, format, kind = 'movie', keep = false }: { preset: string; format?: string; kind?: 'movie' | 'tv'; keep?: boolean }) {
+export default function NamingPreview({ preset, format, kind = 'movie', keep = false, folder }: { preset: string; format?: string; kind?: 'movie' | 'tv'; keep?: boolean; folder?: string }) {
   const [preview, setPreview] = useState<{ folder: string; filename: string; problem?: string } | null>(null)
 
   useEffect(() => {
@@ -14,7 +14,7 @@ export default function NamingPreview({ preset, format, kind = 'movie', keep = f
     let stale = false
     const timeout = setTimeout(() => {
       api
-        .namingPreview(preset, format, kind, keep)
+        .namingPreview(preset, format, kind, keep, folder)
         .then((p) => !stale && setPreview(p))
         .catch(() => !stale && setPreview(null))
     }, 300)
@@ -22,7 +22,7 @@ export default function NamingPreview({ preset, format, kind = 'movie', keep = f
       stale = true
       clearTimeout(timeout)
     }
-  }, [preset, format, kind, keep])
+  }, [preset, format, kind, keep, folder])
 
   if (!preview) return null
 

@@ -44,6 +44,15 @@ func Validate(p Profile) (Profile, error) {
 	for _, t := range AllTiers() {
 		valid[t] = true
 	}
+	order, err := cleanOrder(p.QualityOrder)
+	if err != nil {
+		return p, err
+	}
+	p.QualityOrder = order
+	if len(order) > 0 {
+		// The order decides which qualities are allowed.
+		p.Allowed = orderTiers(order)
+	}
 	seen := map[Tier]bool{}
 	for _, t := range p.Allowed {
 		if !valid[t] {
@@ -66,7 +75,6 @@ func Validate(p Profile) (Profile, error) {
 			p.Allowed = append(p.Allowed, t)
 		}
 	}
-	var err error
 	if p.MustContain, err = cleanTerms("required", p.MustContain); err != nil {
 		return p, err
 	}
@@ -239,7 +247,7 @@ func decodeTiers(s string) []Tier {
 	return out
 }
 
-const selectProfile = `SELECT id, name, allowed_tiers, cutoff, upgrade_allowed, must_contain, must_not_contain, preferred, fallback, max_size_gb, format_scores, min_format_score, cutoff_format_score, no_season_packs, skip_bad FROM quality_profiles`
+const selectProfile = `SELECT id, name, allowed_tiers, cutoff, upgrade_allowed, must_contain, must_not_contain, preferred, fallback, max_size_gb, format_scores, min_format_score, cutoff_format_score, no_season_packs, skip_bad, quality_order FROM quality_profiles`
 
 func scanProfile(scan func(dest ...any) error) (Profile, error) {
 	var (
@@ -247,11 +255,13 @@ func scanProfile(scan func(dest ...any) error) (Profile, error) {
 		allowed, cutoff                 string
 		mustContain, mustNot, preferred string
 		fallback, scores                string
+		order                           sql.NullString
 	)
-	if err := scan(&p.ID, &p.Name, &allowed, &cutoff, &p.UpgradeAllowed, &mustContain, &mustNot, &preferred, &fallback, &p.MaxSizeGB, &scores, &p.MinFormatScore, &p.CutoffFormatScore, &p.NoSeasonPacks, &p.SkipBadReleases); err != nil {
+	if err := scan(&p.ID, &p.Name, &allowed, &cutoff, &p.UpgradeAllowed, &mustContain, &mustNot, &preferred, &fallback, &p.MaxSizeGB, &scores, &p.MinFormatScore, &p.CutoffFormatScore, &p.NoSeasonPacks, &p.SkipBadReleases, &order); err != nil {
 		return Profile{}, err
 	}
 	p.Allowed = decodeTiers(allowed)
+	p.QualityOrder = decodeOrder(order.String)
 	p.Cutoff = Tier(cutoff)
 	p.MustContain = decodeLines(mustContain)
 	p.MustNotContain = decodeLines(mustNot)
@@ -299,10 +309,10 @@ func (r *Repo) Create(p Profile) (Profile, error) {
 		return Profile{}, err
 	}
 	res, err := r.db.Exec(
-		`INSERT INTO quality_profiles (name, allowed_tiers, cutoff, upgrade_allowed, must_contain, must_not_contain, preferred, fallback, max_size_gb, format_scores, min_format_score, cutoff_format_score, no_season_packs, skip_bad) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO quality_profiles (name, allowed_tiers, cutoff, upgrade_allowed, must_contain, must_not_contain, preferred, fallback, max_size_gb, format_scores, min_format_score, cutoff_format_score, no_season_packs, skip_bad, quality_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.Name, encodeTiers(p.Allowed), string(p.Cutoff), p.UpgradeAllowed,
 		encodeLines(p.MustContain), encodeLines(p.MustNotContain), encodePreferred(p.Preferred), encodeFallback(p.Fallback), p.MaxSizeGB,
-		encodeFormatScores(p.FormatScores), p.MinFormatScore, p.CutoffFormatScore, p.NoSeasonPacks, p.SkipBadReleases,
+		encodeFormatScores(p.FormatScores), p.MinFormatScore, p.CutoffFormatScore, p.NoSeasonPacks, p.SkipBadReleases, encodeOrder(p.QualityOrder),
 	)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
@@ -323,10 +333,10 @@ func (r *Repo) Update(p Profile) (Profile, error) {
 		return Profile{}, err
 	}
 	res, err := r.db.Exec(
-		`UPDATE quality_profiles SET name = ?, allowed_tiers = ?, cutoff = ?, upgrade_allowed = ?, must_contain = ?, must_not_contain = ?, preferred = ?, fallback = ?, max_size_gb = ?, format_scores = ?, min_format_score = ?, cutoff_format_score = ?, no_season_packs = ?, skip_bad = ? WHERE id = ?`,
+		`UPDATE quality_profiles SET name = ?, allowed_tiers = ?, cutoff = ?, upgrade_allowed = ?, must_contain = ?, must_not_contain = ?, preferred = ?, fallback = ?, max_size_gb = ?, format_scores = ?, min_format_score = ?, cutoff_format_score = ?, no_season_packs = ?, skip_bad = ?, quality_order = ? WHERE id = ?`,
 		p.Name, encodeTiers(p.Allowed), string(p.Cutoff), p.UpgradeAllowed,
 		encodeLines(p.MustContain), encodeLines(p.MustNotContain), encodePreferred(p.Preferred), encodeFallback(p.Fallback), p.MaxSizeGB,
-		encodeFormatScores(p.FormatScores), p.MinFormatScore, p.CutoffFormatScore, p.NoSeasonPacks, p.SkipBadReleases, p.ID,
+		encodeFormatScores(p.FormatScores), p.MinFormatScore, p.CutoffFormatScore, p.NoSeasonPacks, p.SkipBadReleases, encodeOrder(p.QualityOrder), p.ID,
 	)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {

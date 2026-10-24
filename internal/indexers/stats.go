@@ -124,6 +124,22 @@ func (t *Tracker) dropOldSources(now time.Time) {
 	}
 }
 
+// SourceOf is the indexer that gave the release at url, when a search in the
+// last day found it. ok is false for a release the tracker never saw (or saw
+// too long ago, or before a restart).
+func (t *Tracker) SourceOf(url string) (id int64, ok bool) {
+	if t == nil || url == "" {
+		return 0, false
+	}
+	t.mu.Lock()
+	n, found := t.sources[url]
+	t.mu.Unlock()
+	if !found || t.now().After(n.expiry) {
+		return 0, false
+	}
+	return n.id, true
+}
+
 // NoteGrab counts a grab for the indexer that gave the release at url. A
 // release from a search long ago, or one the tracker never saw, is not
 // counted.

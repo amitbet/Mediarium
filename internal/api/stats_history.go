@@ -13,7 +13,7 @@ import (
 // and how the day's downloads went), kept for good, so the Statistics page
 // can show how the library grew. Days before the first snapshot are filled
 // in as far as the data allows: titles from when they were added, downloads
-// from the download history that's still kept. Library size can't be known
+// from the download totals kept in download_stats. Library size can't be known
 // for those days and is left out.
 
 const statsSnapshotEvery = 3 * time.Hour
@@ -73,10 +73,8 @@ func (s *Server) takeStatsSnapshot(now time.Time) error {
 		}
 	}
 	_ = s.db.QueryRow(`SELECT COALESCE(SUM(CASE WHEN status = 'downloaded' THEN 1 ELSE 0 END), 0) FROM albums`).Scan(&d.AlbumsHave)
-	_ = s.db.QueryRow(`SELECT COALESCE(SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN status = 'completed' THEN size_bytes ELSE 0 END), 0)
-		FROM download_queue WHERE substr(COALESCE(completed_at, added_at), 1, 10) = ?`, day).Scan(&d.Completed, &d.Failed, &d.DownloadBytes)
+	_ = s.db.QueryRow(`SELECT COALESCE(SUM(completed), 0), COALESCE(SUM(failed), 0), COALESCE(SUM(bytes), 0) FROM download_stats WHERE day = ?`, day).
+		Scan(&d.Completed, &d.Failed, &d.DownloadBytes)
 	_, err = s.db.Exec(`INSERT INTO stats_daily (day, movies, movies_have, shows, episodes_have, albums_have, library_bytes, completed, failed, download_bytes)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(day) DO UPDATE SET movies = excluded.movies, movies_have = excluded.movies_have, shows = excluded.shows,
@@ -144,10 +142,7 @@ func (s *Server) statsHistory() ([]statsDay, error) {
 		r.Close()
 	}
 	downloads := map[string]statsDay{}
-	r, err := s.db.Query(`SELECT substr(COALESCE(completed_at, added_at), 1, 10),
-			SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END), SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END),
-			COALESCE(SUM(CASE WHEN status = 'completed' THEN size_bytes ELSE 0 END), 0)
-		FROM download_queue GROUP BY 1`)
+	r, err := s.db.Query(`SELECT day, SUM(completed), SUM(failed), SUM(bytes) FROM download_stats GROUP BY day`)
 	if err != nil {
 		return nil, err
 	}

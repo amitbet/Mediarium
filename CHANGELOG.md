@@ -8,6 +8,361 @@ under [Unreleased]. How releases are cut: [docs/RELEASING.md](docs/RELEASING.md)
 
 ## [Unreleased]
 
+## [3.7.2] - 2026-10-24
+
+In short: files that are far too short are turned away, a release search shows which indexers it asked, a show can have its own numbering, music filters for the artist pages, and more fixes for the nzb360 dashboard.
+
+### Added
+
+- Choose a release now starts with a short line saying how many indexers were searched and what each did ("Searched 8 indexers: 2 had releases, 5 had nothing for this title, 1 did not answer."). A button opens a table with every indexer, its type, what it found (or why it did not answer or was skipped) and how long it took. The Any indexer list has every indexer that was asked, with the number of releases next to each. Thanks to SanketBaraiya on GitHub, #122.
+- A show's page has a new **Custom numbering and names** section. When the files and releases number a show differently from TMDB (a show listed as season 1 that releases call season 15, or a season that TMDB splits), you can add rules: library season, release season, an episode offset and an optional first and last episode. "This show's releases use season N" makes the common rule in one click, and **Save and rescan** stores the rules and runs Rescan files. The rules are used when files and releases are matched to episodes, for season packs and in Import a file by hand. You can also add extra search names for a show.
+- A **Link a file** button on each episode row (administrators) points the episode at a video file in your library folders and marks it downloaded. Nothing is moved or renamed.
+- Music: a new "Music: what to show" card under Settings > Quality. Pick which release types the artist pages list (albums, EPs, singles) and which kinds to hide (live, remix, compilation, soundtrack, demo and more), with a one-click "Official studio releases only" preset. Following an artist only adds what passes. The defaults are what it always did, so nothing changes until you change it. Idea from u/troelsdk on Reddit.
+- Music: an optional "Hide bootleg-only releases" switch (off by default). It leaves out release groups whose releases are all bootlegs, promotions or pseudo-releases. Each group is checked once in the background and the answer is kept. Reported by u/troelsdk on Reddit.
+- Music: each artist page has "Show: Albums EPs Singles" chips, a "More filters" section and "Use the library setting". A line such as "3 hidden: 2 live, 1 bootleg" says what is left out, with "Show them" and "Add to library". Albums already in the library are never removed by a filter change. Idea from u/troelsdk on Reddit.
+- The Library has a "Looks incomplete" filter chip, a movie's page and an episode's row say "Only 1 min long", and administrators can press "Delete this file and search again" there, or in the Library's select bar for the selected titles. Each deletion asks first and blocklists the release when it is known.
+
+### Changed
+
+- Seeding limits: an empty box now means unlimited and 0 means don't seed, for the seed ratio limit and the seed time limit (global and per indexer). An upload limit of 0 switches uploading off while downloads carry on. Anything you had set to 0 before is changed to empty when you update, so nothing behaves differently. Private trackers may ban accounts that don't seed, so the page says so. Thanks to wivaku on GitHub, discussion #123.
+- The Library and Settings menus on the left open only when you click them, and opening one closes the other. Being on a page inside a group no longer opens it.
+- Choose a release for a movie, a show or an album no longer asks sites that list no movies, no TV or no music. They show as skipped in the table.
+
+### Fixed
+
+- A download whose video is far shorter than its episode or movie (a fake, a sample or a cut-off file, for example a one-minute "2160p episode" of 121 MB) is no longer imported as a success. Mediarium reads the length of the video before filing it, and when it is under half of the runtime TMDB gives, the download fails with a plain reason, the release is blocklisted and the next one is tried. In a season pack only the short files are left out. A file whose length can't be read is imported as before. Switch: Settings > Library > File names and importing > "Check that the video is as long as the episode or movie" (on by default). Thanks to a problem report sent from inside the app.
+- The nzb360 dashboard cards for Radarr and Sonarr: some history ids were bigger than a 32-bit number, which made the movie card's history and the History tab unreadable to the app. They now fit. "Recently downloaded" keeps to the last week for items that came in without a Mediarium download, and missing movies, recommended movies, Radarr's /credit and the poster, fanart and banner pictures are answered. Reported by Bayharbourbutcher1 on GitHub, #94.
+- The calendar's Today button no longer sits between the month arrows. Reported by Bayharbourbutcher1 on GitHub, #119.
+- Adding a download by hand now accepts magnet links that have spaces in the name. Contributed by shinjuku712 on GitHub, #124.
+- The torrents on/off switch could not be clicked once torrents were off, because the card was blurred over it. It now stays clickable.
+- The table of searched indexers fits a phone.
+
+## [3.7.1] - 2026-10-23
+
+In short: Premiumize as a third debrid service, a Music tab in the search results, a Retry button for picked downloads, and fixes for the calendar views, the Simkl Client ID test, the nzb360 dashboard and a lost library marker file.
+
+### Added
+
+- Activity's bar for picked downloads has a **Retry** button, next to To the front, Pause, Resume, Stop and Remove. It retries the picked downloads that failed or were stopped and leaves the others alone. Contributed by WassawRoki on GitHub, #118.
+- Premiumize as a third debrid service next to Real-Debrid and TorBox (Settings > Downloading > Torrents > Debrid service). Paste the API key from premiumize.me/account, press Test to see your customer number, when premium ends and how much of the monthly fair-use limit is used. Torrents Premiumize already has are read at once; others become a transfer and the files are brought home like with the other services. Releases Premiumize has cached get the same "Cached" tag and ranking as TorBox. Thanks to Hoopes80 on GitHub, #120.
+- The search results page has a Music tab next to Movies and shows, Books and Releases when music is on. It finds artists the same way the search box does, shows how many it found, and lets you add one from the card (thanks to mirisbowring on GitHub, #112).
+
+### Fixed
+
+- Picking more than 200 downloads in Activity made every action in the bar fail with "Pick at most 200 downloads at a time". The page now sends a bigger pick in batches of 200, and "To the front" keeps the order of the whole pick. Contributed by WassawRoki on GitHub, #118.
+- The calendar's Month, Posters, Backdrops and Agenda tabs now each show something different on a phone. Month is a small grid with a dot for each release and the picked day's list underneath, Posters and Backdrops give each day its own block of posters or wide stills, and Agenda is the plain list. The choice is remembered in the browser. Reported by Bayharbourbutcher1 on GitHub, #119.
+- The Test button next to the Simkl Client ID answered "This client_id is an OAuth 2.0 app: use POST /oauth2/device instead of /oauth/pin" for apps that sign in fine. It now asks the same way Connect does (the newer way first, the older PIN way for older apps) and says "Simkl accepted this Client ID." without starting a sign-in. When Simkl turns a Client ID test or a sign-in start down, a warning line (with only the first four characters of the Client ID) is written to the log. Reported by Bayharbourbutcher1 on GitHub, #115.
+- The nzb360 app's "From Radarr: Recently Downloaded" card showed "No results found". The history now answers every way an app can ask for imports: the event type as a number, a name, a list or repeated, imports as both `downloadFolderImported` (3) and `movieFolderImported` (6) for Radarr, every line with its movie and poster, sorting by title or date, `movieIds` and big pages. A movie that is in the library with a file but never came through a Mediarium download gets one import line, so it shows up too. What the app asks the history for is written to the log at debug level. Reported by Bayharbourbutcher1 on GitHub, #94.
+- A library folder that lost its `.mediarium-root` file (a new drive or volume at the same path, a moved library) refused every import with no way to fix it from the app. Administrators now get **This is the right folder: create the marker** on the failed import and next to the folder in Settings > Library > Folders, with a warning that explains the risk, a stronger one (and a tick to say the drive is connected) when titles are recorded under the folder but none of their folders is there, and **Retry the failed imports** afterwards. It is written to Activity. A network folder that cannot be read for a moment is no longer reported as having lost its file. Reported by Hoopes80 on GitHub, #121 and #45.
+- On a phone, long release and file names without spaces ran off the right edge of a download's row in Activity (the error text, the Details box, the history steps). They now wrap, and the Details box lines up. Reported by Hoopes80 on GitHub, #121 and #45.
+
+## [3.7.0] - 2026-10-22
+
+In short: the calendar shows episodes on the day and hour they air in your own time zone.
+
+### Added
+
+- The calendar now shows an episode on the day and hour it airs in your own time zone. Mediarium asks TVmaze for the exact air time of each episode; a show that airs Monday 9 pm in the US now sits on Tuesday morning for someone in the UK. Episodes TVmaze has no time for stay on their date, as before. Idea from wivaku on GitHub, discussion #99.
+- New under the calendar: "Show times in" lets you read the calendar in this device's time zone (the default), UTC or another zone. It is kept in the browser only.
+- The calendar feed (.ics) writes timed events (in UTC) for episodes with a known time, and all-day events for the rest.
+- An episode whose date has come but whose air time is still hours away is no longer counted as missing or searched for.
+- New switch Settings > Metadata > Air times > "Look up air times on TVmaze" (on by default). Off means TVmaze is never contacted.
+- The Sonarr-style API now sends the exact air time in `airDateUtc` and the TVmaze id in `tvMazeId` when known.
+
+## [3.6.1] - 2026-10-22
+
+In short: Simkl's Test connection works for accounts whose account call is refused, and a notification hint reads clearer.
+
+### Fixed
+
+- The Simkl *Test connection* button no longer says "Simkl rejected the client ID" for an account that is connected and whose lists sync fine. When Simkl refuses the account-name call, it checks the sign-in with the same call the list sync uses. Reported by nexus4004 on GitHub, #115.
+- The hint under the *TRaSH Guides sync applied* notification no longer says nothing is sent when nothing changed (the box below it does the opposite). Pointed out by Bayharbourbutcher1 on GitHub, #109.
+
+## [3.6.0] - 2026-10-22
+
+In short: Simkl sign-in works with new Simkl apps, you can cancel a running download right from the release list, and the statistics no longer disappear when you clear finished downloads.
+
+### Added
+
+- Radarr and Sonarr apps such as nzb360 can now browse folders: Mediarium answers `/filesystem` (with `includeFiles`), `/filesystem/type` and `/filesystem/mediafiles` for your library folders and the downloads folder, `/ping`, `/log/file`, removing several queue entries at once (`DELETE /queue/bulk`) and `POST /queue/grab/{id}`. Anything outside those folders is left out. Thanks to Bayharbourbutcher1 on GitHub, #94.
+- New option *Also tell me when nothing changed* under the *TRaSH Guides sync applied* notification: you then also get "TRaSH Guides checked: nothing needed updating", and a check that failed always sends "TRaSH Guides check failed: ...". Thanks to Bayharbourbutcher1 on GitHub, #109.
+- When a release in the interactive list is refused because that movie or episode is already downloading, the message now shows the running download (progress and size) and a *Cancel it and grab this one* button, with a question first. It stops that download, deletes its partial files and grabs the release you picked in one step. Thanks to nexus4004 on GitHub, #116.
+- The Simkl card shows the sign-in code in big letters with a Copy button, an "Open Simkl and enter this code" button, a countdown, and "Connected as <name>" when it is done. If you decline or the code runs out it says so and offers "Start again".
+- If Simkl gives a refresh token, Mediarium keeps it (encrypted) and renews the sign-in when it runs out, so lists keep working.
+
+### Fixed
+
+- Connecting a Simkl account with an app made today ("This client_id is an OAuth 2.0 app: use POST /oauth2/device instead of /oauth/pin"). Mediarium now signs in with Simkl's OAuth 2.0 device code sign-in and falls back to the older PIN sign-in by itself for older apps. Thanks to Bayharbourbutcher1 and nexus4004 on GitHub, #115.
+- The download numbers on the Statistics page and the dashboard (totals, the months, the Usenet share) are now counted as downloads happen and no longer disappear when you clear finished downloads from Activity or the history runs out. They are filled once from what the history held. New *Reset statistics* button on the Statistics page (administrators, with a question). Thanks to SanketBaraiya on GitHub, #117.
+
+## [3.5.0] - 2026-10-22
+
+In short: shows that ended are marked as ended, the show page tells what is monitored and how much space it uses, Simkl sign-in is fixed, and the assistant search is more robust.
+
+### Added
+
+- A show's page now says what is being monitored, in a small tag by the name: Monitoring: all episodes, new episodes only, only episodes that haven't aired yet, season 2 only, some episodes, or Not monitoring. The Monitored switch adds the count ("Episodes monitored: 12 of 40"). Thanks to Bayharbourbutcher1 on GitHub, #114.
+- Size on disk on a show's and a movie's page, the size of each season, and the total of the Movies or Shows tab at the end of the Library's status chips (Shown: x of y when a filter is on). Thanks to Bayharbourbutcher1 on GitHub, #114.
+- Seasons on this page (Collapsed, Latest season open, All open) on a show's page, kept in this browser; Open all and Close all were already there. Thanks to Bayharbourbutcher1 on GitHub, #114.
+- The assistant search (`library_search`) also matches genres and the description, and has a `genre` argument (Action, Sci-Fi...). An empty search says "No titles matched" and how many titles the library holds. Thanks to mirisbowring on GitHub, #97.
+- Notification event **TRaSH Guides sync applied**, off until you tick it. It sends one message when the automatic or manual TRaSH update changed custom formats (names, then "and N more") and profile scores, and nothing when nothing changed. Thanks to Bayharbourbutcher1 on GitHub, #109.
+
+### Fixed
+
+- Shows that had ended were not marked as ended in the Library. The status is now read from TMDB for every show, also the ones that are not monitored, once a day for running shows and once a week for finished ones. Thanks to SanketBaraiya on GitHub, #113.
+- A show set to "Only episodes that haven't aired yet" now has its Monitored switch on (also through the Sonarr style API), ticking an episode or a season on a switched-off show switches the show on, and shows that were left off after that choice are switched back on when Mediarium starts. A show you switched off yourself is left alone. Thanks to Bayharbourbutcher1 on GitHub, #114.
+- Asking the assistant for titles through MCP (library_search) no longer comes back as an empty "error communicating with the MCP server". Every failure is now a normal answer with a plain explanation, the search no longer scans the disks for subtitle files or reads every file's size unless the question needs it, and the searches accept movie/movies/film, tv/series/shows and the like. Thanks to mirisbowring on GitHub, #97.
+- Connecting a Simkl account. The sign-in now sends the redirect address the guide tells you to enter (`urn:ietf:wg:oauth:2.0:oob`) and the app name and version Simkl asks for, and when Simkl refuses (for example with status 400) the card shows Simkl's own words and what to check. The badge on the Simkl key card says "Client ID saved" instead of "Connected", and the account card has a **Test connection** button that shows your Simkl name. Thanks to Bayharbourbutcher1 on GitHub, #115 (and nexus4004 on GitHub, #115).
+
+## [3.4.0] - 2026-10-22
+
+In short: Home Assistant can sign in to MCP, Discover has language and rating filters, richer notifications, import from any folder, and a number of fixes found by users.
+
+### Added
+
+- Apps like nzb360 that ask Radarr for recommended movies on their home screen now get an answer: what is trending on TMDB without the movies you already have (up to 20, refreshed hourly). Several settings pages those apps load (naming, media management, download client and indexer options, delay profiles, exclusions, backups, auto tagging) are answered too, so they no longer end up as unanswered requests in the log. Thanks to Bayharbourbutcher1 on GitHub, #94.
+- Library filters have a new **Missing subtitles** choice next to Missing audio: pick a language and see the titles that have no subtitles in it, neither inside the video nor as a subtitle file next to it (like Movie.nl.srt). Subtitle files next to the video now also count for the existing Subtitle language filter. The assistant tool library_search has a matching missing_subtitle_language. Thanks to nexus4004 on GitHub, #89.
+- The "Torrenting without a VPN" notice on the dashboard has a button **My download client is already behind a VPN** that hides it for good (administrators; the same option is under Settings > VPN, where switching it off shows the notice again). The notice is also left out when the built-in torrent client is off and torrents go to an external client. Thanks to Bayharbourbutcher1 on GitHub, #108.
+- The "download started" and "ready to watch" messages now say the custom format score, the custom formats it matched (the top five), the release group and the indexer, whenever they are known. Webhooks get the same as `customFormatScore`, `customFormats`, `releaseGroup`, `indexer` and `size`, and a custom JSON body can use `{{customFormatScore}}`, `{{customFormats}}`, `{{releaseGroup}}`, `{{indexer}}`, `{{size}}` and `{{sizeText}}`. (Bayharbourbutcher1 on GitHub, #109)
+- Two new events, **Download client down** and **Download client back**, for the torrent client and the Usenet downloader you connected and for the built-in Usenet downloader. One message per outage, off until you tick them. (Bayharbourbutcher1 on GitHub, #109)
+- Import a file by hand now looks in any folder you choose (type it or pick it), not only the downloads folder, and a file can come in as a hardlink, a copy or a move. Incomplete download folders (like qBittorrent's `incomplete`), samples and unfinished files are left out unless you turn on Show incomplete downloads. (lazy-adams on GitHub, #110)
+- The search results page has a Books tab, next to Movies and shows and Releases, when ebooks or audiobooks are on. It shows the same books as the search box, with the same Add button and the number found. (Deemer15 on GitHub, #112)
+- Discover (Movies and TV shows tabs) has a **More filters** row: **Original language** (English, Korean, Japanese and the other common ones first, then every other language, named in your own language), **Lowest rating** (6+, 7+, 8+; titles with very few votes are left out) and **Runtime** (under 90, 90 to 120, over 120 minutes; for shows, per episode). The heading says what is filtered, for example "Shows in Korean from 2020 to 2026, rated 7+", and the choices stay in the address so a reload or a shared link shows the same list. Thanks to an idea sent from inside the app.
+- Discover: **Hide owned** now keeps reading further pages until the grid is full of titles you don't have, instead of leaving holes where your titles were.
+- MCP assistants that look for a sign-in by themselves, such as Home Assistant, can now connect. Mediarium answers the standard OAuth discovery addresses (`/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`), lets an app register itself, and shows an Allow page where an administrator signs in and approves. API keys keep working as before. Thanks to mirisbowring on GitHub, #97.
+- Under Settings > Other apps, the MCP card lists connected apps (name, account, access, when connected, last used) with a Revoke button, and a form to register a client for apps that ask for a client ID and secret (for example Home Assistant's application credentials).
+
+### Changed
+
+- The 401 from the MCP address now says where the sign-in information is (`WWW-Authenticate: Bearer resource_metadata=...`).
+
+### Fixed
+
+- Pressing Pause on a download that runs in an external torrent client (qBittorrent, Transmission and the others) now pauses the torrent in the client too; before, only Mediarium stopped watching and the client carried on. Resume starts it again. A torrent you pause in the client yourself is left alone and is no longer mistaken for a stalled download. Thanks to Bayharbourbutcher1 on GitHub, #108.
+- Searching for the releases of a book no longer asks movie and TV sites, and the second, title-only search leaves out indexers that already failed. The search stops after 25 seconds and shows what the quick indexers found instead of failing, and the list says which indexers were left out. (Deemer15 on GitHub, #111)
+- Unknown `/.well-known/...` and other discovery addresses answered the web page's HTML, which made some MCP clients stop with a JSON error. They now answer a JSON 404.
+
+## [3.3.0] - 2026-10-21
+
+In short: connect AI assistants to your library, use SABnzbd or NZBGet for Usenet, see what is inside your video files, order and group qualities, and rescan music albums.
+
+### Added
+
+- Ask your library questions from a chat program or a voice assistant. Mediarium now has an MCP address (`/mcp`) that programs supporting MCP, and Home Assistant's voice assistant, can use to answer things like "which movies are not FuN releases?", "how many movies are over 15 GB?" or "which downloads failed?". It is off until you switch on Let AI assistants connect (MCP) under Settings > Other apps, and it only works with an administrator's API key. A read-only key can only ask questions. Adding titles, switching a profile, retrying a failed download and adding a preferred term are shown first and only happen after a yes. Idea from mirisbowring on GitHub, #97. See docs/mcp.md.
+- Usenet releases can now go to SABnzbd or NZBGet instead of the built-in downloader. Settings > Downloading > Usenet > "Use SABnzbd or NZBGet": pick the downloader, enter its address and API key (SABnzbd) or login (NZBGet), a category (plus one per movies, TV, music and books) and a priority, press Test, then switch on "Send Usenet releases to ...". The built-in downloader stays the default. Progress, pause, resume and remove show under Activity > Download clients, a release the downloader gives up on is blocklisted and the next one is tried, and finished files are imported from the downloader's folder (with path mapping) without being moved or deleted. Thanks to xrandallx1 on GitHub, #92.
+- Music: a **Rescan album folder** button on an album (administrators) re-reads the audio files in the album's folder, matches them to the tracks by tags, track numbers and titles, and updates which tracks have a file, the album's quality and its status. It works for albums already in your library, which the import scan skips, and for an album that has no folder recorded yet (it looks in the folder Mediarium would use, or one of the artist's folders with the album's name). If the album is still incomplete and monitored it says so, lists the missing tracks and offers **Search for missing tracks**. Idea from u/troelsdk on Reddit.
+- Music: **Delete file** in an album's Files tab (administrators) removes one file from the album folder after you confirm (recycle bin when it is on). The track loses its link and the album's status and quality are worked out again; with no audio left the album is wanted again so a better release can be searched. Only files inside the album's folder, inside the music folder, can be deleted. Idea from u/troelsdk on Reddit.
+- Music: **Search for missing tracks** (and "Look for better") now also works for a downloaded album with tracks missing, and takes any release the profile accepts, not only an upgrade. Idea from u/troelsdk on Reddit.
+- Quality profiles can have their own quality order and groups, like the quality list in Radarr and Sonarr. In a profile's editor (under Show advanced options) unfold "Quality order and groups" and press "Customise order and groups": drag the qualities, use the arrows (or the arrow keys on a row's handle) to rank them your way, and tick "Pick" on several to put them in a group that counts as one rank. The cutoff can be a whole group. "Use TRaSH layout", "Treat web and TV as equal" and "Reset to default order" help you start. Automatic search, the best match in the search list, upgrades, the "below cutoff" lists and the delay profile all follow the order. Profiles without a custom order behave exactly as before. Importing a TRaSH Guides profile sets the order when the guide groups or ranks qualities differently. The Radarr/Sonarr compatible quality profile answers show groups the way those apps do. Thanks to Bayharbourbutcher1 on GitHub, #87.
+- Mediarium now reads what is inside your video files: the video codec, picture size, 8 or 10 bit, SDR, HDR10, HDR10+, Dolby Vision or HLG, every audio track (codec, channels, language, Atmos when the track says so) and every subtitle track. A movie's page and each downloaded episode show it as a short line of chips (`HEVC 10-bit HDR10`, `2160p`, `TrueHD 7.1 Atmos`, `EN, DE audio`, `EN, NL subs`). It reads only the headers of MKV, WebM, MP4, M4V and MOV files, needs no extra program, and goes through your existing library slowly in the background. Thanks to nexus4004 (GitHub) for the idea (#89).
+- New Library filters: video codec, HDR, resolution, audio language, audio codec, subtitle language, and "missing audio" for a language (for example 4K films with no German track). They are kept in the address like the other filters.
+- The Radarr and Sonarr style API now fills `mediaInfo` on movie and episode files (`videoCodec`, `videoBitDepth`, `videoDynamicRangeType`, `audioCodec`, `audioChannels`, `audioLanguages`, `subtitles`, `resolution`, `runTime`), and the assistant (MCP) `library_search` tool can filter by `audio_language` and `video_codec`.
+- WebP covers. A book cover that is a WebP picture (in an EPUB, from Open Library, from the Cover Art Archive, as comic pages or uploaded) is now read and kept as a JPEG instead of being refused. A `cover.webp` or `folder.webp` in an album folder is kept and shown too. (No issue found for this, so no credit line.)
+
+### Changed
+
+- The search box popup keeps settings out of the way. The All tab shows at most three settings matches (a "Show all" row opens the rest) and they come after the titles unless what you typed is a setting's name; All | Media | Settings tabs appear when settings match, and the last tab you picked is remembered in this browser. Thanks to mirisbowring on GitHub, #93.
+- Mediarium now requires Go 1.26.10 to build, after a security scan reported a certificate-handling problem in 1.26.9 (the Docker images were already built with a newer Go).
+
+### Fixed
+
+- Book search: Open Library answered "422" for text its search syntax can't read (an unclosed bracket or quote, a lone colon). Mediarium now retries with just the words, and when Open Library still refuses it says "Open Library couldn't read that search. Try fewer or simpler words." The search box in the header showed an empty list in that case; it now shows the message.
+- Interactive search: the **Score** column showed only the custom-format part of the score. It now shows the whole score the pick uses (formats + preferred terms + the small bonus of a PROPER/REPACK), equal to the total in the "Why this score" row, and sorting by Score uses it. A profile with preferred terms but no custom formats now gets the column too.
+- Checking a site that needs FlareSolverr no longer shows "the check timed out" while FlareSolverr is still solving the Cloudflare challenge. The background check gave up after 30 seconds, the Test button waited 100; both now wait up to 100 seconds when FlareSolverr is set up, searches up to 150. The Test button says "Solving the Cloudflare check, this can take up to a minute" while it waits, and a real timeout now names FlareSolverr, how long it waited and what to try. Thanks to Bayharbourbutcher1 on GitHub, #86.
+
+## [3.2.20] - 2026-10-21
+
+In short: phone apps get a real history, notifications mention subtitles, optional automatic single sign-on, up to 500 downloads at once, and several fixes.
+
+### Added
+
+- Apps like nzb360 now get a real history from Mediarium, so their "Recently downloaded" cards fill up instead of saying "No results found". Each download shows as grabbed, and as imported or failed once it ends. Also answered: history since a date, history of one movie or show, episode and movie files, the calendar with the episode file, parsing a release name, and empty lists for rename and manual import. Thanks to Bayharbourbutcher1 on GitHub, #94.
+- The "ready to watch" notification now says where the subtitles stand: "Already there (en, nl)", "None yet, searching for en" and so on. It appears in every channel (Discord, Telegram, email, push, webhook) and only while subtitles are switched on. Webhooks get a new `subtitles` field, and custom webhook bodies get `{{subtitles}}`. (SanketBaraiya on GitHub, #106)
+- New setting "Sign in automatically with" (Settings > Account & Access > All accounts). With single sign-on chosen, visitors who are not signed in go straight to the provider and come back to the page they asked for. Open the address with `?no-redirect=1` (or `?disable-auth-redirect`) for the normal sign-in page. Off by default. (mirisbowring on GitHub, #105)
+- A switch "Built-in minimum size check" (Settings > Library > Quality > Size limits). On by default. Off, automatic searches no longer skip a release for being too small for its quality, and the release list stops showing "smaller than a real ... release is likely to be". Reported from inside the app (Mediarium reference 20261020-200637-1fa7f504).
+- **Downloads at the same time** is a number box from 1 to 500 instead of five buttons, so a download client such as qBittorrent can run as many torrents at once as it did for Radarr and Sonarr. It saves by itself a moment after you stop typing. The built-in Usenet and torrent downloaders keep their own limit (Usenet: your provider's connections, 5 to 50; torrents: 20), the rest wait in line. Thanks to WassawRoki on GitHub, #102.
+
+### Changed
+
+- The built-in minimum for a TV episode now shrinks with the episode length when TMDB says it is under 30 minutes (table value times runtime over 30, never under 15 MB), so real releases of short shows (a 5 minute WEB-DL 1080p episode needs about 25 MB instead of 150 MB) are no longer skipped. Movies and normal episodes are unchanged.
+- Development: vite 8.3.5 (Dependabot, #103).
+
+### Fixed
+
+- Adding custom formats that a quality profile already has no longer re-scores them silently. They are skipped and keep their score, and the message says per profile how many were added and how many were already there. A new box, "Replace the score if the profile already has the format", gives them the new score on purpose. The Add formats list in a profile says when every format is already in it. Thanks to Bayharbourbutcher1 on GitHub, #87.
+- The "More" menu on a torrent card in Activity > Download clients no longer opens behind the next card. An open menu now sits above the cards around it, and it scrolls into view when it opens near the bottom of the window. Thanks to nexus4004 on GitHub, #107.
+
+## [3.2.19] - 2026-10-20
+
+In short: nzb360 and other phone apps show scores, naming has folder formats and TRaSH presets that save, size limits are separate for movies and TV, and long cards fold away.
+
+### Added
+
+- Separate Movie folder and Show folder formats under Settings > Library > File names and importing > Custom, with ready-made choices (Mediarium default, TRaSH recommended, and TMDb id versions for Plex, Emby and Jellyfin) and a live preview. They only name the folder of a new title; a movie or show that already has files keeps its folder. (Bayharbourbutcher1 on GitHub, #95)
+- Release lists in apps like nzb360 now show what Radarr and Sonarr show: the custom formats a release matches and their score, the quality revision (repack or proper), the edition, seeders and leechers, and the reasons an automatic search would skip it. The best match is listed first. Reported by Bayharbourbutcher1 on GitHub, #94.
+- The apps' "cutoff unmet" list, saved filters, custom format list and the settings lists they load at start (tags in detail, display and host settings, notifications, import lists, remote path mappings, updates, tasks, log, metadata) now get a proper answer instead of "not found". Releases pushed from other tools are answered with a clear refusal. Reported by Bayharbourbutcher1 on GitHub, #94.
+
+### Changed
+
+- Size limits are now separate for Movies and TV, each with its own tab, switch and Apply TRaSH sizes. Radarr's TRaSH lists fill the Movies table and Sonarr's the TV table. On upgrade the TV table starts as a copy of your current table, so no check changes. (Bayharbourbutcher1 on GitHub, #95)
+- The Custom formats card, the Size limits card and the Music card on the Quality page are folded away until opened, with a short summary and your choice remembered. Custom format scores in the profile editor are folded too, and open by themselves when you add formats or a score has a mistake. (Bayharbourbutcher1 on GitHub, #95)
+
+### Fixed
+
+- The TRaSH file name formats (Plex, Emby, Jellyfin with TMDb id) no longer fail to save with "at most 200 characters". A format can now be up to 500 characters. (Bayharbourbutcher1 on GitHub, #95)
+
+## [3.2.17] - 2026-10-20
+
+In short: phone apps can search for releases, the search box finds settings, and more TRaSH help.
+
+### Added
+
+- Each row in a profile's Custom format scores list has a bin button that takes the format out of the profile. (Bayharbourbutcher1 on GitHub, #87)
+- New file name choices under Settings > File names and importing > Custom > Start from: "TRaSH recommended", plus Plex, Emby and Jellyfin versions with the TMDb id. Nothing existing changes. (Bayharbourbutcher1 on GitHub, #95)
+- "Apply TRaSH sizes" on the Size limits card fills the table with the sizes the TRaSH Guides recommend (movies, streaming and 4K SQP, anime, series, anime series). It shows what changed first and saves nothing until you press Save. (Bayharbourbutcher1 on GitHub, #95)
+- Phone apps built for Radarr and Sonarr (nzb360 and others) can now run an interactive release search: pick a movie, episode or season, see what your indexers have, and tap one to download it (Bayharbourbutcher1 on GitHub, #94).
+- Radarr and Sonarr apps also get the list of your indexers and a download client entry, and a request Mediarium does not answer is written to the log with its address instead of failing without a trace (Bayharbourbutcher1 on GitHub, #94).
+- The search box at the top also finds settings. Type "folders" or "temp folder" and a Settings group shows the page or the setting; picking one opens the page, scrolls to the card and lights it up for a moment (mirisbowring on GitHub, #93).
+
+### Fixed
+
+- Importing TRaSH custom formats that score 0 now adds them to the quality profile with a score of 0 instead of skipping them, from the TRaSH tab, "Add to profiles" and "Add formats" on a profile. They show in the profile's Custom format scores list. A 0 changes no release's score. (Bayharbourbutcher1 on GitHub, #87)
+
+## [3.2.16] - 2026-10-20
+
+In short: Usenet downloads with a split 7z archive are unpacked.
+
+### Fixed
+
+- Usenet downloads where the video is inside a 7z archive cut into pieces (`name.7z.001`, `.002`, ...) are now unpacked. Before, only a plain `.7z` was recognised, so these ended as "No video in a download". Reported by xrandallx1 on GitHub (#92) and u/troelsdk on Reddit.
+
+## [3.2.15] - 2026-10-20
+
+In short: multi-language releases rank better when you list several languages, and the TRaSH update tells you what it did.
+
+### Fixed
+
+- A German release with `DL` after the source (`German.BDRip.DL`) is now read as dual language, the same as `German.DL.AC3`, so both rank the same. Reported by mirisbowring on GitHub, #91.
+- Formats imported from the TRaSH tab, or added with "Add to profiles...", now show up in a profile's edit form that is already open, instead of leaving it out of date (and saving it would drop the new scores). The form picks up the new scores and keeps anything you typed. Reported by Bayharbourbutcher1 on GitHub, #87.
+
+### Changed
+
+- When you list several audio languages (for example German, English), a multi-language release that has the first one now ranks above a plain release in that language, because it also carries the others. With one language nothing changes. Reported by mirisbowring on GitHub, #91.
+
+### Added
+
+- "Update from TRaSH" now leaves a result on the Custom formats card ("Checked the TRaSH Guides: 3 formats updated, 12 already up to date, 2 profile scores changed", or nothing to update). The same line goes to Activity and the server log, for the automatic check too. Suggested by Bayharbourbutcher1 on GitHub, #87.
+- Under the "Keep TRaSH formats up to date" switch the card shows when the guides were last checked and about when the next check is, and you can choose every day or every week. Suggested by Bayharbourbutcher1 on GitHub, #87.
+
+## [3.2.14] - 2026-10-19
+
+In short: the search list says why a release was not the best match.
+
+### Changed
+- The details row under a release in interactive search now says why a release that was not rejected was not the best match: your preferred language, a higher quality, a cached release, a higher score (with the matched terms and formats of both releases), a torrent with no seeders, or, between two equal releases, the indexer's priority, the protocol or the seeders. Thanks to mirisbowring on GitHub, #91.
+- The details row also lists the preferred terms a release matched, with their scores, next to the custom formats. Thanks to mirisbowring on GitHub, #91.
+
+## [3.2.13] - 2026-10-19
+
+In short: subtitle results get a Fit even when your video file's name says nothing about its release.
+
+### Changed
+- In the subtitle list, Fit now also compares each result with the name of the release that was downloaded for the video (Mediarium remembers it) and with the stored quality, and takes the best score, so a movie that came from a YTS release can match a YTS subtitle even though the file is named `Title (Year).mp4`. Rating stays empty for SubDL, which sends none. The same comparison is used when Mediarium picks a subtitle by itself (asked for by SanketBaraiya on GitHub, #83).
+
+## [3.2.12] - 2026-10-19
+
+In short: the address of a site on your own network could not be edited yet.
+
+### Fixed
+- The address of a site on your own network (BitMagnet, for example) stayed a fixed choice of its two listed links, with no Address field when editing. The site list your server had saved came from an older version and didn't say which sites run on your network; it is worked out when the list is read now, so the field is there without pressing Update list (reported by userkbmsr-png on GitHub, #90).
+
+## [3.2.11] - 2026-10-19
+
+In short: see why a release got its score, and use your own address for a site on your network.
+
+### Added
+- A site from the list that runs on your own network, such as BitMagnet (Local DHT), can now be pointed at your own server. When you add it (or edit it later) there is an Address field filled in with the example address, and you can type something like http://192.168.1.10:3333. Test then asks that server, and a refused connection on a 127.0.0.1 address now explains that inside Docker 127.0.0.1 is the Mediarium container itself. Sites on the public internet keep to the addresses in their definition. Thanks to userkbmsr-png on GitHub, #90.
+- The search list can now say why a release got its score. A small arrow after the score opens a row under the release with each matched custom format and its score in the chosen profile, the total, the profile's minimum score and the score upgrades stop at, and every reason an automatic search would skip it (quality or language not taken, size outside the limits, score under the minimum, blocklisted, too few seeders, a file you already have that is as good). It works by touch and keyboard, no hovering. "Show why" above the list opens all of them, and your choice is remembered. Asked for by Bayharbourbutcher1 on GitHub, #87.
+
+## [3.2.10] - 2026-10-19
+
+In short: SubDL subtitles that were found but still thrown away, and a cropped arrow on the indexer card.
+
+### Fixed
+- SubDL subtitles were still thrown away as having "no usable download link": SubDL's link carries more after the file name (a query or a fragment), which Mediarium counted as an invalid path. Only the path is used now, and the Details line says when there was more after it (reported by SanketBaraiya on GitHub, #83).
+- The little arrow that opens the reason of a failed test on an indexer card was cropped. It has room now (SanketBaraiya on GitHub, #80).
+
+## [3.2.9] - 2026-10-19
+
+In short: a minimum number of seeders per torrent indexer, and tidier indexer cards.
+
+### Changed
+- The indexer cards in a row are the same height with the buttons at the bottom, and each card shows its test result and limits in at most two short lines with the full text on hover (a failure opens its reason when you tap it). Nothing is hidden: a passed test older than a day is just shown dimmer. Asked for by SanketBaraiya on GitHub, #80.
+
+### Added
+- A **Minimum seeders** box on every torrent indexer card. Releases from that indexer with fewer seeders than the number are skipped by the automatic searches, the check for new releases, upgrades and season packs, so downloads stall less often. 0 turns it off (the default). Releases your debrid service already has cached, and releases that don't say how many seeders they have, are never skipped. In a search by hand every release is still listed; the ones under the minimum get a "Below minimum seeders" label and you can still grab them. Also in the settings file (`minSeeders`) and the API, and a minimum set in Prowlarr comes along when you import. Thanks to Bayharbourbutcher1 on GitHub, #88.
+
+## [3.2.8] - 2026-10-19
+
+In short: custom formats from the TRaSH Guides are easier to score, add and keep up to date.
+
+### Added
+- Custom formats added from the TRaSH Guides are now scored with TRaSH's default score in your default profile unless you choose "Don't score them", and the list shows the score each format will get before you press Add. Thanks to Bayharbourbutcher1 on GitHub (#87).
+- You can tick several custom formats and add them to one or more profiles in one go (with TRaSH's score for each, or one score you type), and the profile edit form has an "Add formats" button for the same. Thanks to Bayharbourbutcher1 on GitHub (#87).
+- New "Keep TRaSH formats up to date" switch (off by default) and an "Update from TRaSH" button that shows what would change first. Conditions of TRaSH formats follow the guides, and a profile's score follows only while you haven't changed it yourself. Thanks to Bayharbourbutcher1 on GitHub (#87).
+- In the release list of a manual search, the release an automatic search would take is marked "Best match" and put first, followed by the others from the highest custom format score down. Automatic searches already took the highest score within the same quality. Thanks to Bayharbourbutcher1 on GitHub (#87).
+
+## [3.2.7] - 2026-10-19
+
+In short: a fix for tools like Maintainerr that act on a season, SubDL subtitles that were found but thrown away, and the indexer card icon.
+
+### Fixed
+- The Sonarr-compatible episode list ignored `seasonNumber`, so a tool that asked for one season (Maintainerr, for example) got every season of the show and could act on episodes that were never meant, such as unmonitoring season 7 because of a rule about season 1. It now answers with only the season asked for (also `episodeIds` and `episodeFileId`). If your episodes were unmonitored like this, open the show and choose which episodes to monitor again (reported by u/troelsdk on Reddit).
+- SubDL subtitles were found and then all thrown away as having "no usable download link" because Mediarium only knew one shape of SubDL's download path. Any plain path under /subtitle/ is accepted now, and when a link is still turned down the Details line shows what it looked like (reported by SanketBaraiya on GitHub, #83).
+- The icon on an indexer card (the magnet or server symbol) sat in the top-left corner of a square box with sharp corners. It is now a rounded tile with the symbol centred (SanketBaraiya on GitHub, #80).
+
+## [3.2.6] - 2026-10-19
+
+In short: a tidier Indexers & Search page, and a way to see why a subtitle search finds nothing.
+- Every section of the Indexers & Search page is one full-width card, and your indexers sit in up to three columns, with no card overlapping another at any width.
+- When a subtitle search finds nothing, a Details line shows what each site was asked and what it answered, and SubDL is asked in more forgiving ways.
+
+### Fixed
+- On Settings > Indexers & Search the "Your indexers" card no longer overlaps the "Add an indexer" card at medium widths. Every section is one full-width card, stacked (reported by SanketBaraiya on GitHub, #80).
+- SubDL lookups are more forgiving: if every lookup finds nothing it is repeated with fewer filters, the language is accepted in any spelling, full download links are accepted, and hearing-impaired results are ranked lower instead of dropped (SanketBaraiya on GitHub, #83).
+
+### Changed
+- The indexer list is a grid of up to three columns (two on medium screens, one on a phone). On a wide screen the add card shows the search and filters beside the list of sites (SanketBaraiya on GitHub, #80).
+- When a subtitle search finds nothing, a collapsed Details line under the result lists, for each site and lookup, what was asked and what came back (never keys). The search answer of the movie and episode subtitle endpoints is now an object with `results` and `diagnostics` instead of a bare list.
+
+## [3.2.5] - 2026-10-19
+
+In short: release dates for your own country, and the Indexers & Search page fixed.
+- A new setting picks the country for a movie's release dates, and a date is never taken from some other country any more.
+- The Add an indexer card no longer slides over the sections below it when you scroll.
+
+### Added
+- **Country for release dates** under Settings > Info, lists and subtitles. Pick your own country (India, say, while reading in English); left on "Same as the info language" it works as before. Asked for by SanketBaraiya on GitHub, #82.
+
+### Changed
+- A movie's cinema and digital dates now come from your country, then from the US (shown with "(US)"), and otherwise say "Not announced". They are never taken from some other country any more, so no more stray (BR) or (IN). The calendar follows the same rule and re-reads its saved dates when you change the country (SanketBaraiya on GitHub, #82).
+
+### Fixed
+- On Settings > Indexers & Search the "Add an indexer" card no longer sticks to the screen or scrolls inside itself, so it can't slide over "Cloudflare sites" and "IRC announce" any more. The page scrolls as one again (reported by SanketBaraiya on GitHub, #80).
+
+## [3.2.4] - 2026-10-19
+
+In short: fixes for outside torrent clients, from your reports.
+- An indexer's seeding rules now reach qBittorrent (they never did), and the Category box stays empty when you clear it.
+- Stopping or removing a download also removes the torrent Mediarium sent to qBittorrent or Transmission, unless it has finished (a switch in the download client card).
+
+### Added
+- **When I stop or remove a download, remove it from the client too** in the download client card (on by default). Stopping a download, removing it from the list, removing its movie or show, or pressing Blocklist & search again now also removes the torrent Mediarium sent, with what it downloaded, from qBittorrent or Transmission. A finished torrent, an imported download and a torrent that was in the client before Mediarium sent it are left alone (Blocklist & search again also removes a finished one). If the client is down or has lost the torrent, the download is removed from Mediarium anyway. Asked for by Bayharbourbutcher1 on GitHub, #85.
+
+### Fixed
+- The Category field in the download client card no longer refills with "mediarium" after you clear it. If you fill in a category for some kinds and leave the main one empty, the other kinds are now added with no category (the `mediarium-qN` tag still lets Mediarium find its torrents). Only when everything is empty is "mediarium" used. Reported by Bayharbourbutcher1 on GitHub, #79.
+- An indexer's seeding rules never reached the download client. Mediarium didn't remember which indexer a release came from, so only the global limit was ever sent. It now records the indexer when a release is grabbed (from a search, the feed check or a scheduled search) and sends that indexer's ratio and time to qBittorrent when the torrent is added. Reported by Bayharbourbutcher1 on GitHub, #79.
+
 ## [3.2.3] - 2026-10-18
 
 In short: release dates on the movie page, and fixes for second copies and for subtitles.

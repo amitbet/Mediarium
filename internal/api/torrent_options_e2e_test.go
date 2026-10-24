@@ -19,6 +19,7 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/rdborg/mediarium/internal/library"
+	"github.com/rdborg/mediarium/internal/settings"
 )
 
 func torrentBytes(seed byte, n int) []byte {
@@ -240,10 +241,64 @@ func TestFilesCanBeTickedWhileATorrentDownloads(t *testing.T) {
 	}
 }
 
+// A seed limit of 0 means do not seed: the torrent is stopped as soon as it is
+// downloaded, and the movie is imported all the same. A torrent with the limits
+// empty goes on seeding.
+func TestSeedLimitZeroStopsTheTorrentAtOnce(t *testing.T) {
+	tests := []struct {
+		name         string
+		ratio, hours string
+		seeding      bool
+	}{
+		{"ratio 0", "0", "", false},
+		{"hours 0", "", "0", false},
+		{"empty is unlimited", "", "", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			server, base, client := newControlServer(t, false)
+			t.Cleanup(func() { server.TestStopTorrents() })
+			for key, v := range map[string]string{settings.KeyTorrentSeedRatioLimit: tc.ratio, settings.KeyTorrentSeedTimeLimitH: tc.hours} {
+				if err := server.Settings.Set(key, v, false); err != nil {
+					t.Fatal(err)
+				}
+			}
+			magnet := seedRelease(t, torrentMovieRelease(), 0)
+			m, err := server.MovieRepo.Add(library.Movie{TMDBID: 78, Title: "Torrent Movie", Year: 2001, Monitored: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			id, err := server.TestGrabMovieTorrent(m, "Torrent.Movie.2001.1080p.BluRay.x264-GRP", magnet)
+			if err != nil {
+				t.Fatal(err)
+			}
+			waitForQueueStatus(t, client, base, "completed")
+			got, err := server.MovieRepo.Get(m.ID)
+			if err != nil || got.FilePath == "" {
+				t.Fatalf("the movie was not imported: %+v, %v", got, err)
+			}
+			if b, err := os.ReadFile(got.FilePath); err != nil || len(b) != 700_000 {
+				t.Fatalf("imported file: %d bytes, %v", len(b), err)
+			}
+			if !tc.seeding {
+				waitFor(t, "the torrent to be stopped", func() bool { return !server.TestTorrentRunning(id) })
+				if !server.TestSeedingDone(id) {
+					t.Fatal("not seeding counts as the seeding goal being met")
+				}
+				return
+			}
+			time.Sleep(500 * time.Millisecond)
+			if !server.TestTorrentRunning(id) || server.TestSeedingDone(id) {
+				t.Fatal("with no limit the torrent keeps seeding")
+			}
+		})
+	}
+}
+
 func TestTorrentOptionsAreValidatedAndKept(t *testing.T) {
 	_, base, client := loginNewServer(t)
 	opts := getJSON[map[string]any](t, client, base+"/api/downloads/torrent-options")
-	if opts["sequentialDefault"] != false || opts["skipJunk"] != true || opts["packOnlyWanted"] != false || opts["uploadLimitKB"] != float64(0) {
+	if opts["sequentialDefault"] != false || opts["skipJunk"] != true || opts["packOnlyWanted"] != false || opts["uploadLimitKB"] != nil {
 		t.Fatalf("defaults = %v", opts)
 	}
 	pm := opts["portMapping"].(map[string]any)
@@ -262,9 +317,18 @@ func TestTorrentOptionsAreValidatedAndKept(t *testing.T) {
 		t.Fatalf("read back = %v", again)
 	}
 
+	// 0 switches uploading off, -1 (or an empty box in the page) is no limit.
+	if got := putJSON(t, client, base+"/api/downloads/torrent-options", map[string]any{"uploadLimitKB": 0}, http.StatusOK); got["uploadLimitKB"] != float64(0) {
+		t.Fatalf("0 is kept as 0: %v", got)
+	}
+	if got := putJSON(t, client, base+"/api/downloads/torrent-options", map[string]any{"uploadLimitKB": -1}, http.StatusOK); got["uploadLimitKB"] != nil {
+		t.Fatalf("-1 is no limit: %v", got)
+	}
+	putJSON(t, client, base+"/api/downloads/torrent-options", map[string]any{"uploadLimitKB": 250}, http.StatusOK)
+
 	// Bad input is refused with a plain reason and nothing changes.
 	for name, body := range map[string]map[string]any{
-		"negative upload limit": {"uploadLimitKB": -1},
+		"negative upload limit": {"uploadLimitKB": -2},
 		"huge upload limit":     {"uploadLimitKB": 99999999999},
 		"folder with a slash":   {"categories": []map[string]string{{"name": "A", "subfolder": "a/b"}}},
 		"two with one name":     {"categories": []map[string]string{{"name": "A"}, {"name": "a"}}},

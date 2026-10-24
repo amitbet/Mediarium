@@ -353,18 +353,40 @@ var ErrStalled = errors.New("the torrent got no data for 2 hours: no one seems t
 // SeedGoal is when seeding a finished torrent may stop:
 // once it has uploaded Ratio times its size, or after Time of seeding,
 // whichever comes first. Zero values mean no limit of that kind; with
-// neither set a torrent seeds until it is stopped.
+// neither set a torrent seeds until it is stopped. NoSeed is the goal of a
+// torrent that is not to be shared at all: it is met from the start.
 type SeedGoal struct {
-	Ratio float64
-	Time  time.Duration
+	Ratio  float64
+	Time   time.Duration
+	NoSeed bool
+}
+
+// GoalOf makes the goal from the two limits as the settings hold them: a
+// negative one is no limit of that kind, 0 is "do not seed" (either of the two
+// being 0 is enough), and a positive one is the limit.
+func GoalOf(ratio, hours float64) SeedGoal {
+	if ratio == 0 || hours == 0 {
+		return SeedGoal{NoSeed: true}
+	}
+	var g SeedGoal
+	if ratio > 0 {
+		g.Ratio = ratio
+	}
+	if hours > 0 {
+		g.Time = time.Duration(hours * float64(time.Hour))
+	}
+	return g
 }
 
 // Unlimited reports whether the goal can never be met.
-func (g SeedGoal) Unlimited() bool { return g.Ratio <= 0 && g.Time <= 0 }
+func (g SeedGoal) Unlimited() bool { return !g.NoSeed && g.Ratio <= 0 && g.Time <= 0 }
 
 // Met reports whether a torrent of size bytes that has uploaded uploaded
 // bytes over seeding time has reached the goal.
 func (g SeedGoal) Met(uploaded, size int64, seeding time.Duration) bool {
+	if g.NoSeed {
+		return true
+	}
 	if g.Ratio > 0 && size > 0 && float64(uploaded)/float64(size) >= g.Ratio {
 		return true
 	}

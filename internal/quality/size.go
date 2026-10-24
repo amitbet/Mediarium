@@ -32,10 +32,26 @@ var minEpisode = map[Tier]int64{
 // any real season.
 const SeasonPack = -1
 
+// shortEpisodeMinutes is the length under which the built-in episode minimum
+// shrinks with the runtime. A real 5 minute episode is far below the 150 MB
+// that a 45 minute WEB-DL 1080p one needs.
+const shortEpisodeMinutes = 30.0
+
+// minEpisodeFloor is the least a single episode can be asked for, however short.
+const minEpisodeFloor = 15 * mb
+
 // SizePlausible reports whether size bytes is believable for a release of
 // tier t. episodes is 0 for a movie, the number of episodes it holds for TV,
 // or SeasonPack.
 func SizePlausible(t Tier, size int64, episodes int) bool {
+	return SizePlausibleRuntime(t, size, episodes, 0)
+}
+
+// SizePlausibleRuntime is SizePlausible that also knows how long an episode
+// is. When minutes is known (above 0) and under 30, the minimum for one
+// episode is the table value scaled by minutes/30, but never under 15 MB.
+// Movies, longer episodes and an unknown runtime use the table as it is.
+func SizePlausibleRuntime(t Tier, size int64, episodes int, minutes float64) bool {
 	if size <= 0 {
 		return true
 	}
@@ -46,7 +62,17 @@ func SizePlausible(t Tier, size int64, episodes int) bool {
 	if episodes == SeasonPack {
 		n = 3
 	}
-	return size >= minEpisode[t]*n
+	each := minEpisode[t]
+	if minutes > 0 && minutes < shortEpisodeMinutes {
+		scaled := int64(float64(each) * minutes / shortEpisodeMinutes)
+		if scaled < minEpisodeFloor {
+			scaled = minEpisodeFloor
+		}
+		if scaled < each {
+			each = scaled
+		}
+	}
+	return size >= each*n
 }
 
 // SizeAllowed reports whether size bytes is within the profile's largest

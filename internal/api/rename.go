@@ -55,6 +55,7 @@ func (s *Server) renamePlan(kind string) ([]renameItem, error) {
 			if err != nil {
 				return nil, err
 			}
+			to = s.keepMovieFolder(m, root, to) // the folder format is for new movies
 			if to != m.FilePath {
 				out = append(out, renameItem{Kind: "movie", ID: m.ID, Title: movieLabel(m), From: m.FilePath, To: to, root: root})
 			}

@@ -221,6 +221,8 @@ type folderPayload struct {
 	// safely: its parent exists, can be written, and is mapped to the device
 	// (so it isn't lost when the container is updated).
 	CanCreate bool `json:"canCreate,omitempty"`
+	// Marker is set for a library folder that has no .mediarium-root file.
+	Marker *rootMarkerPayload `json:"marker,omitempty"`
 }
 
 func toFolderPayload(f fsinfo.Folder) folderPayload {
@@ -258,6 +260,9 @@ func (s *Server) folderPayloadFor(path string) folderPayload {
 			p.CanCreate = true
 			p.Warnings = []string{fmt.Sprintf("This folder doesn't exist yet. Mediarium can create it inside %s, which is mapped to your device.", parent)}
 		}
+	}
+	if p.Exists {
+		p.Marker = s.rootMarkerInfo(path)
 	}
 	if p.Exists && p.Writable && insideWorthChecking(path) {
 		if bad, _ := unwritableInside(path); len(bad) > 0 {

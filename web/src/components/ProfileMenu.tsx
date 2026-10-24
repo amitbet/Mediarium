@@ -7,6 +7,7 @@ import { DOCS_URL, FEEDBACK_URL, REPO_URL, WEBSITE_URL } from '../docs'
 import { LANGUAGES, chooseLanguage, currentLanguage, t } from '../i18n'
 import { openReport } from '../report'
 import { QUEUE_STORAGE_KEY } from '../musicQueue'
+import { SKIP_ONCE_KEY } from '../autoSignIn'
 import Icon from './Icon'
 import ShareDialog from './ShareDialog'
 import { useToast } from './Toast'
@@ -47,6 +48,13 @@ export default function ProfileMenu() {
   async function signOut() {
     try {
       await api.logout()
+      // If the sign-in page sends people to single sign-on by itself, it
+      // should not do that right after they chose to sign out.
+      try {
+        sessionStorage.setItem(SKIP_ONCE_KEY, '1')
+      } catch {
+        // storage blocked: the sign-in page may redirect once
+      }
       setUser(null)
       // The next person on this browser shouldn't find this one's music queue.
       try {

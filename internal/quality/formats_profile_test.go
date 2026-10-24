@@ -97,3 +97,36 @@ func TestNoSeasonPacks(t *testing.T) {
 		t.Error("Season 2 is a pack")
 	}
 }
+
+func TestFormatBreakdown(t *testing.T) {
+	p := trashProfile(t)
+	tests := []struct {
+		title string
+		total int
+		hits  int
+	}{
+		{"Night.Harbour.2020.1080p.AMZN.WEB-DL.DDP5.1.H.264-GRP", 100, 1},
+		{"Night.Harbour.2020.1080p.WEB-DL.DDP5.1.H.264-GRP", 0, 0},
+		{"Night.Harbour.2020.1080p.AMZN.WEB-DL.x265-GRP", -9900, 2},
+	}
+	for _, tt := range tests {
+		total, hits := p.FormatBreakdown(tt.title)
+		if total != tt.total || len(hits) != tt.hits {
+			t.Errorf("%s: total %d hits %+v, want %d and %d hits", tt.title, total, hits, tt.total, tt.hits)
+			continue
+		}
+		sum := 0
+		for _, h := range hits {
+			sum += h.Score
+			if h.Name == "" {
+				t.Errorf("%s: a hit without a name: %+v", tt.title, hits)
+			}
+		}
+		if sum != total {
+			t.Errorf("%s: the scores %+v do not add up to %d", tt.title, hits, total)
+		}
+		if _, names := p.FormatScore(tt.title); len(names) != len(hits) {
+			t.Errorf("%s: FormatScore and FormatBreakdown disagree", tt.title)
+		}
+	}
+}

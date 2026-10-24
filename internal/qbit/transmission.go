@@ -186,7 +186,9 @@ func (c *TransmissionClient) Add(ctx context.Context, o AddOptions) error {
 	}
 	// Transmission has a ratio limit per torrent but no total seeding time
 	// (its idle limit is something else), so only the ratio is passed on.
-	if o.Share.Ratio > 0 && o.Hash != "" {
+	// A torrent that is not to be shared at all gets ratio 0, which it has
+	// reached the moment it is done.
+	if (o.Share.Ratio > 0 || o.Share.NoSeed) && o.Hash != "" {
 		err := c.call(ctx, "torrent-set", map[string]any{
 			"ids": []string{o.Hash}, "seedRatioLimit": o.Share.Ratio, "seedRatioMode": 1,
 		}, nil)

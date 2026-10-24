@@ -37,3 +37,24 @@ export function releaseHint(sources: number, unanswered: Unanswered[], results: 
   }
   return null
 }
+
+// skippedHint is the footnote about indexers a book search left out because
+// they don't list books or audiobooks (a movie site, say). null when none were.
+export function skippedHint(skipped: string[]): string | null {
+  if (skipped.length === 0) return null
+  return plural(
+    skipped.length,
+    "{n} indexer that doesn't do books or audiobooks was skipped: {names}.",
+    "{n} indexers that don't do books or audiobooks were skipped: {names}.",
+    { names: skipped.join(', ') },
+  )
+}
+
+// bookReleaseHint is releaseHint for a book: when every indexer was left out,
+// "no indexer is set up" would be wrong, so it says what is true.
+export function bookReleaseHint(sources: number, unanswered: Unanswered[], results: number, skipped: string[]): ReleaseHint | null {
+  if (sources === 0 && skipped.length > 0) {
+    return { text: t('None of your indexers lists books or audiobooks. Check them under'), link: true, empty: true }
+  }
+  return releaseHint(sources, unanswered, results)
+}

@@ -21,6 +21,10 @@ type ImportMaps struct {
 	// TVDB says which episode of the show a TheTVDB season and episode (the
 	// numbers Sonarr names files by) stands for, from the anime lists.
 	TVDB func(season, episode int) (int, int, bool)
+	// Custom says which episode of the show a season and episode in the
+	// person's own numbering for it stands for. It applies to every kind of
+	// show and comes before every other rule.
+	Custom func(season, episode int) (int, int, bool)
 }
 
 // seasonRun is the episode numbers of one season of the show when they are
@@ -121,6 +125,9 @@ func (r *importRules) resolve(f ImportFile) (importTarget, bool, placedHow) {
 
 // resolveStrong is every rule except the title one.
 func (r *importRules) resolveStrong(f ImportFile) (importTarget, bool, placedHow) {
+	if t, ok := r.viaMap(f, r.maps.Custom); ok {
+		return t, true, placedRemapped
+	}
 	if t, ok, how := r.resolveNamed(f); ok {
 		return t, true, how
 	}

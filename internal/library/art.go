@@ -48,6 +48,27 @@ func (r *Repo) TitleArt(kind string, ids []int) (map[int]Art, error) {
 	return out, nil
 }
 
+// AllTitleArt is TitleArt for every movie or show (kind "movie" or "tv") that
+// has been asked about, for a caller that turns the whole library into
+// something with pictures.
+func (r *Repo) AllTitleArt(kind string) (map[int]Art, error) {
+	rows, err := r.db.Query(`SELECT tmdb_id, backdrop, logo, checked_at FROM title_art WHERE kind = ?`, kind)
+	if err != nil {
+		return nil, fmt.Errorf("read all title art: %w", err)
+	}
+	defer rows.Close()
+	out := map[int]Art{}
+	for rows.Next() {
+		var id int
+		var a Art
+		if err := rows.Scan(&id, &a.Backdrop, &a.Logo, &a.CheckedAt); err != nil {
+			return nil, fmt.Errorf("scan title art: %w", err)
+		}
+		out[id] = a
+	}
+	return out, rows.Err()
+}
+
 // SaveTitleArt records the artwork TMDB gave for a title (empty when it has none).
 func (r *Repo) SaveTitleArt(kind string, tmdbID int, backdrop, logo string, now time.Time) error {
 	_, err := r.db.Exec(`INSERT INTO title_art (kind, tmdb_id, backdrop, logo, checked_at) VALUES (?, ?, ?, ?, ?)

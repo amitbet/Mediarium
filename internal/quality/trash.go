@@ -131,6 +131,67 @@ func (tp TrashProfile) Tiers() (allowed []Tier, cutoff Tier, err error) {
 	return allowed, cutoff, nil
 }
 
+// QualityOrder is the profile's quality list as a Mediarium order, best first
+// (TRaSH lists the best quality first): a TRaSH group of several qualities
+// becomes a group, a single quality a plain item. A quality that more than one
+// item names stays with the first. It returns nil when that is just the
+// built-in order with nothing grouped, so a profile that needs no custom order
+// does not get one.
+func (tp TrashProfile) QualityOrder() []QualityItem {
+	taken := map[Tier]bool{}
+	names := map[string]bool{}
+	var items []QualityItem
+	var allowed []Tier
+	for _, it := range tp.Items {
+		if !it.Allowed {
+			continue
+		}
+		var tiers []Tier
+		for _, t := range itemTiers(it) {
+			if !taken[t] {
+				taken[t] = true
+				tiers = append(tiers, t)
+			}
+		}
+		if len(tiers) == 0 {
+			continue
+		}
+		allowed = append(allowed, tiers...)
+		qi := QualityItem{Tiers: tiers}
+		if len(tiers) > 1 {
+			name := strings.TrimSpace(it.Name)
+			if name == "" || len(name) > maxGroupNameLen {
+				name = "Group"
+			}
+			base := name
+			for n := 2; names[strings.ToLower(name)]; n++ {
+				name = fmt.Sprintf("%s %d", base, n)
+			}
+			names[strings.ToLower(name)] = true
+			qi.Name = name
+		}
+		items = append(items, qi)
+	}
+	cleaned, err := cleanOrder(items)
+	if err != nil {
+		return nil
+	}
+	def := DefaultOrder(allowed)
+	if len(def) == len(cleaned) {
+		same := true
+		for i := range def {
+			if cleaned[i].IsGroup() || cleaned[i].Tiers[0] != def[i].Tiers[0] {
+				same = false
+				break
+			}
+		}
+		if same {
+			return nil
+		}
+	}
+	return cleaned
+}
+
 // FormatTrashIDs is the TRaSH ids of the profile's formats, sorted.
 func (tp TrashProfile) FormatTrashIDs() []string {
 	out := make([]string, 0, len(tp.FormatItems))

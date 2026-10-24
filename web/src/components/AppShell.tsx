@@ -13,6 +13,7 @@ import { useLive } from '../useLive'
 import { useUnreadErrors } from '../useProblems'
 import { useModules } from '../ModulesContext'
 import { libraryEntries, type LibraryTab } from '../libraryTabs'
+import { afterClick, afterKey, type NavGroup, type OpenGroup } from '../navGroups'
 import BrandMark from './BrandMark'
 import PageLoading from './PageLoading'
 import FeedbackNudge from './FeedbackNudge'
@@ -185,6 +186,39 @@ function Shell() {
   }, [currentGroup, location.pathname])
 
   const inSettings = location.pathname.startsWith('/settings')
+  const inLibrary = location.pathname.startsWith('/library')
+
+  // The sub menus under Library and under Settings. Only a click on the group
+  // opens one (and only one is open at a time); being on one of its pages or
+  // changing page never does, and a reload starts with both closed. While a
+  // group is closed, its row names the page you are on.
+  const [openGroup, setOpenGroup] = useState<OpenGroup>(null)
+  const hereLine = libraryLines.find((l) => l.active)
+  const here: Record<NavGroup, string> = {
+    library: hereLine ? LIBRARY_LINE[hereLine.tab].label : '',
+    settings: inSettings ? (settingsGroups.flatMap((g) => g.pages).find((p) => inPage(location.pathname, p.to))?.label ?? '') : '',
+  }
+  // Arrow keys inside an open sub menu: up and down move, Escape folds it up and goes back to its row.
+  const subMenuKeys = (group: NavGroup) => (e: React.KeyboardEvent<HTMLElement>) => {
+    const items = [...e.currentTarget.querySelectorAll<HTMLElement>('a[href], [role="button"]')].filter((el) => el.getClientRects().length > 0)
+    const at = items.indexOf(document.activeElement as HTMLElement)
+    const toHead = () => document.getElementById(`sn-head-${group}`)?.focus()
+    if (e.key === 'ArrowDown' && at >= 0 && at < items.length - 1) {
+      e.preventDefault()
+      items[at + 1].focus()
+    } else if (e.key === 'ArrowUp' && at > 0) {
+      e.preventDefault()
+      items[at - 1].focus()
+    } else if (e.key === 'ArrowUp' && at === 0) {
+      e.preventDefault()
+      toHead()
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      e.stopPropagation()
+      setOpenGroup(null)
+      toHead()
+    }
+  }
 
   // The page name in the top bar, in the browser tab and (when the page has no
   // heading of its own) as the page's one <h1>.
@@ -319,16 +353,63 @@ function Shell() {
           </span>
         </div>
         <div className={`side-scroll${moreBelow ? ' more-below' : ''}`} ref={scrollRef}>
-        {nav.map((n) => (
+        {nav.map((n) => {
+          const group: NavGroup | null = n.sec === 'library' || n.sec === 'settings' ? n.sec : null
+          const isOpen = group !== null && openGroup === group
+          const inside = group === 'library' ? inLibrary : inSettings
+          // From another page a click goes there and opens the sub menu; on one of its pages it only folds it up or down.
+          const press = () => {
+            if (!group) return
+            setOpenGroup(afterClick(openGroup, group, inside))
+            if (!inside) navigate(n.to)
+          }
+          return (
           <Fragment key={n.to}>
-          <NavLink to={n.to} end={n.end} style={{ ['--nc' as string]: `var(--c-${n.sec})` }} className={({ isActive }) => (n.sec === 'settings' ? (inSettings ? 'active parent-open' : '') : n.sec === 'library' ? (isActive ? 'active parent-open' : '') : isActive || (n.sec === 'calendar' && inUpcoming) ? 'active' : '')}>
+          <NavLink
+            to={n.to}
+            end={n.end}
+            id={group ? `sn-head-${group}` : undefined}
+            aria-expanded={group ? isOpen : undefined}
+            aria-controls={group ? `sn-${group}` : undefined}
+            style={{ ['--nc' as string]: `var(--c-${n.sec})` }}
+            className={({ isActive }) => (group === 'settings' ? (inSettings ? (isOpen ? 'active parent-open' : 'active') : '') : group === 'library' ? (isActive ? (isOpen ? 'active parent-open' : 'active') : '') : isActive || (n.sec === 'calendar' && inUpcoming) ? 'active' : '')}
+            onClick={group ? (e) => {
+              if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return // open in a new tab as usual
+              if (inside) e.preventDefault()
+              setOpenGroup(afterClick(openGroup, group, inside))
+            } : undefined}
+            onKeyDown={group ? (e) => {
+              // A link answers Enter on its own; Space and the arrow keys are added here.
+              if (e.key === ' ') {
+                e.preventDefault()
+                press()
+                return
+              }
+              const next = afterKey(openGroup, group, e.key)
+              if (next !== undefined) {
+                e.preventDefault()
+                setOpenGroup(next)
+              } else if (e.key === 'ArrowDown' && isOpen) {
+                e.preventDefault()
+                document.querySelector<HTMLElement>(`#sn-${group} a[href]`)?.focus()
+              }
+            } : undefined}
+          >
             <span className="nav-ico">
               <Icon name={n.icon} size={17} />
             </span>
             <span className="nav-label">{n.label}</span>
             {n.to === '/queue' && active > 0 && <span className="nav-count">{active}</span>}
+            {group && !isOpen && here[group] && <span className="nav-here">{here[group]}</span>}
+            {group && (
+              <span className="nav-chev" style={{ transform: isOpen ? 'rotate(90deg)' : 'none' }}>
+                <Icon name="open" size={12} />
+              </span>
+            )}
           </NavLink>
           {n.sec === 'library' && (
+            <div className={`sn-collapse${isOpen ? ' open' : ''}`} id="sn-library" onKeyDown={subMenuKeys('library')}>
+            <div className="sn-collapse-inner">
             <div className="subnav subnav-library" aria-label={t('Library')} role="group">
               {libraryLines.map((l) => {
                 const line = LIBRARY_LINE[l.tab]
@@ -342,10 +423,15 @@ function Shell() {
                 )
               })}
             </div>
+            </div>
+            </div>
           )}
           </Fragment>
-        ))}
+          )
+        })}
         {(
+        <div className={`sn-collapse${openGroup === 'settings' ? ' open' : ''}`} id="sn-settings" onKeyDown={subMenuKeys('settings')}>
+        <div className="sn-collapse-inner">
         <div className="subnav" style={{ ['--nc' as string]: 'var(--c-settings)' }}>
           {settingsGroups.map((g) => {
             const current = g.pages.some((p) => inPage(location.pathname, p.to))
@@ -414,6 +500,8 @@ function Shell() {
               </div>
             )
           })}
+        </div>
+        </div>
         </div>
         )}
         <SideTools ebooksOn={ebooksOn} audiobooksOn={audiobooksOn} musicOn={musicOn} homes={homes} apps={apps} showSupport={admin && showSupport} variant="side">

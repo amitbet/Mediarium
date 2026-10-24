@@ -368,6 +368,63 @@ func TestRichPayloadsPerChannel(t *testing.T) {
 	})
 }
 
+func TestImportedMessageSaysWhereSubtitlesStand(t *testing.T) {
+	tests := []struct {
+		name      string
+		subtitles string
+		wantRow   string
+	}{
+		{"already there", "Already there (en, nl)", "Already there (en, nl)"},
+		{"none found", "None yet, searching for en", "None yet, searching for en"},
+		{"subtitles off", "", ""},
+		{"blank counts as off", "   ", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			it := titanic
+			it.Subtitles = tc.subtitles
+			ev := notify.Compose("imported", it, notify.Links{}, composeAt)
+			got := ""
+			for _, d := range ev.Details {
+				if d.Label == "Subtitles" {
+					got = d.Value
+				}
+			}
+			if got != tc.wantRow {
+				t.Errorf("row %q, want %q", got, tc.wantRow)
+			}
+			if tc.wantRow != "" && !strings.Contains(ev.Message, "Subtitles: "+tc.wantRow) {
+				t.Errorf("plain message %q lacks the subtitle line", ev.Message)
+			}
+			if tc.wantRow == "" && strings.Contains(ev.Message, "Subtitles") {
+				t.Errorf("plain message %q mentions subtitles", ev.Message)
+			}
+			var body map[string]any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewDecoder(r.Body).Decode(&body)
+			}))
+			defer srv.Close()
+			if err := notify.NewWebhookSender(srv.URL).Send(context.Background(), ev); err != nil {
+				t.Fatal(err)
+			}
+			if tc.wantRow == "" {
+				if _, ok := body["subtitles"]; ok {
+					t.Errorf("webhook has a subtitles field: %v", body)
+				}
+			} else if body["subtitles"] != tc.wantRow {
+				t.Errorf("webhook subtitles %v, want %q", body["subtitles"], tc.wantRow)
+			}
+		})
+	}
+	t.Run("other events never carry the line", func(t *testing.T) {
+		it := titanic
+		it.Subtitles = "Already there (en)"
+		if ev := notify.Compose("grabbed", it, notify.Links{}, composeAt); strings.Contains(ev.Message, "Subtitles") {
+			t.Errorf("grabbed message %q", ev.Message)
+		}
+	})
+}
+
 func TestTestEmailLooksLikeARealOneAndSaysNothingWasDownloaded(t *testing.T) {
 	ev := notify.ComposeTestEmail(titanic, notify.Links{Base: "https://m.example.com"}, composeAt)
 	if ev.Type != "test" || ev.Title != "Mediarium test email" {

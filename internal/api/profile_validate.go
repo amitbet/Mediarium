@@ -88,8 +88,16 @@ func checkProfileTerms(mustContain, mustNotContain []string, preferred []preferr
 }
 
 func checkQualityProfileRequest(req profileRequest) string {
+	allowed := req.Allowed
+	if req.QualityOrder != nil && len(*req.QualityOrder) > 0 {
+		// With its own order the order decides what is allowed.
+		allowed = nil
+		for _, it := range *req.QualityOrder {
+			allowed = append(allowed, it.Tiers...)
+		}
+	}
 	return firstProblem(
-		checkProfileBasics(req.Name, req.Allowed, req.Cutoff, func(t string) bool {
+		checkProfileBasics(req.Name, allowed, req.Cutoff, func(t string) bool {
 			for _, v := range quality.AllTiers() {
 				if string(v) == t {
 					return true

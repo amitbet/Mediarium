@@ -5,7 +5,9 @@ import { useModules } from '../ModulesContext'
 import Icon from './Icon'
 import KindGlyph, { type GlyphKind } from './KindGlyph'
 import { locale, plural, t } from '../i18n'
+import { dayInZone, entryTime, groupByDay, readZonePref, resolveZone } from '../airTime'
 import { useUrlState } from '../useUrlState'
+import { VIEW_KEY, layoutFor, parseView, pickDay, type View } from '../calendarView'
 import '../calendar.css'
 
 // The calendar reads like a cinema's programme: the month in big type, a
@@ -17,8 +19,6 @@ import '../calendar.css'
 // The width (in pixels) up to which calendar.css shows only the list of days.
 const NARROW_PANEL = 640
 
-type View = 'month' | 'agenda' | 'posters' | 'backdrops'
-const VIEW_KEY = 'mediarium.calendar.view'
 
 const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 
@@ -85,12 +85,13 @@ function Thumb({ e, g }: { e: CalendarEntry; g: GlyphKind }) {
   )
 }
 
-function Entry({ e, past, card }: { e: CalendarEntry; past: boolean; card?: boolean }) {
+function Entry({ e, past, card, zone }: { e: CalendarEntry; past: boolean; card?: boolean; zone: string }) {
   const g = glyphOf(e.kind, e.subtitle)
   const { code, rest } = splitSubtitle(e)
+  const time = entryTime(e, zone)
   const late = past && e.status === 'missing'
   const cls = `${card ? 'prog-card' : 'prog-slot'} k-${g} s-${e.status}${late ? ' late' : ''}`
-  const tip = `${e.title}${e.subtitle ? ` · ${e.subtitle}` : ''}${releaseLabel(e) ? ` · ${releaseLabel(e)}` : ''} (${STATUS_LABEL[e.status] ?? e.status})`
+  const tip = `${e.title}${e.subtitle ? ` · ${e.subtitle}` : ''}${releaseLabel(e) ? ` · ${releaseLabel(e)}` : ''}${time ? ` · ${time}` : ''} (${STATUS_LABEL[e.status] ?? e.status})`
   const body = card ? (
     <>
       <Thumb e={e} g={g} />
@@ -99,6 +100,7 @@ function Entry({ e, past, card }: { e: CalendarEntry; past: boolean; card?: bool
         {(code || rest) && (
           <span className="prog-card-sub">
             {code && <span className="prog-code">{code}</span>}
+            {time && <span className="prog-time">{time}</span>}
             {rest && <span className="prog-rest">{rest}</span>}
           </span>
         )}
@@ -119,6 +121,7 @@ function Entry({ e, past, card }: { e: CalendarEntry; past: boolean; card?: bool
         <span className="prog-slot-meta">
           <KindGlyph kind={g} size={12} />
           {code ?? releaseLabel(e) ?? KIND_LABEL[g]}
+          {time && <span className="prog-time">{time}</span>}
         </span>
       </span>
       <span className="sr-only">
@@ -141,9 +144,10 @@ function Entry({ e, past, card }: { e: CalendarEntry; past: boolean; card?: bool
 // One release as a big poster with its name in a frosted bubble: the Posters view of the calendar.
 // In the Backdrops view (wide) it is a wide still with the title's logo on it
 // instead, once both have been fetched; before that it falls back to the poster.
-function PosterTile({ e, past, wide }: { e: CalendarEntry; past: boolean; wide?: boolean }) {
+function PosterTile({ e, past, wide, zone }: { e: CalendarEntry; past: boolean; wide?: boolean; zone: string }) {
   const g = glyphOf(e.kind, e.subtitle)
   const { code, rest } = splitSubtitle(e)
+  const time = entryTime(e, zone)
   const [brokenSrc, setBrokenSrc] = useState<string | undefined>()
   const [brokenLogo, setBrokenLogo] = useState(false)
   const late = past && e.status === 'missing'
@@ -166,6 +170,7 @@ function PosterTile({ e, past, wide }: { e: CalendarEntry; past: boolean; wide?:
         <span className="pt-meta">
           <KindGlyph kind={g} size={12} />
           {code ?? rest ?? KIND_LABEL[g]}
+          {time && <span className="prog-time">{time}</span>}
           <span className="pt-state">{STATUS_LABEL[e.status] ?? e.status}</span>
         </span>
       </span>
@@ -185,15 +190,16 @@ function PosterTile({ e, past, wide }: { e: CalendarEntry; past: boolean; wide?:
 
 function storedView(): View {
   try {
-    const v = localStorage.getItem(VIEW_KEY)
-    return v === 'agenda' || v === 'posters' || v === 'backdrops' ? v : 'month'
+    return parseView(localStorage.getItem(VIEW_KEY))
   } catch {
     return 'month'
   }
 }
 
-export default function CalendarGrid({ entries, compact }: { entries: CalendarEntry[]; compact?: boolean }) {
+// zone is the time zone the days and times are read in (an IANA name); without one, the choice saved in this browser, else the device's.
+export default function CalendarGrid({ entries, compact, zone: zoneProp }: { entries: CalendarEntry[]; compact?: boolean; zone?: string }) {
   const { on } = useModules()
+  const zone = zoneProp ?? resolveZone(readZonePref())
   // The list of days is only built while it can be seen: when it is the chosen view, or when the panel is too narrow
   // for the month grid (calendar.css then always shows the list). A month of releases is hundreds of cards.
   const root = useRef<HTMLDivElement>(null)
@@ -209,6 +215,8 @@ export default function CalendarGrid({ entries, compact }: { entries: CalendarEn
     return () => watch.disconnect()
   }, [])
   const [openDay, setOpenDay] = useState<string | null>(null)
+  // The day picked on the compact month (a phone's Month view).
+  const [pickedDay, setPickedDay] = useState<string | null>(null)
   const [view, setView] = useState<View>(storedView)
   const [slide, setSlide] = useState<'next' | 'prev' | ''>('')
   // On the Calendar page the month is in the address (?month=2026-10), so Back returns to it; the small
@@ -225,15 +233,8 @@ export default function CalendarGrid({ entries, compact }: { entries: CalendarEn
     if (!compact) patchUi({ month: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` })
   }
 
-  const byDay = useMemo(() => {
-    const m = new Map<string, CalendarEntry[]>()
-    for (const e of entries) {
-      const list = m.get(e.releaseDate) ?? []
-      list.push(e)
-      m.set(e.releaseDate, list)
-    }
-    return m
-  }, [entries])
+  // An episode with a known air time sits on the day it airs in the viewer's zone; the rest stay on their date.
+  const byDay = useMemo(() => groupByDay(entries, zone), [entries, zone])
 
   const cells = useMemo(() => {
     const first = new Date(cursor.getFullYear(), cursor.getMonth(), 1)
@@ -252,7 +253,7 @@ export default function CalendarGrid({ entries, compact }: { entries: CalendarEn
   const weekdays = useMemo(() => Array.from({ length: 7 }, (_, i) => new Date(2024, 0, 1 + i).toLocaleString(locale(), { weekday: 'short' })), [])
 
   const now = new Date()
-  const today = iso(now)
+  const today = dayInZone(now, zone)
   const monthKey = `${cursor.getFullYear()}-${cursor.getMonth()}`
   const monthName = cursor.toLocaleString(locale(), { month: 'long' })
   const monthDays = cells.filter((d) => d.getMonth() === cursor.getMonth() && (byDay.get(iso(d))?.length ?? 0) > 0)
@@ -266,8 +267,9 @@ export default function CalendarGrid({ entries, compact }: { entries: CalendarEn
     setOpenDay(null)
     setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + n, 1))
   }
+  const currentMonth = new Date(Number(today.slice(0, 4)), Number(today.slice(5, 7)) - 1, 1)
   const goToday = () => {
-    const target = new Date(now.getFullYear(), now.getMonth(), 1)
+    const target = currentMonth
     if (target.getTime() === cursor.getTime()) return
     setSlide(target > cursor ? 'next' : 'prev')
     setOpenDay(null)
@@ -292,6 +294,9 @@ export default function CalendarGrid({ entries, compact }: { entries: CalendarEn
   const Heading = compact ? 'h3' : 'h2'
   const tiles = view === 'posters' || view === 'backdrops' // a big picture for each day
   const fullDate = (d: Date) => d.toLocaleDateString(locale(), { weekday: 'long', day: 'numeric', month: 'long' })
+  const layout = layoutFor(view, narrow)
+  const monthIso = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}`
+  const chosenDay = pickDay(pickedDay, monthIso, today, [...byDay.keys()].filter((k) => (byDay.get(k)?.length ?? 0) > 0))
 
   return (
     <div ref={root} className={`prog${compact ? ' compact' : ''}`} data-view={view}>
@@ -303,17 +308,22 @@ export default function CalendarGrid({ entries, compact }: { entries: CalendarEn
           <p className="prog-count">{monthCount === 0 ? t('Nothing scheduled this month.') : plural(monthCount, '{n} release this month', '{n} releases this month')}</p>
         </div>
         <div className="prog-controls">
-          <div className="prog-console">
-            <button type="button" className="prog-round" onClick={() => shift(-1)} aria-label={t('Previous month')}>
-              <span className="prog-back">
-                <Icon name="open" size={16} />
+          <div className="prog-nav">
+            <div className="prog-console">
+              <button type="button" className="prog-round" onClick={() => shift(-1)} aria-label={t('Previous month')}>
+                <span className="prog-back">
+                  <Icon name="open" size={16} />
+                </span>
+              </button>
+              <span className="prog-label" aria-live="polite">
+                {cursor.toLocaleString(locale(), { month: 'short', year: 'numeric' })}
               </span>
-            </button>
-            <button type="button" className="prog-today" onClick={goToday}>
+              <button type="button" className="prog-round" onClick={() => shift(1)} aria-label={t('Next month')}>
+                <Icon name="open" size={16} />
+              </button>
+            </div>
+            <button type="button" className="prog-today" onClick={goToday} disabled={cursor.getTime() === currentMonth.getTime()}>
               {t('Today')}
-            </button>
-            <button type="button" className="prog-round" onClick={() => shift(1)} aria-label={t('Next month')}>
-              <Icon name="open" size={16} />
             </button>
           </div>
           <div className="seg prog-views" role="group" aria-label={t('Calendar view')}>
@@ -333,6 +343,66 @@ export default function CalendarGrid({ entries, compact }: { entries: CalendarEn
         </div>
       </div>
 
+      {layout === 'dots' && (
+        <>
+          <div className="prog-board prog-board-dots">
+            <div className="prog-dows" aria-hidden="true">
+              {weekdays.map((w, i) => (
+                <span key={w} className={i >= 5 ? 'wkend' : ''}>
+                  {w.slice(0, 2)}
+                </span>
+              ))}
+            </div>
+            <div key={monthKey} className={`prog-grid prog-dotgrid${slide ? ` slide-${slide}` : ''}`}>
+              {cells.map((d, i) => {
+                const key = iso(d)
+                const list = byDay.get(key) ?? []
+                const out = d.getMonth() !== cursor.getMonth()
+                const cls = ['prog-dotcell', out && 'out', key < today && 'past', key === today && 'today', i % 7 >= 5 && 'wkend', key === chosenDay && 'chosen'].filter(Boolean).join(' ')
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    className={cls}
+                    disabled={out}
+                    aria-pressed={key === chosenDay}
+                    aria-label={`${fullDate(d)}${key === today ? `, ${t('Today')}` : ''}`}
+                    onClick={() => setPickedDay(key)}
+                  >
+                    <span className="prog-num" aria-hidden="true">
+                      {d.getDate()}
+                    </span>
+                    <span className="prog-dots" aria-hidden="true">
+                      {list.slice(0, 4).map((e) => (
+                        <i key={`${e.kind}-${e.id}-${e.release ?? ''}`} className={`prog-dot k-${glyphOf(e.kind, e.subtitle)} s-${e.status}`} />
+                      ))}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+          <section className="prog-picked" aria-label={fullDate(new Date(Number(chosenDay.slice(0, 4)), Number(chosenDay.slice(5, 7)) - 1, Number(chosenDay.slice(8, 10))))}>
+            <h3 className="prog-picked-title">
+              {fullDate(new Date(Number(chosenDay.slice(0, 4)), Number(chosenDay.slice(5, 7)) - 1, Number(chosenDay.slice(8, 10))))}
+              {chosenDay === today ? ` · ${t('Today')}` : ''}
+            </h3>
+            {(byDay.get(chosenDay) ?? []).length === 0 ? (
+              <p className="prog-quiet prog-quiet-flat">{chosenDay === today ? t('Nothing comes out today.') : t('Nothing comes out this day.')}</p>
+            ) : (
+              <ul className="prog-cards prog-cards-flat">
+                {(byDay.get(chosenDay) ?? []).map((e) => (
+                  <li key={`${e.kind}-${e.id}-${e.release ?? ''}`}>
+                    <Entry e={e} past={chosenDay < today} card zone={zone} />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </>
+      )}
+
+      {layout === 'grid' && (
       <div className="prog-board">
         <div className="prog-dows" aria-hidden="true">
           {weekdays.map((w, i) => (
@@ -363,7 +433,7 @@ export default function CalendarGrid({ entries, compact }: { entries: CalendarEn
                 </div>
                 {tiles && list.length > 0 && (
                   <div className="pt-day">
-                    <PosterTile e={list[0]} past={past} wide={view === 'backdrops'} />
+                    <PosterTile e={list[0]} past={past} wide={view === 'backdrops'} zone={zone} />
                     {list.length > 1 && (
                       <button type="button" className="pt-more" onClick={() => setOpenDay(open ? null : key)} aria-expanded={open}>
                         {t('+{n} more', { n: list.length - 1 })}
@@ -379,7 +449,7 @@ export default function CalendarGrid({ entries, compact }: { entries: CalendarEn
                         </div>
                         <div className="pt-pop-grid">
                           {list.map((e) => (
-                            <PosterTile key={`${e.kind}-${e.id}-${e.release ?? ''}`} e={e} past={past} wide={view === 'backdrops'} />
+                            <PosterTile key={`${e.kind}-${e.id}-${e.release ?? ''}`} e={e} past={past} wide={view === 'backdrops'} zone={zone} />
                           ))}
                         </div>
                       </div>
@@ -389,7 +459,7 @@ export default function CalendarGrid({ entries, compact }: { entries: CalendarEn
                 {!tiles && list.length > 0 && (
                   <div className="prog-slots">
                     {(open ? list : list.slice(0, cap)).map((e) => (
-                      <Entry key={`${e.kind}-${e.id}-${e.release ?? ''}`} e={e} past={past} />
+                      <Entry key={`${e.kind}-${e.id}-${e.release ?? ''}`} e={e} past={past} zone={zone} />
                     ))}
                   </div>
                 )}
@@ -403,9 +473,10 @@ export default function CalendarGrid({ entries, compact }: { entries: CalendarEn
           })}
         </div>
       </div>
+      )}
 
-      {(view === 'agenda' || narrow) && (
-      <ol key={`a-${monthKey}`} className={`prog-agenda${slide ? ` slide-${slide}` : ''}`}>
+      {(layout === 'agenda' || layout === 'day-tiles' || layout === 'day-wide') && (
+      <ol key={`a-${monthKey}-${layout}`} className={`prog-agenda prog-${layout}${slide ? ` slide-${slide}` : ''}`}>
         {agendaDays.map((d) => {
           const key = iso(d)
           const past = key < today
@@ -420,11 +491,19 @@ export default function CalendarGrid({ entries, compact }: { entries: CalendarEn
               </div>
               {list.length === 0 ? (
                 <p className="prog-quiet">{t('Nothing comes out today.')}</p>
-              ) : (
+              ) : layout === 'agenda' ? (
                 <ul className="prog-cards">
                   {list.map((e) => (
                     <li key={`${e.kind}-${e.id}-${e.release ?? ''}`}>
-                      <Entry e={e} past={past} card />
+                      <Entry e={e} past={past} card zone={zone} />
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <ul className={`prog-tiles${layout === 'day-wide' ? ' wide' : ''}`}>
+                  {list.map((e) => (
+                    <li key={`${e.kind}-${e.id}-${e.release ?? ''}`}>
+                      <PosterTile e={e} past={past} wide={layout === 'day-wide'} zone={zone} />
                     </li>
                   ))}
                 </ul>

@@ -55,7 +55,7 @@ func TestMovieSearchNoteCountsTheSizeTableAndTheDelayProfile(t *testing.T) {
 
 func TestTVSearchNoteCountsTheSizeTable(t *testing.T) {
 	env := newTVAutoEnv(t, []string{"Fixture.Show.S01E01.1080p.WEB-DL.x264-GRP"}, []episodeSpec{{1, 1, "2020-01-01", library.StatusMissing, ""}})
-	postJSONMethod[map[string]any](t, env.client, http.MethodPut, env.baseURL+"/api/quality/size-limits", map[string]any{"enabled": true, "rows": []any{}}, http.StatusOK)
+	postJSONMethod[map[string]any](t, env.client, http.MethodPut, env.baseURL+"/api/quality/size-limits?kind=tv", map[string]any{"enabled": true, "rows": []any{}}, http.StatusOK)
 	env.server.TestHunt(context.Background())
 	requireTitles(t, env.grabbedTitles(t))
 	var found bool

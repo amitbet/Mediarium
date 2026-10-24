@@ -29,12 +29,12 @@ func TestWaitingPositions(t *testing.T) {
 	}
 }
 
-func TestDownloadsAtOnceStaysBetweenOneAndFive(t *testing.T) {
+func TestDownloadsAtOnceStaysInRange(t *testing.T) {
 	tests := []struct {
 		saved string
 		want  int
 	}{
-		{"", 1}, {"1", 1}, {"3", 3}, {"5", 5}, {"6", 5}, {"99", 5}, {"0", 1}, {"-2", 1}, {"two", 1}, {" 2 ", 2},
+		{"", 1}, {"1", 1}, {"3", 3}, {"5", 5}, {"6", 6}, {"100", 100}, {"500", 500}, {"501", 500}, {"99999", 500}, {"0", 1}, {"-2", 1}, {"two", 1}, {" 2 ", 2},
 	}
 	for _, tc := range tests {
 		t.Run(fmt.Sprintf("saved %q", tc.saved), func(t *testing.T) {

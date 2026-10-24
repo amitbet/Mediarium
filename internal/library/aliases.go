@@ -2,6 +2,7 @@ package library
 
 import (
 	"encoding/json"
+	"strings"
 )
 
 // A show's other names (the romaji title of an anime, the names of its
@@ -21,36 +22,60 @@ func decodeAliases(raw string) []string {
 	return out
 }
 
-// loadAliases fills in s.Aliases. A problem reading them leaves the show
+// loadAliases fills in s.Aliases: the names a person added for the show first,
+// then the ones read from the services. A problem reading them leaves the show
 // without: they only add matches.
 func (r *Repo) loadAliases(s *Series) {
-	var raw string
-	err := r.db.QueryRow(`SELECT n.aliases FROM series s JOIN series_numbering n ON n.series_id = COALESCE(s.copy_of, s.id) WHERE s.id = ?`, s.ID).Scan(&raw)
+	var raw, own string
+	err := r.db.QueryRow(`SELECT COALESCE((SELECT n.aliases FROM series_numbering n WHERE n.series_id = COALESCE(s.copy_of, s.id)), ''),
+		COALESCE((SELECT c.names FROM series_numbering_custom c WHERE c.series_id = COALESCE(s.copy_of, s.id)), '')
+		FROM series s WHERE s.id = ?`, s.ID).Scan(&raw, &own)
 	if err != nil {
 		return
 	}
-	s.Aliases = decodeAliases(raw)
+	s.Aliases = mergeAliases(decodeAliases(own), decodeAliases(raw))
 }
 
-// loadAllAliases fills in the aliases of every show in list with one query.
+// mergeAliases joins lists of names, dropping one that is already there
+// (ignoring case).
+func mergeAliases(lists ...[]string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, l := range lists {
+		for _, a := range l {
+			if k := strings.ToLower(strings.TrimSpace(a)); k != "" && !seen[k] {
+				seen[k] = true
+				out = append(out, a)
+			}
+		}
+	}
+	return out
+}
+
+// loadAllAliases fills in the aliases of every show in list with two queries.
 func (r *Repo) loadAllAliases(list []Series) {
 	if len(list) == 0 {
 		return
 	}
-	rows, err := r.db.Query(`SELECT s.id, n.aliases FROM series s JOIN series_numbering n ON n.series_id = COALESCE(s.copy_of, s.id) WHERE n.aliases != ''`)
-	if err != nil {
-		return
-	}
-	defer rows.Close()
-	byID := map[int64][]string{}
-	for rows.Next() {
-		var id int64
-		var raw string
-		if rows.Scan(&id, &raw) == nil {
-			byID[id] = decodeAliases(raw)
+	read := func(query string) map[int64][]string {
+		out := map[int64][]string{}
+		rows, err := r.db.Query(query)
+		if err != nil {
+			return out
 		}
+		defer rows.Close()
+		for rows.Next() {
+			var id int64
+			var raw string
+			if rows.Scan(&id, &raw) == nil {
+				out[id] = decodeAliases(raw)
+			}
+		}
+		return out
 	}
+	byID := read(`SELECT s.id, n.aliases FROM series s JOIN series_numbering n ON n.series_id = COALESCE(s.copy_of, s.id) WHERE n.aliases != ''`)
+	own := read(`SELECT s.id, c.names FROM series s JOIN series_numbering_custom c ON c.series_id = COALESCE(s.copy_of, s.id) WHERE c.names != ''`)
 	for i := range list {
-		list[i].Aliases = byID[list[i].ID]
+		list[i].Aliases = mergeAliases(own[list[i].ID], byID[list[i].ID])
 	}
 }

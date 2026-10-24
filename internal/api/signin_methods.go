@@ -204,6 +204,45 @@ type signInMethodsPayload struct {
 	Passkeys bool        `json:"passkeys"` // "Sign in with a passkey" works
 	// PasskeyHost is where passkeys work. Opened at another address, the browser refuses them.
 	PasskeyHost string `json:"passkeyHost,omitempty"`
+	// AutoSignIn is the method the sign-in page sends visitors to by itself
+	// ("oidc"), or empty. It is only set while that method works.
+	AutoSignIn string `json:"autoSignIn,omitempty"`
+}
+
+// autoSignInOIDC is the one value the automatic sign-in setting can hold besides off.
+const autoSignInOIDC = "oidc"
+
+// autoSignIn is the method visitors are sent to by themselves: the saved
+// choice while that method works, otherwise nothing, so a provider that was
+// switched off never leaves people bounced to a dead end.
+func (s *Server) autoSignIn() string {
+	v, _ := s.Settings.Get(settings.KeyAuthAutoSignIn)
+	if v == autoSignInOIDC {
+		if _, ok := s.oidcActive(); ok {
+			return autoSignInOIDC
+		}
+	}
+	return ""
+}
+
+// autoSignInChoice is one entry of the "sign in automatically with" list.
+type autoSignInChoice struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// validAutoSignIn says whether v can be saved: off, or a method that works now.
+func validAutoSignIn(v string, oidcWorks bool) (ok bool, problem string) {
+	switch v {
+	case "":
+		return true, ""
+	case autoSignInOIDC:
+		if oidcWorks {
+			return true, ""
+		}
+		return false, "Single sign-on has to be switched on and set up before visitors can be sent to it."
+	}
+	return false, "That isn't a way to sign in automatically."
 }
 
 type oidcButton struct {
@@ -221,6 +260,7 @@ func (s *Server) handleSignInMethods(w http.ResponseWriter, r *http.Request) {
 		out.Passkeys = true
 		_, out.PasskeyHost = s.passkeyOrigin()
 	}
+	out.AutoSignIn = s.autoSignIn()
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -237,6 +277,10 @@ type signInSettings struct {
 	// the administrator is signed in through another method.
 	CanTurnOffLocal bool   `json:"canTurnOffLocal"`
 	SessionMethod   string `json:"sessionMethod"`
+	// AutoSignIn is the method visitors are sent to by themselves ("oidc") or
+	// empty; AutoSignInChoices are the ones that can be picked right now.
+	AutoSignIn        string             `json:"autoSignIn"`
+	AutoSignInChoices []autoSignInChoice `json:"autoSignInChoices"`
 }
 
 func (s *Server) sessionMethod(r *http.Request) string {
@@ -254,7 +298,12 @@ func (s *Server) signInSettings(r *http.Request) signInSettings {
 	pk, _ := s.Settings.GetBool(settings.KeyAuthPasskeys)
 	origin, _ := s.passkeyOrigin()
 	m := s.sessionMethod(r)
+	choices := []autoSignInChoice{}
+	if c, ok := s.oidcActive(); ok {
+		choices = append(choices, autoSignInChoice{ID: autoSignInOIDC, Name: c.Name})
+	}
 	return signInSettings{
+		AutoSignIn: s.autoSignIn(), AutoSignInChoices: choices,
 		LocalSignIn: saved != "0", LocalEffective: s.localSignInOn(), Passkeys: pk, PasskeysAvailable: origin != "",
 		PublicURL: s.configuredPublicURL(), SSODisabledByEnv: s.cfg.DisableSSO, ExternalOn: s.externalSignIn(),
 		CanTurnOffLocal: s.externalSignIn() && !s.cfg.DisableSSO && (m == auth.MethodOIDC || m == auth.MethodLDAP || m == auth.MethodPasskey),
@@ -273,8 +322,9 @@ func (s *Server) handlePutSignIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		LocalSignIn *bool `json:"localSignIn"`
-		Passkeys    *bool `json:"passkeys"`
+		LocalSignIn *bool   `json:"localSignIn"`
+		Passkeys    *bool   `json:"passkeys"`
+		AutoSignIn  *string `json:"autoSignIn"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "That request couldn't be read.")
@@ -301,6 +351,19 @@ func (s *Server) handlePutSignIn(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		slog.Warn("auth: passkeys switched", "on", *req.Passkeys, "by", actor)
+	}
+	if req.AutoSignIn != nil {
+		_, oidcWorks := s.oidcActive()
+		if ok, problem := validAutoSignIn(*req.AutoSignIn, oidcWorks); !ok {
+			writeError(w, http.StatusBadRequest, problem)
+			return
+		}
+		if err := s.Settings.Set(settings.KeyAuthAutoSignIn, *req.AutoSignIn, false); err != nil {
+			slog.Error("auth: could not save the automatic sign-in choice", "err", err)
+			writeError(w, http.StatusInternalServerError, "The setting couldn't be saved.")
+			return
+		}
+		slog.Warn("auth: automatic sign-in changed", "to", *req.AutoSignIn, "by", actor)
 	}
 	if req.LocalSignIn != nil {
 		if !*req.LocalSignIn {

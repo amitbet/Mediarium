@@ -3,6 +3,7 @@ package books
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -108,6 +109,9 @@ func (c *Client) get(ctx context.Context, path string, query url.Values, into an
 	if resp.StatusCode == http.StatusNotFound {
 		return ErrNotFound
 	}
+	if resp.StatusCode == http.StatusUnprocessableEntity || resp.StatusCode == http.StatusBadRequest {
+		return fmt.Errorf("open library answered %d: %w", resp.StatusCode, ErrBadQuery)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("open library answered %d", resp.StatusCode)
 	}
@@ -119,6 +123,45 @@ func (c *Client) get(ctx context.Context, path string, query url.Values, into an
 
 // ErrNotFound is returned for a book Open Library does not have.
 var ErrNotFound = fmt.Errorf("open library has no such book")
+
+// ErrBadQuery is returned when Open Library refuses a search as malformed
+// (it answers 422 for text its search syntax can't read, such as an
+// unbalanced bracket or quote, or a lone colon).
+var ErrBadQuery = fmt.Errorf("open library could not read the search")
+
+// maxQueryRunes caps what is sent as a search; longer text is cut at a word.
+const maxQueryRunes = 200
+
+// PlainQuery turns whatever was typed into plain words for Open Library's
+// search: characters that mean something in its query syntax (quotes,
+// brackets, colons, + - ! ^ ~ * ? / \ & |) become spaces, a dangling AND, OR
+// or NOT at either end is dropped and the text is cut to maxQueryRunes.
+func PlainQuery(q string) string {
+	words := strings.Fields(strings.Map(func(r rune) rune {
+		if strings.ContainsRune("+-!(){}[]^\"~*?:\\/&|<>=;", r) {
+			return ' '
+		}
+		return r
+	}, q))
+	isOp := func(w string) bool { return w == "AND" || w == "OR" || w == "NOT" }
+	for len(words) > 0 && isOp(words[0]) {
+		words = words[1:]
+	}
+	for len(words) > 0 && isOp(words[len(words)-1]) {
+		words = words[:len(words)-1]
+	}
+	out := ""
+	for _, w := range words {
+		if out != "" {
+			w = " " + w
+		}
+		if len([]rune(out+w)) > maxQueryRunes {
+			break
+		}
+		out += w
+	}
+	return out
+}
 
 // Search finds books by title, author or both.
 func (c *Client) Search(ctx context.Context, q string, limit int) ([]Found, error) {
@@ -132,11 +175,26 @@ func (c *Client) Search(ctx context.Context, q string, limit int) ([]Found, erro
 	if q == "" {
 		return []Found{}, nil
 	}
-	if err := c.get(ctx, "/search.json", url.Values{
-		"q":      {q},
-		"fields": {docFields},
-		"limit":  {fmt.Sprint(limit)},
-	}, &res); err != nil {
+	search := func(q string) error {
+		return c.get(ctx, "/search.json", url.Values{
+			"q":      {q},
+			"fields": {docFields},
+			"limit":  {fmt.Sprint(limit)},
+		}, &res)
+	}
+	err := search(q)
+	if errors.Is(err, ErrBadQuery) {
+		// What was typed isn't valid in Open Library's search syntax:
+		// look for the plain words in it instead.
+		plain := PlainQuery(q)
+		if plain == "" {
+			return []Found{}, nil
+		}
+		if plain != q {
+			err = search(plain)
+		}
+	}
+	if err != nil {
 		return nil, err
 	}
 	return founds(res.Docs, false), nil
