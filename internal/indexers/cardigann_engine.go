@@ -109,7 +109,9 @@ func (m *CardigannManager) Test(ctx context.Context, inst Instance) (TestResult,
 	}
 	// A signed-in session is checked by the search itself (a lost session
 	// signs in again); changed settings always start a new session.
-	cats := []int{2000, 5000}
+	// A connection test must also work for sites dedicated to books, music,
+	// or other categories. Test the site's feed without movie/TV filtering.
+	var cats []int
 	results, err := sess.search(ctx, "", cats)
 	if err != nil {
 		return TestResult{}, err

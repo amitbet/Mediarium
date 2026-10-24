@@ -1,0 +1,78 @@
+---
+# Verified against AudioBookBay's public search and details pages. All site
+# behavior stays in this definition; no tracker-specific engine code is needed.
+id: audiobookbay
+name: AudioBook Bay
+description: "Public audiobook tracker. No account required; availability is discovered when connecting to peers."
+language: en-US
+type: public
+encoding: UTF-8
+requestDelay: 6.1
+links:
+  - https://audiobookbay.lu/
+  - http://audiobookbay.fi/
+  - http://audiobookbay.se/
+
+caps:
+  categories:
+    1: Audio/Audiobook
+  modes:
+    search: [q]
+    book-search: [q]
+
+download:
+  infohash:
+    hash:
+      selector: 'td:contains("Info Hash:") ~ td'
+    title:
+      selector: div.postTitle h1
+
+search:
+  headers:
+    User-Agent: ["Mozilla/5.0"]
+    Accept: ["text/html"]
+  keywordsfilters:
+    - name: re_replace
+      args: ['[^\p{L}\p{N}_]+', ' ']
+    - name: trim
+    - name: tolower
+  paths:
+    - path: /
+  inputs:
+    s: "{{ .Keywords }}"
+    tt: "1"
+  rows:
+    selector: div.post:has(div.postTitle h2 a)
+  fields:
+    title:
+      selector: div.postTitle h2 a
+    title|append:
+      selector: div.postContent
+      optional: true
+      filters:
+        - name: regexp
+          args: ['(?i)Format:\s*([^/]+)\s*/']
+        - name: trim
+        - name: re_replace
+          args: ['^([^?].*)$', ' [$1]']
+        - name: replace
+          args: ['?', '']
+    details:
+      selector: div.postTitle h2 a
+      attribute: href
+    size:
+      selector: div.postContent
+      filters:
+        - name: regexp
+          args: ['(?i)File Size:\s*([\d.,]+\s*[KMGT]?B)']
+    date:
+      selector: div.postContent
+      optional: true
+      filters:
+        - name: regexp
+          args: ['Posted:\s*(\d{1,2}\s+\w{3}\s+\d{4})']
+        - name: dateparse
+          args: ['d MMM yyyy']
+    category:
+      text: 1
+    # The site does not report swarm counts. Leave them unknown.

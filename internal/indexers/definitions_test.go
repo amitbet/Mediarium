@@ -183,8 +183,15 @@ func TestDefinitionStoreZipAndFailures(t *testing.T) {
 	store := NewDefinitionStore(filepath.Join(t.TempDir(), "defs"))
 	store.SourceURL = srv.URL
 	idx, err := store.Catalogue(context.Background(), false)
-	if err != nil || len(idx.Definitions) != 1+len(builtinDefinitions()) || idx.Definitions[0].ID != "fixturejson" {
+	if err != nil || len(idx.Definitions) != 1+len(builtinDefinitions()) {
 		t.Fatalf("zip archive: %v %+v", err, idx)
+	}
+	found := false
+	for _, def := range idx.Definitions {
+		found = found || def.ID == "fixturejson"
+	}
+	if !found {
+		t.Fatal("zip archive is missing fixturejson")
 	}
 
 	// a failed refresh keeps the cached copy and reports the error
