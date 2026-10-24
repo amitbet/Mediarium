@@ -56,6 +56,13 @@ this upgrade; they are preserved as fork changes, not attributed to upstream.
 
 ## Upgrade procedure
 
+### 2026-10-24: upstream v3.7.2
+
+Merged release tag `v3.7.2` (`0fcdaf5`, also upstream/main at fetch time)
+into `windows-service` with a merge commit. There were no conflicts. All 22
+files differing from upstream are covered by the inventory above. The Windows
+README now names v3.7.2 and the required Go 1.26.10 toolchain.
+
 Compare `git diff upstream/main -- .` and `git log upstream/main..HEAD` against
 this inventory on every merge. Preserve local work before merging a release tag.
 Build and test before stopping the installed service. Back up the stopped

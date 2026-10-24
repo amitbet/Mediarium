@@ -1,6 +1,7 @@
 # Native Windows service
 
-Based on stable upstream v3.2.3. Go 1.26.9 and Node/npm are required to build.
+Based on stable upstream v3.7.2. Go 1.26.10 and Node/npm are required to build.
+See [fork_nodes.md](../fork_nodes.md) for the complete inventory of fork changes.
 The UI is embedded in the executable; Docker, WSL and a service wrapper are unnecessary.
 
 ```powershell
