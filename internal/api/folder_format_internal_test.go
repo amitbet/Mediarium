@@ -111,3 +111,47 @@ func TestFolderFormatsDestPath(t *testing.T) {
 		}
 	})
 }
+
+func TestExistingSeriesFoldersAcrossPresets(t *testing.T) {
+	for _, preset := range []string{"jellyfin", "plex", "custom"} {
+		t.Run(preset, func(t *testing.T) {
+			s := newAuditServer(t)
+			root := t.TempDir()
+			s.Settings.Set(settings.KeyTVPath, root, false)
+			s.Settings.Set(settings.KeyNamingPreset, preset, false)
+			sr, err := s.MovieRepo.AddSeries(library.Series{TMDBID: 123, Title: "Example Show", Year: 2022}, []library.Episode{{Season: 4, Episode: 1}, {Season: 4, Episode: 2}, {Season: 5, Episode: 1}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			eps, err := s.MovieRepo.ListEpisodes(sr.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			show := filepath.Join(root, "Example Show")
+			old := filepath.Join(show, "Season 4", "Example.Show.S04E01.mkv")
+			if err := s.MovieRepo.SetEpisodeStatus(eps[0].ID, library.StatusDownloaded, "1080p", old); err != nil {
+				t.Fatal(err)
+			}
+			dest := func(season int) string {
+				t.Helper()
+				p, err := s.buildTVDestPath(sr, library.Episode{Season: season, Episode: 2}, parser.Release{}, "release", "x.mkv")
+				if err != nil {
+					t.Fatal(err)
+				}
+				return filepath.Dir(p)
+			}
+			if got, want := dest(4), filepath.Join(show, "Season 4"); got != want {
+				t.Fatalf("existing season: got %q, want %q", got, want)
+			}
+			if got, want := dest(5), filepath.Join(show, "Season 05"); got != want {
+				t.Fatalf("new season: got %q, want %q", got, want)
+			}
+			// Explicitly moving future downloads to another library root still works.
+			other := t.TempDir()
+			s.Settings.Set(settings.KeyTVPath, other, false)
+			if got, want := dest(4), filepath.Join(other, "Example Show (2022)", "Season 04"); got != want {
+				t.Fatalf("changed root: got %q, want %q", got, want)
+			}
+		})
+	}
+}

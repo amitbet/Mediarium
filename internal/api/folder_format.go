@@ -79,3 +79,22 @@ func (s *Server) existingSeriesDir(sr library.Series, root string) (string, bool
 	}
 	return dir, true
 }
+
+// existingSeasonDir keeps an imported season's spelling (Season 4 versus
+// Season 04). Only direct season folders belonging to this show are reused.
+func (s *Server) existingSeasonDir(sr library.Series, showDir string, season int) (string, bool) {
+	eps, err := s.MovieRepo.ListEpisodes(sr.ID)
+	if err != nil {
+		return "", false
+	}
+	for _, ep := range eps {
+		if ep.Season != season || ep.FilePath == "" {
+			continue
+		}
+		dir := filepath.Dir(ep.FilePath)
+		if filepath.Clean(filepath.Dir(dir)) == filepath.Clean(showDir) {
+			return dir, true
+		}
+	}
+	return "", false
+}

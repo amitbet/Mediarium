@@ -88,7 +88,46 @@ this upgrade; they are preserved as fork changes, not attributed to upstream.
 - `README.md` links the Windows fork's downloads/guide and names main as the
   maintained branch. `CHANGELOG.md` records the fork's Windows installer features.
 
+## Existing show and season folders (2026-10-25)
+
+- `internal/api/pipeline_tv.go`: reuse the existing show folder for every naming
+  preset, including Jellyfin, instead of only when a custom folder format differs
+  from the default. Folder templates name new shows; importing more episodes
+  preserves an imported show's folder, including a name without the year.
+- `internal/api/folder_format.go`: preserve an existing direct season folder for
+  the same season (for example `Season 4` instead of creating `Season 04`). The
+  selected library root still bounds reuse, so deliberately changing a show's
+  destination root continues to work and second copies stay separate.
+- `internal/api/folder_format_internal_test.go`: regressions cover Jellyfin,
+  Plex and Custom presets, existing show/season spelling, a new season, and an
+  explicit destination-root change.
+
 ## Upgrade procedure
+
+### 2026-10-25: upstream v3.7.3
+
+Fetched upstream and merged `v3.7.3` / upstream/main (`f7d1e26`) into `main`
+with merge commit `a8ce006`. Resolved the CHANGELOG insertion conflict by retaining
+both the Windows fork's Unreleased entry and upstream's v3.7.3 release notes.
+Reapplied the folder fix after the merge; Windows documentation now names v3.7.3.
+
+Validation: the production frontend build and CGO-free native Windows GUI build
+pass. Focused API folder-format, imported-folder, change-folder, series-path and
+upstream release regression tests pass. Full `cmd/app`, `organizer`, `metafiles`
+and `libimport` suites pass. Broader API/torrent suites were not run for this fix;
+the existing Windows filesystem/torrent limitations below remain applicable.
+
+The local service was upgraded after a stopped database/key/executable backup.
+Its media roots now use `D:\media - video` with Movies, Series, Music, Ebooks and
+Audiobooks subfolders. Downloads remain in their existing staging folder.
+Managed media and recorded paths were migrated together with a per-file manifest;
+Star Trek season 4 was consolidated into its original `Season 4` directory and
+all ten files attached to the existing series record. Jellyfin's retired media
+roots were removed; a scan confirmed one Star Trek series entry at the original
+path. Fallout's existing episodes were also attached before future downloads.
+These machine-specific data
+changes are configuration, not hardcoded defaults in the fork.
+
 
 ### 2026-10-24: upstream v3.7.2
 

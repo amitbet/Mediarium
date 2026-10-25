@@ -547,10 +547,12 @@ func (s *Server) buildTVDestPath(series library.Series, ep library.Episode, rele
 	clean := func(f string) string { return organizer.Sanitize(organizer.Render(f, ctx), mode, replacement) }
 
 	folder := filepath.Join(root, clean(s.seriesFolderFormat()), clean(organizer.TVSeasonFolder))
-	if s.seriesFolderFormat() != organizer.DefaultSeriesFolder {
-		// The folder format is for new shows: one that has files keeps its folder.
-		if dir, ok := s.existingSeriesDir(series, root); ok {
-			folder = filepath.Join(dir, clean(organizer.TVSeasonFolder))
+	// Naming presets only choose folders for new shows. Imported shows keep
+	// their existing folder, including when its name has no year.
+	if dir, ok := s.existingSeriesDir(series, root); ok {
+		folder = filepath.Join(dir, clean(organizer.TVSeasonFolder))
+		if seasonDir, ok := s.existingSeasonDir(series, dir, ep.Season); ok {
+			folder = seasonDir
 		}
 	}
 	// Each file of a season pack keeps its own name.
