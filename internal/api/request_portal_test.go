@@ -244,8 +244,13 @@ func TestMessagesToThePersonWhoAsked(t *testing.T) {
 	if !strings.Contains(titles, "Your request was approved: Bravo (1995)") || !strings.Contains(titles, "Your request was declined: Charlie (2020)") {
 		t.Fatalf("titles: %s", titles)
 	}
-	if !strings.Contains(evs[1].Message, "Reason: Not this one.") {
-		t.Fatalf("decline message: %q", evs[1].Message)
+	// The two messages can arrive in either order, so pick by title.
+	declined := evs[0]
+	if strings.Contains(evs[1].Title, "was declined") {
+		declined = evs[1]
+	}
+	if !strings.Contains(declined.Title, "was declined") || !strings.Contains(declined.Message, "Reason: Not this one.") {
+		t.Fatalf("decline message: %q (%q)", declined.Message, declined.Title)
 	}
 
 	// The check that spots the title in the library: Alpha was approved while

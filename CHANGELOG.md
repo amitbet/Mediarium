@@ -17,6 +17,16 @@ under [Unreleased]. How releases are cut: [docs/RELEASING.md](docs/RELEASING.md)
 - Windows installer CI and public releases with SHA-256 checksums, including
   installation, upgrade and uninstall tests on a disposable Windows runner.
 
+## [3.7.3] - 2026-10-25
+
+In short: movie releases named with the maker in front of the title are found again, the nzb360 dashboard looks back 30 days, and the episode table fits a tablet.
+
+### Fixed
+
+- A movie release named with the maker in front of the title, such as `Tim.Burtons.The.Nightmare.Before.Christmas.1993`, was dropped from the release list and from automatic searches because the name did not equal the movie's title. It is now taken for that movie when the year is the same and the maker's name ends in an "s" (Tim Burtons, Disneys). Names like "Bad Boys for Life" still don't match "Bad Boys". Reported by Hoopes80 on GitHub, #121.
+- The nzb360 dashboard cards look back 30 days instead of 7 for movies and episodes that came in without a Mediarium download, and a movie whose file arrived after the movie was added is dated by its file. Reported by Bayharbourbutcher1 on GitHub, #94.
+- On a show's page the episode table scrolled sideways on a tablet in some languages. Its buttons now wrap and the cells are a little narrower.
+
 ## [3.7.2] - 2026-10-24
 
 In short: files that are far too short are turned away, a release search shows which indexers it asked, a show can have its own numbering, music filters for the artist pages, and more fixes for the nzb360 dashboard.

@@ -8,7 +8,8 @@ test('the guide opens and lists its topics', async ({ page }) => {
   const errors = watchErrors(page)
   await page.goto('/help')
   await expect(page).toHaveTitle(/User guide/)
-  await expect(page.getByRole('heading', { name: 'User guide', level: 1 })).toBeVisible()
+  // the top bar's title turns into a plain line once the page has its own <h1>, so look inside the page
+  await expect(page.locator('#main').getByRole('heading', { name: 'User guide', level: 1 })).toBeVisible()
   // A wide screen has the side list; a narrow one lists the topics as cards.
   const topics = (page.viewportSize()?.width ?? 1280) > 900 ? page.getByRole('navigation', { name: 'Guide topics' }) : page.locator('main')
   await expect(topics.getByRole('link', { name: /^Subtitles/ }).first()).toBeVisible()

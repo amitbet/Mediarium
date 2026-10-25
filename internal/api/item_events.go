@@ -312,7 +312,7 @@ func (s *Server) noteMovieSearch(ctx context.Context, mode limitMode, m library.
 	}
 	keep := func(res indexers.Result) (bool, string) {
 		rel := res.Parsed()
-		if !sameTitle(rel.Title, m.Title) && matchingAltTitle(rel.Title, m.AltTitles) == "" {
+		if !sameTitle(rel.Title, m.Title) && !possessiveLead(rel, m) && matchingAltTitle(rel.Title, m.AltTitles) == "" {
 			return false, "other films"
 		}
 		if m.Year != 0 && rel.Year != 0 && rel.Year != m.Year {

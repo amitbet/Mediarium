@@ -64,20 +64,30 @@ for (const [from, to] of MOVED) {
   })
 }
 
-test('the Settings entry always lists its groups, and one group is open at a time', async ({ page }) => {
+test('the Library and Settings menus open only on a click, and only one at a time', async ({ page }) => {
   await page.goto('/')
   await openNav(page)
-  const nav = page.getByRole('navigation', { name: 'Main' })
-  const library = nav.getByRole('button', { name: /^Library$/ }).last()
-  const downloading = nav.getByRole('button', { name: /Downloading/ })
+  const library = page.locator('#sn-head-library')
+  const settings = page.locator('#sn-head-settings')
   await expect(library).toBeVisible()
+  // on the home page both are closed
+  await expect(library).toHaveAttribute('aria-expanded', 'false')
+  await expect(settings).toHaveAttribute('aria-expanded', 'false')
+  // a tap on a group also opens its first page, which closes the drawer on a phone
   await library.click()
   await expect(library).toHaveAttribute('aria-expanded', 'true')
-  // a tap on a group also opens its first page, which closes the drawer on a phone
+  await expect(settings).toHaveAttribute('aria-expanded', 'false')
   await openNav(page)
-  await downloading.click()
-  await expect(downloading).toHaveAttribute('aria-expanded', 'true')
+  await settings.click()
+  await expect(settings).toHaveAttribute('aria-expanded', 'true')
   await expect(library).toHaveAttribute('aria-expanded', 'false')
+  // a reload starts with both closed, even on a page inside a group
+  await page.reload()
+  await openNav(page)
+  await expect(library).toHaveAttribute('aria-expanded', 'false')
+  await expect(settings).toHaveAttribute('aria-expanded', 'false')
+  // while closed, the row names the page you are on
+  await expect(settings.locator('.nav-here')).not.toBeEmpty()
 })
 
 test('the Library entry lists its kinds, and each one opens the Library on that tab', async ({ page }) => {
@@ -86,11 +96,15 @@ test('the Library entry lists its kinds, and each one opens the Library on that 
   const nav = page.getByRole('navigation', { name: 'Main' })
   const movies = nav.getByRole('link', { name: 'Movies', exact: true })
   const shows = nav.getByRole('link', { name: 'TV shows', exact: true })
+  await expect(movies).toBeHidden()
+  await page.locator('#sn-head-library').click()
+  await openNav(page)
   await expect(movies).toBeVisible()
   await shows.click()
   await expect(page).toHaveURL(/\/library\?kind=tv$/)
   await expect(shows).toHaveAttribute('aria-current', 'page')
   await expect(movies).not.toHaveAttribute('aria-current', 'page')
+  // inside the Library the menu stays open
   await openNav(page)
   await movies.click()
   await expect(page).toHaveURL(/\/library\?kind=movie$/)

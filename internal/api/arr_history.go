@@ -28,7 +28,7 @@ import (
 // arrRecentImports is how far back the lines for titles that came in without a
 // download of Mediarium's go in a list not about one title (see
 // arrHistoryRecords).
-const arrRecentImports = 7 * 24 * time.Hour
+const arrRecentImports = 30 * 24 * time.Hour
 
 // arrLibraryLineBase starts the ids of those lines. The apps read an id as a
 // 32-bit number (a bigger one makes the whole list unreadable to them), so it
@@ -201,7 +201,7 @@ func (s *Server) arrHistoryRecords(app arrApp, r *http.Request) ([]arrHistoryRec
 		}
 	}
 	// A library import is not a download: in a list that is neither about one
-	// title nor limited to a time, only the ones from the last week are lines
+	// title nor limited to a time, only the ones from the last 30 days are lines
 	// of its history, so a "recently downloaded" card is not filled with the
 	// whole library.
 	recentOnly := len(wantMovies) == 0 && len(wantSeries) == 0 && wantEpisode == 0 && since.IsZero()
@@ -366,6 +366,9 @@ func (s *Server) arrHistoryRecords(app arrApp, r *http.Request) ([]arrHistoryRec
 				continue
 			}
 			when := parseArrStored(mc.added[m.ID])
+			if fi, err := os.Stat(m.FilePath); err == nil && fi.ModTime().After(when) {
+				when = fi.ModTime().UTC() // a file that arrived after the movie was added (a rescan, a moved file)
+			}
 			if when.IsZero() {
 				when = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 			}
