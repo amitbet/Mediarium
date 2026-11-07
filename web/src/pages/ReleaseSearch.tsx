@@ -4,6 +4,7 @@ import { api, type SearchResult } from '../api'
 import Icon from '../components/Icon'
 import ReleaseTable from '../components/ReleaseTable'
 import { useToast } from '../components/Toast'
+import { useTorrentsSwitch } from '../useTorrentsSwitch'
 import { plural, t } from '../i18n'
 import { useModules } from '../ModulesContext'
 import { resultsLink } from '../searchTabs'
@@ -15,6 +16,7 @@ import '../search.css'
 // files the download as usual.
 export default function ReleaseSearch() {
   const toast = useToast()
+  const { grabError } = useTorrentsSwitch()
   const { on } = useModules()
   const titlesOn = on('movies') || on('tv')
   const booksOn = on('ebooks') || on('audiobooks')
@@ -45,7 +47,7 @@ export default function ReleaseSearch() {
       await api.searchGrab({ releaseTitle: r.title, downloadUrl: r.downloadUrl, sizeBytes: r.sizeBytes, protocol: r.protocol })
       toast.success(t('Added to the downloads: {title}', { title: r.title }))
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e))
+      grabError(e, () => void grab(r))
     } finally {
       setGrabbing(null)
     }

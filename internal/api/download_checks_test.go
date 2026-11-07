@@ -173,6 +173,10 @@ func TestReleaseWithAProgramInItIsRejectedBeforeDownloading(t *testing.T) {
 	const title = "The.Fixture.Movie.1999.1080p.WEB-DL.x264-FIXTURE"
 	id := env.grab(t, title, url, 1000)
 	it := env.finish(t, id)
+	// The item is marked failed first; the blocklist, the movie, the problem log
+	// and the activity feed are written in the steps after it in the same run.
+	// Wait for the run to end (and any search it starts for another release).
+	env.server.TestWaitBackground()
 
 	if it.Status != queue.StatusFailed {
 		t.Fatalf("status = %s, want failed", it.Status)

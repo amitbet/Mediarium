@@ -537,7 +537,7 @@ func (s *cgSession) do(ctx context.Context, r cgRequest) (*cgResponse, error) {
 	}
 	sol, err := s.solveChallenge(ctx, fsURL, r)
 	if err != nil {
-		return nil, fmt.Errorf("%s: FlareSolverr could not pass the Cloudflare check: %w", s.name, err)
+		return nil, &FlareSolverrError{Site: s.name, Address: SafeAddress(fsURL), Err: err}
 	}
 	if !r.binary && sol.Response != "" && sol.Status != 0 {
 		u, _ := url.Parse(sol.URL)
@@ -751,7 +751,7 @@ func (s *cgSession) solveChallenge(ctx context.Context, fsURL string, r cgReques
 		if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &nerr) && nerr.Timeout()) {
 			return nil, fmt.Errorf("FlareSolverr didn't finish the Cloudflare check after %d seconds. Check that FlareSolverr is running and has internet access, then try again.", int(time.Since(started).Round(time.Second)/time.Second))
 		}
-		return nil, fmt.Errorf("contact FlareSolverr: %w", err)
+		return nil, &flareContactError{err: err}
 	}
 	defer resp.Body.Close()
 	var out struct {

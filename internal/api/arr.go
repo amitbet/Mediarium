@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -235,7 +236,16 @@ func (s *Server) arrHandler(app arrApp) http.Handler {
 		}
 		sw := &arrStatusWriter{ResponseWriter: w, status: http.StatusOK}
 		mux.ServeHTTP(sw, r2)
-		slog.Debug("arr: request answered", "app", string(app), "method", r.Method, "path", r.URL.Path, "status", sw.status)
+		// The query is shown too, as the settings of the request (sort, page,
+		// filters), so an empty card can be matched to what the app asked for.
+		var asked []string
+		for k, v := range r.URL.Query() {
+			if !strings.EqualFold(k, "apikey") && len(v) > 0 && len(v[0]) <= 60 {
+				asked = append(asked, k+"="+v[0])
+			}
+		}
+		sort.Strings(asked)
+		slog.Debug("arr: request answered", "app", string(app), "method", r.Method, "path", r.URL.Path, "query", strings.Join(asked, "&"), "status", sw.status)
 	})
 }
 

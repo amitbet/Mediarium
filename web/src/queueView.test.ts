@@ -94,6 +94,7 @@ test('badge wording', () => {
     [{ status: 'downloading' }, 'Downloading'],
     [{ status: 'queued' }, 'Waiting in line'],
     [{ status: 'importing' }, 'Importing'],
+    [{ status: 'importing', waiting: true }, 'Waiting for MusicBrainz'],
     [{ status: 'paused' }, 'Paused'],
     [{ status: 'paused', interrupted: true }, 'Partly downloaded, stopped'],
     [{ status: 'stopped' }, 'Stopped'],

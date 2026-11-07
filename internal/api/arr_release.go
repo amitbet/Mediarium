@@ -341,7 +341,7 @@ func (s *Server) arrListReleases(app arrApp) http.HandlerFunc {
 				offer = arrOffer{seriesID: id, season: e.Season, episode: e.Episode}
 			} else if sid, ok := arrQueryInt(r, "seriesId"); ok && sid > 0 {
 				season, hasSeason := arrQueryInt(r, "seasonNumber")
-				if !hasSeason || season <= 0 { // a whole show or the specials: searched one episode at a time
+				if !hasSeason || season <= 0 || season > 10000 { // a whole show or the specials: searched one episode at a time
 					writeJSON(w, http.StatusOK, []arrRelease{})
 					return
 				}

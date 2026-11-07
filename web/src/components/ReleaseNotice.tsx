@@ -33,9 +33,11 @@ function SearchedSummary({ searched, className }: { searched: Searched[]; classN
                 <tr key={s.name} className={`searched-${s.status}`}>
                   <td>{s.name}</td>
                   <td>{s.kind === 'usenet' ? t('Usenet') : s.kind === 'torrent' ? t('Torrent') : ''}</td>
-                  <td title={s.reason ? st(s.reason) : undefined}>
+                  <td title={s.reason ? [st(s.reason), s.detail].filter(Boolean).join('\n') : undefined}>
                     {s.status === 'failed' && <Icon name="warning" size={14} className="searched-warn" />}
                     {resultText(s)}
+                    {s.status === 'failed' && s.reason && (s.code === 'flaresolverr' || s.code === 'gone') && <small className="searched-reason">{st(s.reason)}</small>}
+                    {s.status === 'failed' && s.detail && <small className="searched-detail">{s.detail}</small>}
                   </td>
                   <td className="num">{seconds(s.ms)}</td>
                 </tr>
@@ -59,6 +61,7 @@ export default function ReleaseNotice({
   className,
   skipped,
   searched,
+  ignoredSamples,
 }: {
   sources: number
   unanswered: Unanswered[]
@@ -69,9 +72,11 @@ export default function ReleaseNotice({
   // What each indexer did. When it is there, the summary says it all: who did
   // not answer, who was left out, and the daily-limit warnings fold into it.
   searched?: Searched[]
+  // Names of releases that came back but are not this title (see releaseHint).
+  ignoredSamples?: string[]
 }) {
   const summary = searched && searched.length > 0 ? searched : null
-  const h0 = skipped ? bookReleaseHint(sources, unanswered, results, skipped) : releaseHint(sources, unanswered, results)
+  const h0 = skipped ? bookReleaseHint(sources, unanswered, results, skipped) : releaseHint(sources, unanswered, results, ignoredSamples)
   // With the summary, a list that has releases does not repeat who did not answer.
   const h = summary && h0 && !h0.empty ? null : h0
   const left = skipped && !summary ? skippedHint(skipped) : null

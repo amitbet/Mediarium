@@ -13,10 +13,11 @@ func TestSameVolumeKeys(t *testing.T) {
 		bySpace bool
 		want    []string
 	}{
-		{"ids and space", []string{"dev:1", "fsid:a-b"}, Usage{TotalBytes: 100, FreeBytes: 40}, true, []string{"dev:1", "fsid:a-b", "space:100/40"}},
-		{"space matching off", []string{"vol:D:"}, Usage{TotalBytes: 100, FreeBytes: 40}, false, []string{"vol:D:"}},
+		{"ids and space", []string{"dev:1", "fsid:a-b"}, Usage{TotalBytes: 100, FreeBytes: 40}, true, []string{"dev:1|100", "fsid:a-b|100", "space:100/40"}},
+		{"space matching off", []string{"vol:D:"}, Usage{TotalBytes: 100, FreeBytes: 40}, false, []string{"vol:D:|100"}},
 		{"no ids still has the space", nil, Usage{TotalBytes: 100, FreeBytes: 40}, true, []string{"space:100/40"}},
 		{"empty disk has nothing to compare", nil, Usage{}, true, nil},
+		{"an id with no size figure stays as it is", []string{"vol:D:"}, Usage{}, true, []string{"vol:D:"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

@@ -1,9 +1,12 @@
 package api
 
 import (
+	"cmp"
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"slices"
+	"strings"
 
 	"github.com/rdborg/mediarium/internal/indexers"
 	"github.com/rdborg/mediarium/internal/library"
@@ -45,6 +48,12 @@ func (s *Server) grabTVRelease(series library.Series, hintSeason, hintEpisode in
 // them again separately; an automatic grab is refused with
 // errAlreadyGrabbed when any of them is already being downloaded.
 func (s *Server) grabTV(series library.Series, hintSeason, hintEpisode int, releaseTitle, downloadURL string, sizeBytes int64, protocol indexers.Protocol, kind grabKind) (int64, error) {
+	return s.grabTVOpts(series, hintSeason, hintEpisode, releaseTitle, downloadURL, sizeBytes, protocol, kind, false)
+}
+
+// grabTVOpts is grabTV for a release a person picked by hand and agreed to
+// replace the files of the episodes it covers (byHand, see grabRequest.Replace).
+func (s *Server) grabTVOpts(series library.Series, hintSeason, hintEpisode int, releaseTitle, downloadURL string, sizeBytes int64, protocol indexers.Protocol, kind grabKind, byHand bool) (int64, error) {
 	if protocol == indexers.ProtocolTorrent && !s.torrentReleasesOn() {
 		return 0, errTorrentsDisabled
 	}
@@ -101,7 +110,7 @@ func (s *Server) grabTV(series library.Series, hintSeason, hintEpisode int, rele
 	}
 	queueID, err := s.QueueRepo.Enqueue(queue.Item{
 		SeriesID: series.ID, Season: season, Episode: firstEpisode,
-		ReleaseTitle: releaseTitle, NZBURL: downloadURL, SizeBytes: sizeBytes, Protocol: queue.Protocol(protocol), Priority: kind.priority(),
+		ReleaseTitle: releaseTitle, NZBURL: downloadURL, SizeBytes: sizeBytes, Protocol: queue.Protocol(protocol), Priority: kind.priority(), ReplaceByHand: byHand && kind == grabPicked,
 	})
 	if err != nil {
 		// Nothing was queued: hand the episodes back.
@@ -123,7 +132,7 @@ func (s *Server) grabTV(series library.Series, hintSeason, hintEpisode int, rele
 
 	grabbed := s.grabbedMessage(releaseTitle, series.Title)
 	_ = s.QueueRepo.LogSeriesActivity(series.ID, "grabbed", grabbed)
-	grabbedItem := seriesItem(series, season, episodes)
+	grabbedItem := s.localizedSeriesItem(series, season, episodes)
 	grabbedItem.Quality, grabbedItem.SizeBytes, grabbedItem.Release = string(quality.Classify(parser.Parse(releaseTitle))), sizeBytes, releaseTitle
 	s.seriesReleaseDetails(&grabbedItem, series, releaseTitle, downloadURL)
 	s.notifyItem("grabbed", grabbedItem)
@@ -188,7 +197,7 @@ func (s *Server) runTVPipeline(queueID int64, series library.Series, season int,
 		releaseTargets()
 		message := fmt.Sprintf("%s: %s", series.Title, plain)
 		_ = s.QueueRepo.LogSeriesActivity(series.ID, "failed", message)
-		failedItem := seriesItemFor(series, season, targets)
+		failedItem := s.localizedSeriesItemFor(series, season, targets)
 		failedItem.Reason, failedItem.Release = plain, releaseTitle
 		if s.failureNotifyWanted(stepErr, downloadURL, releaseTitle) {
 			s.notifyItem("failed", failedItem)
@@ -231,6 +240,14 @@ func (s *Server) runTVPipeline(queueID int64, series library.Series, season int,
 
 	mapper := s.releaseMapper(series) // anime and daily file names
 	imported, skipped := 0, 0
+	keptFile := "" // the first file of the library that a release of the download was turned away for
+	// A release picked by hand, after the person agreed to replace the files
+	// the episodes have: it takes their place whatever "Better versions" and
+	// "If a file already exists" say.
+	byHand := false
+	if it, err := s.QueueRepo.Get(queueID); err == nil {
+		byHand = it.ReplaceByHand
+	}
 	importProfile := quality.Profile{} // ranks the new file against the old one ("overwrite if better")
 	if ps, err := s.loadProfiles(); err == nil {
 		importProfile = s.profileForSeries(ps, series)
@@ -245,6 +262,8 @@ func (s *Server) runTVPipeline(queueID int64, series library.Series, season int,
 	var importedEps []library.Episode
 	var subtitleItems []subtitleItem
 	var tooShort error // the first file that was far shorter than its episode
+	// How many files had a random name replaced, and by what.
+	namedByReleaseCount, namedByPresetCount := 0, 0
 	for _, file := range files {
 		fileSeason, fileEpisodes := s.tvFileEpisodes(file, season, fileTargets, mapper)
 		if len(fileEpisodes) == 0 {
@@ -274,7 +293,11 @@ func (s *Server) runTVPipeline(queueID int64, series library.Series, season int,
 			}
 			continue
 		}
-		destPath, err := s.buildTVDestPath(series, eps[0], release, releaseTitle, file)
+		// The release's name can stand in for a random file name only when it
+		// says which episode the one file is: a single episode, one file, and a
+		// release name that names exactly one episode.
+		releaseMayName := releaseNamesTheFile(single, len(files), len(eps), release)
+		destPath, nameFrom, err := s.buildTVDestPathFor(series, eps, release, releaseTitle, file, releaseMayName)
 		if err != nil {
 			return fail(err)
 		}
@@ -293,25 +316,44 @@ func (s *Server) runTVPipeline(queueID int64, series library.Series, season int,
 			skipped++
 			continue
 		}
-		policy, isBetter := s.conflictPolicy(tier, !series.NoUpgrade, importProfile, func() (quality.Tier, bool) {
-			return existingTier(eps[0].Quality, eps[0].ReleaseTitle, eps[0].FilePath)
+		policy, isBetter := s.conflictPolicy(incomingRelease{title: releaseTitle, tier: tier}, !series.NoUpgrade, importProfile, func() (currentFile, bool) {
+			t, ok := existingTier(eps[0].Quality, eps[0].ReleaseTitle, eps[0].FilePath)
+			return currentFile{tier: t, release: eps[0].ReleaseTitle}, ok
 		})
 		replaceEarlier := replacesOldFiles(policy, isBetter)
 		earlierFiles := make([]string, len(eps))
 		for i, ep := range eps {
 			earlierFiles[i] = ep.FilePath
 		}
-		keepsEarlier := false
-		for _, old := range earlierFiles {
-			keepsEarlier = keepsEarlier || keepsEarlierFile(old, destPath, replaceEarlier)
+		swapInPlace := handPickedSwap(byHand, destPath, earlierFiles)
+		if handPickedReplaces(byHand, earlierFiles) {
+			replaceEarlier = true
 		}
-		if keepsEarlier {
+		keepsEarlier := ""
+		for _, old := range earlierFiles {
+			if keepsEarlier == "" && keepsEarlierFile(old, destPath, replaceEarlier) {
+				keepsEarlier = old
+			}
+		}
+		if keepsEarlier != "" {
 			// An episode's file under another name stays when this release may not
 			// replace it: no second copy next to it.
 			skipped++
+			if keptFile == "" {
+				keptFile = keepsEarlier
+			}
 			continue
 		}
-		result, err := s.importDownloaded(file, destPath, policy, isBetter)
+		var result organizer.ImportResult
+		if swapInPlace {
+			var binned bool
+			result, binned, err = s.importSwapping(s.fileRoot(s.seriesRootFor(series), destPath), file, destPath, seriesLabel(series), 0, epIDs)
+			if err == nil && binned {
+				_ = s.QueueRepo.LogSeriesActivity(series.ID, "removed", fmt.Sprintf("%s: removed %s, which the new file replaced", fmt.Sprintf("%s S%02dE%02d", series.Title, eps[0].Season, eps[0].Episode), filepath.Base(destPath)))
+			}
+		} else {
+			result, err = s.importDownloaded(file, destPath, policy, isBetter)
+		}
 		if err != nil {
 			return fail(fmt.Errorf("import %s: %w", filepath.Base(file), err))
 		}
@@ -320,10 +362,19 @@ func (s *Server) runTVPipeline(queueID int64, series library.Series, season int,
 			// can hold dozens of files, and the resolve UI is per-item), so
 			// for TV it behaves like skip — the existing file is kept.
 			skipped++
+			if keptFile == "" {
+				keptFile = destPath
+			}
 			continue
 		}
 		if n := s.copiedFromTempNote(file, result); n != "" {
 			copiedNote = n
+		}
+		switch nameFrom {
+		case namedByRelease:
+			namedByReleaseCount++
+		case namedByPresetInstead:
+			namedByPresetCount++
 		}
 		usedDest[filepath.Clean(result.DestPath)] = true
 		usedDest[filepath.Clean(destPath)] = true
@@ -377,8 +428,10 @@ func (s *Server) runTVPipeline(queueID int64, series library.Series, season int,
 			if err := s.QueueRepo.SetStatus(queueID, queue.StatusCompleted, keptExistingMessage); err != nil {
 				return fail(err)
 			}
-			s.discardWorkDir(dir, protocol)
+			data := s.discardWorkDirReport(dir, protocol)
+			s.recordKept(queueID, keptFile, data)
 			_ = s.QueueRepo.LogSeriesActivity(series.ID, "kept", fmt.Sprintf("%s: the files of %s are already in your library, so Mediarium kept them and imported nothing.", series.Title, releaseTitle))
+			s.logKeptData(0, series.ID, data, releaseTitle)
 			return nil
 		}
 		return fail(badRelease(fmt.Errorf("no episode of %s could be matched in the downloaded files", series.Title)))
@@ -400,8 +453,13 @@ func (s *Server) runTVPipeline(queueID int64, series library.Series, season int,
 	s.autoSubtitlesFor(subtitleItems...)
 	message := fmt.Sprintf("%s: imported %s from %s", series.Title, plural(imported, "episode"), releaseTitle) + copiedNote
 	_ = s.QueueRepo.LogSeriesActivity(series.ID, "imported", message)
+	for _, note := range []string{renamedNote(series.Title, namedByRelease, namedByReleaseCount), renamedNote(series.Title, namedByPresetInstead, namedByPresetCount)} {
+		if note != "" {
+			_ = s.QueueRepo.LogSeriesActivity(series.ID, "renamed", note)
+		}
+	}
 	s.checkFinishedShowSoon(series.ID)
-	importedItem := seriesItemFor(series, season, importedEps)
+	importedItem := s.localizedSeriesItemFor(series, season, importedEps)
 	importedItem.Quality, importedItem.SizeBytes, importedItem.Release = string(tier), fileSize(importedFiles...), releaseTitle
 	s.seriesReleaseDetails(&importedItem, series, releaseTitle, downloadURL)
 	importedItem.Subtitles = subtitleNote
@@ -414,6 +472,15 @@ func (s *Server) runTVPipeline(queueID int64, series library.Series, season int,
 	s.episodesImported(importedFiles...)
 	s.pushTagsAfterImport(library.TagSeries, series.ID)
 	return nil
+}
+
+// releaseNamesTheFile reports whether the release's name can stand in for a
+// random file name: the grab was for a single episode, the download holds one
+// video, the file is one episode and the release's name names exactly one.
+// Anything else (a season pack, a double episode) would give several files
+// the same name, or a name that says nothing about which episode a file is.
+func releaseNamesTheFile(single bool, files, episodes int, release parser.Release) bool {
+	return single && files == 1 && episodes == 1 && len(release.Episodes) == 1
 }
 
 // tvGrabTargets lists the library episodes this grab is expected to
@@ -516,12 +583,43 @@ func (s *Server) tvRoot() string {
 // using the same naming preset and illegal-character handling as movies.
 // releaseTitle is the release's own name, for {Original Title}.
 func (s *Server) buildTVDestPath(series library.Series, ep library.Episode, release parser.Release, releaseTitle, videoFile string) (string, error) {
+	dest, _, err := s.buildTVDestPathFor(series, []library.Episode{ep}, release, releaseTitle, videoFile, false)
+	return dest, err
+}
+
+// multiEpisodeNaming gives the episode the file is named for (the first) and,
+// for a file that holds more than one episode of a season, the others' numbers
+// and the titles joined ("Pilot + The Second One"), as Sonarr names them.
+func multiEpisodeNaming(eps []library.Episode) (first library.Episode, more []int, title string) {
+	sorted := slices.Clone(eps)
+	slices.SortFunc(sorted, func(a, b library.Episode) int { return cmp.Compare(a.Episode, b.Episode) })
+	first = sorted[0]
+	titles := []string{first.Title}
+	for _, e := range sorted[1:] {
+		if e.Season != first.Season || e.Episode == first.Episode || slices.Contains(more, e.Episode) {
+			continue
+		}
+		more = append(more, e.Episode)
+		if e.Title != "" && !slices.Contains(titles, e.Title) {
+			titles = append(titles, e.Title)
+		}
+	}
+	if first.Title == "" {
+		titles = titles[1:]
+	}
+	return first, more, strings.Join(titles, " + ")
+}
+
+// buildTVDestPathFor is buildTVDestPath that also says where the file's name
+// came from. releaseMayName is true for a single episode in a download of its
+// own, where the release's name can stand in for a random file name.
+func (s *Server) buildTVDestPathFor(series library.Series, eps []library.Episode, release parser.Release, releaseTitle, videoFile string, releaseMayName bool) (string, nameSource, error) {
 	root := s.seriesRootFor(series)
 	if root == "" && series.CopyOf != 0 {
-		return "", fmt.Errorf("the folder for second copies isn't set. Choose one in Settings > Library > Folders")
+		return "", namedByPreset, fmt.Errorf("the folder for second copies isn't set. Choose one in Settings > Library > Folders")
 	}
 	if root == "" {
-		return "", fmt.Errorf("the TV folder isn't set. Choose one in Settings > Library > Folders")
+		return "", namedByPreset, fmt.Errorf("the TV folder isn't set. Choose one in Settings > Library > Folders")
 	}
 
 	preset, _ := s.Settings.Get(settings.KeyNamingPreset)
@@ -534,9 +632,10 @@ func (s *Server) buildTVDestPath(series library.Series, ep library.Episode, rele
 		format = p
 	}
 
+	ep, more, epTitle := multiEpisodeNaming(eps)
 	ctx := organizer.NamingContext{
-		SeriesTitle: series.Title, EpisodeTitle: ep.Title, Year: series.Year, TMDBID: series.TMDBID,
-		Season: ep.Season, Episode: ep.Episode, AirDate: ep.AirDate,
+		SeriesTitle: series.Title, EpisodeTitle: epTitle, Year: series.Year, TMDBID: series.TMDBID,
+		Season: ep.Season, Episode: ep.Episode, MoreEpisodes: more, AirDate: ep.AirDate,
 		Quality: release.Resolution, Source: release.Source, Codec: release.Codec,
 		Edition: release.Edition, ReleaseGroup: release.Group,
 		AudioCodec: release.AudioCodec, HDR: release.HDR, Is3D: release.Is3D,
@@ -544,9 +643,13 @@ func (s *Server) buildTVDestPath(series library.Series, ep library.Episode, rele
 		OriginalTitle: releaseTitle, OriginalFilename: originalStem(videoFile),
 	}
 	mode, replacement := s.illegalCharSettings()
+	// The show folder and the episode file use the title in the info language.
+	// Indexers are still searched for the English title the library stores.
+	ctx.SeriesTitle = s.folderTitle(series.TMDBID, "tv", series.Title)
 	clean := func(f string) string { return organizer.Sanitize(organizer.Render(f, ctx), mode, replacement) }
+	showFolder := clean(s.seriesFolderFormat())
 
-	folder := filepath.Join(root, clean(s.seriesFolderFormat()), clean(organizer.TVSeasonFolder))
+	folder := filepath.Join(root, showFolder, clean(organizer.TVSeasonFolder))
 	// Naming presets only choose folders for new shows. Imported shows keep
 	// their existing folder, including when its name has no year.
 	if dir, ok := s.existingSeriesDir(series, root); ok {
@@ -556,8 +659,9 @@ func (s *Server) buildTVDestPath(series library.Series, ep library.Episode, rele
 		}
 	}
 	// Each file of a season pack keeps its own name.
-	if name, ok := s.keptName(videoFile, mode, replacement); ok {
-		return filepath.Join(folder, name), nil
+	name, src := s.keptName(videoFile, releaseTitle, releaseMayName, mode, replacement)
+	if name != "" {
+		return filepath.Join(folder, name), src, nil
 	}
-	return filepath.Join(folder, clean(format)+filepath.Ext(videoFile)), nil
+	return filepath.Join(folder, clean(format)+filepath.Ext(videoFile)), src, nil
 }

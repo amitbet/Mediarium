@@ -13,7 +13,8 @@
   <a href="docs/FEATURES.md">Features</a> ·
   <a href="CHANGELOG.md">Changelog</a> ·
   <a href="https://github.com/rdborg/Mediarium/issues">Report a bug</a> ·
-  <a href="https://github.com/rdborg/Mediarium/discussions">Ideas and questions</a>
+  <a href="https://github.com/rdborg/Mediarium/discussions">Ideas and questions</a> ·
+  <a href="https://www.reddit.com/r/Mediarium/">Reddit</a>
 </p>
 
 # Mediarium

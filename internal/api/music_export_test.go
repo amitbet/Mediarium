@@ -21,7 +21,22 @@ func (s *Server) TestSetMusicBrainz(baseURL string) {
 	s.mbMu.Lock()
 	defer s.mbMu.Unlock()
 	s.mb = musicbrainz.New("test", musicbrainz.WithBaseURL(baseURL), musicbrainz.WithCoverArtBaseURL(baseURL), musicbrainz.WithRateLimit(0),
-		musicbrainz.WithBackoff(func(int) time.Duration { return 0 }))
+		musicbrainz.WithBackoff(func(int) time.Duration { return 0 }), musicbrainz.WithPatientWaits(0, 0, 0, 0, 0))
+}
+
+// TestSetMusicWaits changes how long an import waits for MusicBrainz between
+// tries and before it gives up (0 keeps the default).
+func (s *Server) TestSetMusicWaits(every, giveUp time.Duration) {
+	s.music.waits.mu.Lock()
+	defer s.music.waits.mu.Unlock()
+	s.music.waits.every, s.music.waits.giveUp = every, giveUp
+}
+
+// TestRunMusicWaits tries every import that is waiting for MusicBrainz now,
+// whether or not its time has come, and waits for it to finish.
+func (s *Server) TestRunMusicWaits() {
+	s.runDueMusicWaits(true)
+	s.TestWaitBackground()
 }
 
 // TestConfigDir is the config folder the server was started with.

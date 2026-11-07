@@ -40,6 +40,9 @@ type indexerPayload struct {
 	// MinSeeders is the fewest seeders a torrent from this indexer needs to be
 	// grabbed by itself (0 = off).
 	MinSeeders int `json:"minSeeders"`
+	// ExtraCategories are category numbers the indexer is also searched in, per
+	// kind of media ("movies", "tv", "music", "books", "audiobooks").
+	ExtraCategories map[string][]int `json:"extraCategories"`
 	// Back-off: set while searches skip the indexer after repeated failures.
 	Failures    int    `json:"failures,omitempty"`    // failures in a row
 	PausedUntil string `json:"pausedUntil,omitempty"` // RFC 3339; searches skip the indexer until then
@@ -68,7 +71,7 @@ func (p indexerPayload) isCardigann() bool {
 func (s *Server) toIndexerPayload(inst indexers.Instance) indexerPayload {
 	p := indexerPayload{
 		ID: inst.ID, Name: inst.Name, Kind: string(inst.Kind), DefinitionID: inst.DefinitionID, BaseURL: inst.BaseURL,
-		Protocol: string(inst.Protocol), Enabled: inst.Enabled, LastTestError: inst.LastTestError, RequestsPerDay: inst.RequestsPerDay, MinSeeders: inst.MinSeeders,
+		Protocol: string(inst.Protocol), Enabled: inst.Enabled, LastTestError: inst.LastTestError, RequestsPerDay: inst.RequestsPerDay, MinSeeders: inst.MinSeeders, ExtraCategories: inst.ExtraCategories,
 		HasAPIKey: inst.APIKey != "", Priority: indexerRank(inst.Priority),
 	}
 	if !inst.LastTestAt.IsZero() {
@@ -136,6 +139,7 @@ func (s *Server) handleCreateIndexer(w http.ResponseWriter, r *http.Request) {
 	if rejectBad(w,
 		checkRequestsPerDay(req.RequestsPerDay),
 		checkMinSeeders(req.MinSeeders),
+		indexers.ExtraCategories(req.ExtraCategories).Validate(),
 		checkRequired(req.Name, "Give this indexer a name, for example the name of the website."),
 		checkIndexerName(req.Name),
 		checkRequired(req.BaseURL, "Add the address of the indexer, for example https://api.example.com."),
@@ -153,6 +157,7 @@ func (s *Server) handleCreateIndexer(w http.ResponseWriter, r *http.Request) {
 	created, err := s.IndexerRepo.Create(indexers.Instance{
 		Name: req.Name, DefinitionID: req.DefinitionID, BaseURL: req.BaseURL, APIKey: req.APIKey, Protocol: protocol, Enabled: true,
 		RequestsPerDay: req.RequestsPerDay, MinSeeders: req.MinSeeders,
+		ExtraCategories: indexers.ExtraCategories(req.ExtraCategories).Normalize(),
 	}, nil)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -235,7 +240,7 @@ func (s *Server) createCardigannIndexer(w http.ResponseWriter, r *http.Request, 
 	if !ok {
 		return
 	}
-	if rejectBad(w, checkRequestsPerDay(req.RequestsPerDay), checkMinSeeders(req.MinSeeders)) {
+	if rejectBad(w, checkRequestsPerDay(req.RequestsPerDay), checkMinSeeders(req.MinSeeders), indexers.ExtraCategories(req.ExtraCategories).Validate()) {
 		return
 	}
 	base := strings.TrimSpace(req.BaseURL)
@@ -264,6 +269,7 @@ func (s *Server) createCardigannIndexer(w http.ResponseWriter, r *http.Request, 
 	created, err := s.IndexerRepo.Create(indexers.Instance{
 		Name: name, Kind: indexers.KindCardigann, DefinitionID: sum.ID, BaseURL: base, Protocol: protocol,
 		Enabled: true, Settings: settingsMap, RequestsPerDay: req.RequestsPerDay, MinSeeders: req.MinSeeders,
+		ExtraCategories: indexers.ExtraCategories(req.ExtraCategories).Normalize(),
 	}, sum.IsSecret)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -320,6 +326,9 @@ type indexerUpdate struct {
 	// MinSeeders is the fewest seeders a torrent needs to be grabbed by itself
 	// (0 = off). Left out keeps the saved value.
 	MinSeeders *int `json:"minSeeders"`
+	// ExtraCategories replaces the extra category numbers (an empty object
+	// clears them). Left out keeps the saved ones.
+	ExtraCategories map[string][]int `json:"extraCategories"`
 }
 
 // handleUpdateIndexer edits a saved indexer. Every field is optional: what
@@ -365,6 +374,13 @@ func (s *Server) handleUpdateIndexer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		inst.MinSeeders = *req.MinSeeders
+	}
+	if req.ExtraCategories != nil {
+		extra := indexers.ExtraCategories(req.ExtraCategories)
+		if rejectBad(w, extra.Validate()) {
+			return
+		}
+		inst.ExtraCategories = extra.Normalize()
 	}
 	var secret indexers.Secrets
 	if inst.IsCardigann() {
@@ -529,6 +545,12 @@ func (s *Server) testIndexerInstance(ctx context.Context, inst indexers.Instance
 	defer cancel()
 	res, err := s.Cardigann.Test(ctx, inst)
 	if err != nil {
+		if addr, ok := indexers.FlareSolverrDown(err); ok {
+			return connTestResult{Message: indexers.FlareSolverrDownMessage(addr), Detail: err.Error()}
+		}
+		if status, ok := indexers.GoneStatus(err); ok {
+			return connTestResult{Message: indexers.GoneMessage(status), Detail: err.Error()}
+		}
 		if errors.Is(err, context.DeadlineExceeded) && s.flareSolverrURL() != "" {
 			return connTestResult{Message: fmt.Sprintf("The check waited %d seconds for FlareSolverr and it didn't finish. Check that FlareSolverr is running and has internet access, then try again.", int(timeout/time.Second))}
 		}

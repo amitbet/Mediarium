@@ -194,6 +194,12 @@ func bytesPerPixel(m color.Model) int {
 // stay; a smaller picture is left as it is) and writes it as a JPEG. Pictures
 // with transparency are put on white.
 func ResizeCover(data []byte, maxW, maxH int) ([]byte, error) {
+	return ResizeCoverQuality(data, maxW, maxH, 85)
+}
+
+// ResizeCoverQuality is ResizeCover with the JPEG quality (1-100) to write
+// with: a small thumbnail can use a lower one than a cover.
+func ResizeCoverQuality(data []byte, maxW, maxH, quality int) ([]byte, error) {
 	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("read cover size: %w", err)
@@ -219,7 +225,7 @@ func ResizeCover(data []byte, maxW, maxH int) ([]byte, error) {
 	}
 	out := shrink(img, w, h, nw, nh)
 	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, out, &jpeg.Options{Quality: 85}); err != nil {
+	if err := jpeg.Encode(&buf, out, &jpeg.Options{Quality: quality}); err != nil {
 		return nil, fmt.Errorf("write cover: %w", err)
 	}
 	return buf.Bytes(), nil

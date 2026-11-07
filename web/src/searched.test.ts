@@ -83,3 +83,9 @@ test('without the search details the filter lists the indexers of the releases',
     ],
   )
 })
+
+test('a FlareSolverr that does not answer and a page that is gone have their own words', () => {
+  assert.equal(resultText(line('1337x', 'failed', { code: 'flaresolverr' })), "Did not answer: FlareSolverr isn't reachable")
+  assert.equal(resultText(line('52BT', 'failed', { code: 'gone' })), 'Did not answer: the site says the page is gone')
+  assert.equal(why(line('X', 'failed', { code: 'other' })), 'returned an error')
+})

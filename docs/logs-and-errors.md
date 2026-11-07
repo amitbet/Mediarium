@@ -55,6 +55,12 @@ Passwords, API keys and tokens are taken out before anything is stored, so what 
 
 Switch on **Tell me when an error happens** at the bottom of the page to get a message too. It goes to the places you set up under [Notifications](notifications.md) that have **Something is wrong** ticked. Only errors are sent, not warnings. A problem that repeats is sent once (again after 10 quiet minutes), and an indexer or Usenet server the connection check already told you about isn't sent a second time. The setting is `notify.on_problems`.
 
+## Detailed logging
+
+**Detailed logging**, at the bottom of the page, makes Mediarium write more to its log. With it on, the log also gets the small details it normally leaves out, such as what an app like nzb360 asked for when one of its cards stays empty, and how torrents are doing in finding peers (which trackers answered, how many peers were found and connected, how far a magnet link got; one line a minute while a magnet link waits and one every five minutes while a torrent downloads). It is meant for finding a problem together with someone who is helping you. Switch it on, repeat what went wrong, press **Copy for support** (the log lines are in what it copies), and switch it off again. It writes a lot, so the recent lines fill up fast.
+
+The switch works at once, with no restart, and it stays on after a restart until you switch it off. Only administrators can change it. Passwords, API keys and tokens are taken out of the extra lines like any others. The setting is `log.debug`.
+
 ## How long problems are kept
 
 Problems are kept for **30 days**, and at most 2000 of them. A shorter history time (`historyRetentionDays`, see [History and activity](downloads.md#history-and-activity)) applies here too. The daily [clean-up](downloads.md#clean-up) removes older ones.
@@ -77,4 +83,4 @@ Lists that come from outside services don't raise it: Discover (TMDB, MusicBrain
 
 ## For scripts
 
-Administrators only, like the page: `GET /api/system/problems` (filters and paging; `summary=1` for only the counts), `POST /api/system/problems/read`, `GET /api/system/problems/export` (plain text) and `PUT /api/system/problems/notify`. See [reference/api.md](reference/api.md).
+Administrators only, like the page: `GET /api/system/problems` (filters and paging; `summary=1` for only the counts), `POST /api/system/problems/read`, `GET /api/system/problems/export` (plain text), `PUT /api/system/problems/notify` and `PUT /api/system/problems/debug`. See [reference/api.md](reference/api.md).

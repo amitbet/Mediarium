@@ -15,6 +15,7 @@ export default function MoveToFolderDialog({
   titles,
   folders,
   initial,
+  single,
   onClose,
   onChanged,
 }: {
@@ -22,12 +23,14 @@ export default function MoveToFolderDialog({
   titles: BulkTitle[]
   folders: string[]
   initial: string
+  // One title picked on its own page: moving the files is the first choice.
+  single?: boolean
   onClose: () => void
   onChanged: () => void
 }) {
   const toast = useToast()
   const [folder, setFolder] = useState(initial)
-  const [withFiles, setWithFiles] = useState(false)
+  const [withFiles, setWithFiles] = useState(!!single)
   const [preview, setPreview] = useState<MovePreview | null>(null)
   const [checking, setChecking] = useState(false)
   const [status, setStatus] = useState<MoveStatus | null>(null)
@@ -121,6 +124,19 @@ export default function MoveToFolderDialog({
     }
   }
 
+  const moveChoice = (
+    <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+      <input type="radio" name="move-how" checked={withFiles} onChange={() => setWithFiles(true)} disabled={busy} />
+      <span>
+        <strong>{single ? t('Move the files to the new folder') : t('Also move the files that are already there')}</strong>
+        <small className="field-hint" style={{ display: 'block' }}>
+          {single
+            ? t('The folder with its subtitles and artwork moves along. Nothing is overwritten, and if anything goes wrong everything is put back.')
+            : t('On the same drive this is instant. To another drive each file is copied and checked, and only then removed from the old place. Nothing is overwritten, and a {noun} that cannot be moved completely is left as it is.', { noun: kind === 'movie' ? t('movie') : t('show') })}
+        </small>
+      </span>
+    </label>
+  )
   const nothingToMove = withFiles && preview !== null && preview.canMove === 0
   const goLabel = withFiles ? t('Move the files') : t('Use this folder')
 
@@ -150,26 +166,19 @@ export default function MoveToFolderDialog({
                 </select>
               </label>
               <fieldset className="radio-group" style={{ border: 0, padding: 0, margin: 0, display: 'grid', gap: 8 }}>
+                {single && moveChoice}
                 <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
                   <input type="radio" name="move-how" checked={!withFiles} onChange={() => setWithFiles(false)} disabled={busy} />
                   <span>
-                    <strong>{t('Only use this folder for new files')}</strong>
+                    <strong>{single ? t('Leave them where they are') : t('Only use this folder for new files')}</strong>
                     <small className="field-hint" style={{ display: 'block' }}>
-                      {t('The files already in your library stay where they are.')}
+                      {single ? t('Only new files go to the new folder. The ones already there stay where they are.') : t('The files already in your library stay where they are.')}
                     </small>
                   </span>
                 </label>
-                <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-                  <input type="radio" name="move-how" checked={withFiles} onChange={() => setWithFiles(true)} disabled={busy} />
-                  <span>
-                    <strong>{t('Also move the files that are already there')}</strong>
-                    <small className="field-hint" style={{ display: 'block' }}>
-                      {t('On the same drive this is instant. To another drive each file is copied and checked, and only then removed from the old place. Nothing is overwritten, and a {noun} that cannot be moved completely is left as it is.', { noun: kind === 'movie' ? t('movie') : t('show') })}
-                    </small>
-                  </span>
-                </label>
+                {!single && moveChoice}
               </fieldset>
-              {withFiles && <Preview preview={preview} checking={checking} noun={noun} />}
+              {withFiles && <Preview preview={preview} checking={checking} noun={noun} single={!!single} />}
             </>
           )}
           {status !== null && <Progress status={status} onStop={() => void stop()} />}
@@ -198,9 +207,22 @@ export default function MoveToFolderDialog({
   )
 }
 
-function Preview({ preview, checking, noun }: { preview: MovePreview | null; checking: boolean; noun: string }) {
+// A rough time for a copy to another drive: the files are written and read
+// back, so about 60 MB/s is assumed. Real drives vary a lot.
+function copyTime(bytes: number): string {
+  const minutes = Math.round(bytes / 60e6 / 60)
+  if (minutes < 2) return t('about a minute')
+  if (minutes >= 120) {
+    const hours = Math.round(minutes / 60)
+    return plural(hours, '{n} hour', '{n} hours')
+  }
+  return plural(minutes, '{n} minute', '{n} minutes')
+}
+
+function Preview({ preview, checking, noun, single }: { preview: MovePreview | null; checking: boolean; noun: string; single: boolean }) {
   if (!preview) return <p className="field-hint">{checking ? t('Checking…') : ''}</p>
   const copying = preview.copyBytes > 0
+  const one = single && preview.titles.length === 1 && !preview.titles[0].problem && preview.titles[0].files > 0 ? preview.titles[0] : null
   return (
     <div className="notice" style={{ display: 'grid', gap: 8 }} role="status">
       <strong>
@@ -208,7 +230,14 @@ function Preview({ preview, checking, noun }: { preview: MovePreview | null; che
           ? t('None of these {noun} can be moved.', { noun })
           : plural(preview.canMove, 'One title can be moved: {files}, {size}.', '{n} titles can be moved: {files}, {size}.', { files: plural(preview.files, '{n} file', '{n} files'), size: formatBytes(preview.bytes) })}
       </strong>
-      {copying && (
+      {one?.from && one.to && (
+        <span>
+          {t('From {from} to {to}', { from: one.from, to: one.to })}
+        </span>
+      )}
+      {one && !copying && <span>{t('Same drive: the move is instant and done completely or not at all.')}</span>}
+      {one && copying && <span>{t('Another drive: each file is copied and checked first, then removed from the old place. This takes about {time}, depending on your drives.', { time: copyTime(preview.copyBytes) })}</span>}
+      {copying && !single && (
         <span>
           {t('{size} of it is going to another drive, so it is copied and checked first. That takes a while; the move keeps going if you close this window.', { size: formatBytes(preview.copyBytes) })}
         </span>
@@ -228,13 +257,14 @@ function Preview({ preview, checking, noun }: { preview: MovePreview | null; che
           </ul>
         </details>
       )}
-      {preview.titles.some((x) => x.note) && (
+      {preview.titles.some((x) => x.note || x.linkNote) && (
         <ul style={{ margin: 0, paddingLeft: 18 }}>
           {preview.titles
-            .filter((x) => x.note)
-            .map((x) => (
-              <li key={`${x.kind}-${x.id}`}>
-                <strong>{x.title}</strong>: {st(x.note)}
+            .filter((x) => x.note || x.linkNote)
+            .flatMap((x) => [x.note, x.linkNote].filter(Boolean).map((n) => ({ x, n: n as string })))
+            .map(({ x, n }, i) => (
+              <li key={`${x.kind}-${x.id}-${i}`}>
+                <strong>{x.title}</strong>: {st(n)}
               </li>
             ))}
         </ul>

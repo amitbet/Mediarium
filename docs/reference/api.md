@@ -115,7 +115,7 @@ Every route the server exposes. Routes marked **public** need no sign-in; all ot
 
 | Method | Path | Access | What it does |
 |---|---|---|---|
-| GET | `/api/book-works/{key}` | any account | GET /api/book-works/{key}: one book from Open Library for its info page, marked when it is already in the library. |
+| GET | `/api/book-works/{key}` | any account | GET /api/book-works/{key}: one book from Open Library for its info page, or from Hardcover when the key is one of theirs, marked when it is already in the li... |
 | GET | `/api/book-works/{key}/series` | any account | GET /api/book-works/{key}/series?title=&author=: the series this book is in ({"series": null} when none is known). |
 
 ## books
@@ -130,7 +130,9 @@ Every route the server exposes. Routes marked **public** need no sign-in; all ot
 | POST | `/api/books/import/match` | admin | attaches a book picked by hand to one of the files the last import did not find (administrators, like the import itself). |
 | POST | `/api/books/import/retry` | admin | looks again only at the books the last import did not find (or could not save), without reading the folders again: for the ones Open Library or Audnexus did ... |
 | GET | `/api/books/progress` | any account | GET /api/books/progress: where the person is in every book. |
-| GET | `/api/books/search` | any account | looks books up on Open Library by title or author. |
+| GET | `/api/books/search` | any account | looks books up on Open Library, and on Hardcover when a token is saved. |
+| GET | `/api/books/search/google` | any account | lists Google Books results in Google's order, in the movie and show info language. |
+| POST | `/api/books/search/google` | any account | adds a book found through Google Books. |
 | GET | `/api/books/subjects` | any account | GET /api/books/subjects: the genres the Discover filter offers. |
 | DELETE | `/api/books/{id}` | admin | removes a book; with ?deleteFiles=true its files go to the recycle bin of their folder (or are deleted when the bin is off). |
 | GET | `/api/books/{id}` | any account |  |
@@ -315,6 +317,7 @@ Every route the server exposes. Routes marked **public** need no sign-in; all ot
 | POST | `/api/indexers/test` | admin | tests an indexer that has not been saved yet. |
 | DELETE | `/api/indexers/{id}` | admin |  |
 | PUT | `/api/indexers/{id}` | admin | edits a saved indexer. |
+| GET | `/api/indexers/{id}/categories` | admin | lists the categories a saved Newznab or Torznab indexer says it has (its capabilities), as suggestions for the extra categories. |
 | PUT | `/api/indexers/{id}/enabled` | admin |  |
 | PUT | `/api/indexers/{id}/priority` | admin | sets how much an indexer is preferred: a number from 1 to 50, lower first. |
 | POST | `/api/indexers/{id}/resume` | admin | is "Try again now": the indexer is asked by the next search, and its failures are forgotten. |
@@ -359,7 +362,7 @@ Every route the server exposes. Routes marked **public** need no sign-in; all ot
 | PUT | `/api/library/bulk/tags` | admin | adds and removes tags on the chosen titles (administrators). |
 | GET | `/api/library/counts` | any account | answers how many movies and shows the library has, for the Library's tabs, so a tab does not have to load the other tab's whole list just to show its number. |
 | GET | `/api/library/file-details` | any account | says how far the reading of the files has got, for the note in the Library. |
-| GET | `/api/library/folders` | any account | is GET /api/library/folders (any account): the folders a movie or a show can be kept in, the main one first. |
+| GET | `/api/library/folders` | any account | is GET /api/library/folders (any account): the folders a movie or a show can be kept in, the main one first, and under newTitles where a title added without ... |
 | POST | `/api/library/import` | admin | registers the reviewed selections. |
 | GET | `/api/library/import/active` | admin | lists what is going on: scans waiting to be reviewed or still running, imports still filling in details, and finished imports whose banner has not been dismi... |
 | GET | `/api/library/import/batches/{id}` | admin |  |
@@ -373,6 +376,7 @@ Every route the server exposes. Routes marked **public** need no sign-in; all ot
 | POST | `/api/library/move-files/cancel` | admin |  |
 | POST | `/api/library/move-files/preview` | admin | is POST /api/library/move-files/preview: what moving the files of the chosen titles to a folder would do. |
 | GET | `/api/library/move-files/status` | admin |  |
+| GET | `/api/library/owned` | any account |  |
 | POST | `/api/library/scan` | admin | starts a scan of an existing folder. |
 | GET | `/api/library/scan/{id}` | admin |  |
 
@@ -600,7 +604,8 @@ Every route the server exposes. Routes marked **public** need no sign-in; all ot
 |---|---|---|---|
 | DELETE | `/api/queue` | admin | empties the list of completed and failed entries. |
 | GET | `/api/queue` | any account |  |
-| POST | `/api/queue/bulk` | admin | does one thing (pause, resume, stop, retry, remove from the list, or send to the front) to several downloads at once. |
+| POST | `/api/queue/bulk` | admin | does one thing (pause, resume, stop, retry, remove from the list, blocklist, or send to the front) to several downloads at once. |
+| GET | `/api/queue/count` | any account | answers how many downloads are waiting, downloading or importing: the number beside Activity in the menu, which used to need the whole queue answer (names, p... |
 | POST | `/api/queue/pause-all` | admin | pauses every download that is running or waiting, or only the Usenet or only the torrent ones with ?protocol=. |
 | POST | `/api/queue/resume-all` | admin | puts every paused download back in the download line (or only the Usenet or only the torrent ones with ?protocol=). |
 | DELETE | `/api/queue/{id}` | admin | removes a finished, failed, stopped, paused or parked entry from the list. |
@@ -698,6 +703,8 @@ Every route the server exposes. Routes marked **public** need no sign-in; all ot
 | GET | `/api/settings/filesystem-check` | admin |  |
 | GET | `/api/settings/folder-check` | admin | inspects one folder for the setup screens: does it exist, can Mediarium write to it, how much room is left and — in Docker — was it actually mapped in fr... |
 | POST | `/api/settings/folder-create` | admin | makes a missing library folder (administrators), only where creatableParent allows. |
+| GET | `/api/settings/google-books` | admin | reports whether a Google Books API key is saved. |
+| PUT | `/api/settings/google-books` | admin | checks a Google Books API key and saves it encrypted. |
 | GET | `/api/settings/hardcover` | admin | GET /api/settings/hardcover |
 | PUT | `/api/settings/hardcover` | admin | PUT /api/settings/hardcover {"token": "..."}: checks the token with Hardcover and saves it (encrypted). |
 | POST | `/api/settings/library-marker` | admin | POST /api/settings/library-marker: make the .mediarium-root file in a library folder the administrator says is the right one. |
@@ -763,6 +770,7 @@ Every route the server exposes. Routes marked **public** need no sign-in; all ot
 | GET | `/api/system/options` | admin | reports the switches for checking for updates, installing them, pushed updates and restarting when stuck. |
 | PUT | `/api/system/options` | admin | changes the switches named in the body and leaves the rest. |
 | GET | `/api/system/problems` | admin | lists the problems that match the filters, with the counts for the cards at the top of the page. |
+| PUT | `/api/system/problems/debug` | admin | switches detailed logging on or off. |
 | GET | `/api/system/problems/export` | admin | sends the problems that match the filters as a plain text file, newest first, to attach to a support request. |
 | PUT | `/api/system/problems/notify` | admin | switches the notification for new errors on or off. |
 | POST | `/api/system/problems/read` | admin | marks problems as read: the ones listed, or with "all" every problem that matches the filters in the query string (all of them when there are none). |
@@ -880,6 +888,7 @@ Every route the server exposes. Routes marked **public** need no sign-in; all ot
 | POST | `/api/vpn/deactivate` | admin |  |
 | GET | `/api/vpn/egress-ip` | admin | makes a real request through the active tunnel, so a person can check for themselves that traffic leaves through the VPN provider and is not leaking. |
 | GET | `/api/vpn/status` | admin | surfaces connection state for the UI, so VPN status is shown clearly in the UI, not just in logs. |
+| POST | `/api/vpn/test` | admin | makes a small real request through the active tunnel and answers whether it worked, with the time of the latest handshake or, when it failed, a plain reason. |
 
 ## wanted
 
@@ -898,4 +907,4 @@ Every route the server exposes. Routes marked **public** need no sign-in; all ot
 | PUT | `/api/watched/settings` | admin | PUT /api/watched/settings {"sync": true, "cleanup": {...}} |
 | POST | `/api/watched/sync` | admin | POST /api/watched/sync: read what's been watched now. |
 
-548 routes.
+557 routes.

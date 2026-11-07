@@ -136,6 +136,9 @@ func run(parent context.Context) error {
 	// is scrubbed the same way.
 	logOut := io.MultiWriter(logbuf.ScrubWriter{W: os.Stderr}, logbuf.Default)
 	log.SetOutput(logOut)
+	// slog lines (some are debug level) follow a level that Settings > Logs can
+	// raise while the app runs; they go out the same way.
+	logbuf.InstallSlog()
 	// The torrent engine logs on its own; send it through the same scrubber.
 	torrentclient.SetLogOutput(logOut)
 

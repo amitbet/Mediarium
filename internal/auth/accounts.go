@@ -176,9 +176,9 @@ func (s *Service) UpdateAccount(id int64, upd AccountUpdate) (*Account, error) {
 	}
 	defer tx.Rollback()
 
-	var isAdmin, wasDisabled bool
+	var isAdmin, isViewer, wasDisabled bool
 	var source string
-	if err := tx.QueryRow(`SELECT is_admin, disabled, auth_source FROM users WHERE id = ?`, id).Scan(&isAdmin, &wasDisabled, &source); err != nil {
+	if err := tx.QueryRow(`SELECT is_admin, is_viewer, disabled, auth_source FROM users WHERE id = ?`, id).Scan(&isAdmin, &isViewer, &wasDisabled, &source); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrUserNotFound
 		}
@@ -218,6 +218,12 @@ func (s *Service) UpdateAccount(id int64, upd AccountUpdate) (*Account, error) {
 	}
 	if upd.Email != nil {
 		if err := set(`UPDATE users SET email = ?, email_by_admin = 1 WHERE id = ?`, *upd.Email, id); err != nil {
+			return nil, err
+		}
+	}
+	if (upd.IsAdmin != nil && *upd.IsAdmin != isAdmin) || (upd.Viewer != nil && *upd.Viewer != isViewer) {
+		// A role changed here is no longer one a sign-in group handed out.
+		if err := set(`UPDATE users SET group_role = '' WHERE id = ?`, id); err != nil {
 			return nil, err
 		}
 	}

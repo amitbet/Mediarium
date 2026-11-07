@@ -34,7 +34,11 @@ func writeError(w http.ResponseWriter, status int, message string) {
 			message = plain
 		}
 	}
-	writeJSON(w, status, map[string]string{"error": message})
+	body := map[string]string{"error": message}
+	if code := errorCodeFor(message); code != "" {
+		body["code"] = code
+	}
+	writeJSON(w, status, body)
 }
 
 // maxJSONBody is the largest JSON request body any endpoint accepts. Real

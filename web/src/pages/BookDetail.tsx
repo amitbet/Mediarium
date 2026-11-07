@@ -11,6 +11,7 @@ import ReleaseNotice from '../components/ReleaseNotice'
 import ReleaseTable from '../components/ReleaseTable'
 import Switch from '../components/Switch'
 import { useToast } from '../components/Toast'
+import { useTorrentsSwitch } from '../useTorrentsSwitch'
 import AuthorBooks from '../components/AuthorBooks'
 import BookSeries from '../components/BookSeries'
 import { audioDetails, localDate } from '../bookSeries'
@@ -89,6 +90,8 @@ function BookPage({ id }: { id?: string }) {
 
   // A book added from Audible has no Open Library page, so the link and the series lookup are left out.
   const fromAudible = book.olKey.startsWith('audnexus:')
+  const fromHardcover = book.olKey.startsWith('hc-')
+  const fromGoogle = book.olKey.startsWith('gb-')
   const formats = (['ebook', 'audiobook'] as BookFormat[]).filter((f) => on(f === 'ebook' ? 'ebooks' : 'audiobooks') || book[f].status === 'downloaded')
   return (
     <div>
@@ -116,9 +119,19 @@ function BookPage({ id }: { id?: string }) {
                 <Icon name={l.kind === 'audiobookshelf' ? 'headphones' : 'book'} size={13} /> {l.kind === 'audiobookshelf' ? t('Listen in {name}', { name: l.name }) : t('Read in {name}', { name: l.name })}
               </a>
             ))}
-            {!fromAudible && (
+            {!fromAudible && !fromHardcover && !fromGoogle && (
               <a className="link-pill" href={`https://openlibrary.org/works/${book.olKey}`} target="_blank" rel="noreferrer">
                 <Icon name="external" size={13} /> {t('More about this book')}
+              </a>
+            )}
+            {fromHardcover && (
+              <a className="link-pill" href={`https://hardcover.app/search?q=${encodeURIComponent(book.title)}`} target="_blank" rel="noreferrer">
+                <Icon name="external" size={13} /> {t('Hardcover')}
+              </a>
+            )}
+            {fromGoogle && (
+              <a className="link-pill" href={`https://books.google.com/books?id=${encodeURIComponent(book.olKey.slice(3))}`} target="_blank" rel="noreferrer">
+                <Icon name="external" size={13} /> {t('Google Books')}
               </a>
             )}
           </div>
@@ -160,6 +173,7 @@ function BookPage({ id }: { id?: string }) {
 function FormatPanel({ book, format, queue, onChanged }: { book: Book; format: BookFormat; queue: QueueItem[]; onChanged: () => void }) {
   const me = useAuth().user
   const toast = useToast()
+  const { grabError } = useTorrentsSwitch()
   const st = book[format]
   const state = bookState(book, format, queue)
   const [searching, setSearching] = useState(false)
@@ -213,7 +227,7 @@ function FormatPanel({ book, format, queue, onChanged }: { book: Book; format: B
       setOpen(false)
       setTimeout(onChanged, 500)
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e))
+      grabError(e, () => void grab(r))
     } finally {
       setGrabbing(null)
     }

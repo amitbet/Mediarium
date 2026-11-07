@@ -124,7 +124,7 @@ func (s *Server) runPipeline(queueID, movieID int64, movieTitle string, movieYea
 			root = s.movieRootFor(m) // the folder chosen for this movie, else the main one
 		}
 	}
-	destPath, err := s.buildDestPath(root, movieTitle, movieYear, tmdbID, releaseTitle, videoFile)
+	destPath, nameFrom, err := s.buildDestPathFor(root, movieTitle, movieYear, tmdbID, releaseTitle, videoFile, true)
 	if err != nil {
 		return fail(err)
 	}
@@ -146,7 +146,7 @@ func (s *Server) runPipeline(queueID, movieID int64, movieTitle string, movieYea
 	if owner := otherFileOwner(s.trackedFileOwners(), destPath, movieID, nil); owner != "" {
 		return fail(errFileOfAnother(owner, destPath)) // never another title's file
 	}
-	policy, isBetter := s.importConflictPolicy(movieID, tier)
+	policy, isBetter := s.importConflictPolicy(movieID, incomingRelease{title: releaseTitle, tier: tier})
 	// The file the movie has now, and whether this import may take its place
 	// (decided before the movie's quality is updated below).
 	var earlierFile string
@@ -154,7 +154,16 @@ func (s *Server) runPipeline(queueID, movieID int64, movieTitle string, movieYea
 		earlierFile = cur.FilePath
 	}
 	replaceEarlier := replacesOldFiles(policy, isBetter)
-	if item, err := s.QueueRepo.Get(queueID); err == nil && item.ReplacesFile != "" {
+	item, itemErr := s.QueueRepo.Get(queueID)
+	// A release picked by hand for a title that has a file, after the person
+	// agreed to replace it, takes the file's place whatever "Better versions"
+	// and "If a file already exists" say (those decide for automatic grabs).
+	byHand := itemErr == nil && item.ReplaceByHand
+	swapInPlace := handPickedSwap(byHand, destPath, []string{earlierFile})
+	if handPickedReplaces(byHand, []string{earlierFile}) {
+		replaceEarlier = true
+	}
+	if itemErr == nil && item.ReplacesFile != "" {
 		// A smaller version a person asked for: it takes the file's place even
 		// though it is of a lower quality. The old file is only removed below,
 		// once the new one is in the library.
@@ -169,6 +178,19 @@ func (s *Server) runPipeline(queueID, movieID int64, movieTitle string, movieYea
 	if keepsEarlierFile(earlierFile, destPath, replaceEarlier) {
 		existing = earlierFile
 		result.Skipped = true
+	} else if swapInPlace {
+		var binned bool
+		label := movieTitle
+		if m, err := s.MovieRepo.Get(movieID); err == nil {
+			label = movieLabel(m)
+		}
+		result, binned, err = s.importSwapping(s.fileRoot(root, destPath), videoFile, destPath, label, movieID, nil)
+		if err != nil {
+			return fail(fmt.Errorf("couldn't move the file into your library: %w", err))
+		}
+		if binned {
+			_ = s.QueueRepo.LogActivity(movieID, "removed", fmt.Sprintf("%s: removed %s, which the new file replaced", movieTitle, filepath.Base(destPath)))
+		}
 	} else {
 		result, err = s.importDownloaded(videoFile, destPath, policy, isBetter)
 		if err != nil {
@@ -193,9 +215,11 @@ func (s *Server) runPipeline(queueID, movieID int64, movieTitle string, movieYea
 		if err := s.QueueRepo.SetStatus(queueID, queue.StatusCompleted, keptExistingMessage); err != nil {
 			return fail(err)
 		}
-		s.discardWorkDir(incompleteDir, protocol)
+		data := s.discardWorkDirReport(incompleteDir, protocol)
+		s.recordKept(queueID, existing, data)
 		_ = s.MovieRepo.SetStatus(movieID, restoreStatus, "", "")
 		_ = s.QueueRepo.LogActivity(movieID, "kept", fmt.Sprintf("%s: a file is already at %s, so Mediarium kept it and did not import %s.", movieTitle, existing, releaseTitle))
+		s.logKeptData(movieID, 0, data, releaseTitle)
 		return nil
 	}
 
@@ -222,6 +246,9 @@ func (s *Server) runPipeline(queueID, movieID int64, movieTitle string, movieYea
 	_, _ = s.QueueRepo.ClearFailedForMovie(movieID, queueID)
 	importedMessage := fmt.Sprintf("%s imported to %s", movieTitle, result.DestPath) + s.copiedFromTempNote(videoFile, result)
 	_ = s.QueueRepo.LogActivity(movieID, "imported", importedMessage)
+	if note := renamedNote(movieTitle, nameFrom, 1); note != "" {
+		_ = s.QueueRepo.LogActivity(movieID, "renamed", note)
+	}
 	importedItem := s.movieItemByID(movieID, movieTitle, movieYear, tmdbID)
 	importedItem.Quality, importedItem.SizeBytes, importedItem.Path = string(tier), fileSize(result.DestPath), result.DestPath
 	if m, err := s.MovieRepo.Get(movieID); err == nil {
@@ -273,7 +300,7 @@ func (s *Server) prepareDownload(ctx context.Context, queueID int64, downloadURL
 	)
 	// A retry of a failed Usenet download starts from the files it already
 	// has when they are still there and pass PAR2 (see reuseDownloaded).
-	reused := s.reuseDownloaded(queueID, incompleteDir)
+	reused := s.reuseDownloaded(ctx, queueID, incompleteDir)
 	if !reused && protocol != indexers.ProtocolTorrent && keptResume(incompleteDir) {
 		s.queueEvent(queueID, "retried", queue.LevelInfo, "Carrying on from the part already downloaded")
 	}
@@ -333,7 +360,7 @@ func (s *Server) prepareDownload(ctx context.Context, queueID int64, downloadURL
 	// A download client's files are never repaired here: that would write to
 	// files the client may still be seeding.
 	if !viaClient {
-		if err := s.verifyStep(queueID, incompleteDir, missing); err != nil {
+		if err := s.verifyStep(ctx, queueID, incompleteDir, missing); err != nil {
 			return "", repairFailure(err)
 		}
 	}
@@ -548,8 +575,9 @@ func (s *Server) downloadTorrent(ctx context.Context, queueID int64, downloadURL
 			return errVPNChanged
 		}
 		if errors.Is(err, torrentclient.ErrNoMetadata) && ctx.Err() == nil {
-			// A dead magnet: blocklist it and try another release.
-			return badRelease(err)
+			// A dead magnet: blocklist it and try another release. The message
+			// says what was tried and how the traffic was routed.
+			return badRelease(s.explainTorrentFailure(err, tunnel))
 		}
 		return fmt.Errorf("couldn't add the torrent: %w", err)
 	}
@@ -576,7 +604,7 @@ func (s *Server) downloadTorrent(ctx context.Context, queueID int64, downloadURL
 		}
 		if errors.Is(err, torrentclient.ErrStalled) {
 			// No one is sharing it: blocklist it and try another release.
-			return badRelease(err)
+			return badRelease(s.explainTorrentFailure(err, tunnel))
 		}
 		return err
 	}
@@ -702,7 +730,7 @@ func (s *Server) vpnRequiredForTorrents() bool {
 
 // importConflictPolicy reads the configured naming-collision policy for a
 // movie import. See conflictPolicy for the shared logic.
-func (s *Server) importConflictPolicy(movieID int64, incomingTier quality.Tier) (organizer.ConflictPolicy, func() bool) {
+func (s *Server) importConflictPolicy(movieID int64, incoming incomingRelease) (organizer.ConflictPolicy, func() bool) {
 	upgrades := false
 	profile := quality.Profile{}
 	if m, err := s.MovieRepo.Get(movieID); err == nil {
@@ -711,18 +739,46 @@ func (s *Server) importConflictPolicy(movieID int64, incomingTier quality.Tier) 
 			profile = s.profileForMovie(ps, m)
 		}
 	}
-	return s.conflictPolicy(incomingTier, upgrades, profile, func() (quality.Tier, bool) {
+	return s.conflictPolicy(incoming, upgrades, profile, func() (currentFile, bool) {
 		current, err := s.MovieRepo.Get(movieID)
 		if err != nil {
-			return "", false
+			return currentFile{}, false
 		}
-		return existingTier(current.Quality, current.ReleaseTitle, current.FilePath)
+		t, ok := existingTier(current.Quality, current.ReleaseTitle, current.FilePath)
+		return currentFile{tier: t, release: current.ReleaseTitle}, ok
 	})
+}
+
+// incomingRelease is the release an import brings: its name and the quality it
+// was classified as.
+type incomingRelease struct {
+	title string
+	tier  quality.Tier
+}
+
+// currentFile is the file a title has now, as far as a new release is compared
+// with it: its quality and the release it came from ("" when unknown).
+type currentFile struct {
+	tier    quality.Tier
+	release string
+}
+
+// importBetter is the one definition of "a better version" the import uses, and
+// the release lists use to say what an automatic grab would take: a higher
+// quality tier, or the same quality (or better) with a higher custom-format
+// score while the file is below the profile's format cutoff (what an
+// automatic upgrade search already treats as an upgrade). A release the search
+// picks as an upgrade is therefore never turned away at the import.
+func importBetter(profile quality.Profile, in incomingRelease, cur currentFile) bool {
+	if profile.TierRank(in.tier) > profile.TierRank(cur.tier) {
+		return true
+	}
+	return profile.IsUpgradeOverRel(cur.tier, cur.release, in.title, parser.Parse(in.title))
 }
 
 // conflictPolicy maps the configured policy setting to organizer's enum
 // and, for "overwrite if better", builds the isBetter callback by
-// comparing incomingTier against whatever currentTier reports for the
+// comparing the incoming release against whatever current reports for the
 // existing file (Unknown-ranked when the item predates tier tracking,
 // which correctly counts as an upgrade rather than erroring). If the
 // current tier can't be determined it fails closed — never overwrites.
@@ -731,15 +787,15 @@ func (s *Server) importConflictPolicy(movieID int64, incomingTier quality.Tier) 
 // its file alone). With the default "skip" policy such a title still takes a
 // better release in place of its file: otherwise "Look for better versions"
 // would download the better file and then refuse to import it.
-func (s *Server) conflictPolicy(incomingTier quality.Tier, upgrades bool, profile quality.Profile, currentTier func() (quality.Tier, bool)) (organizer.ConflictPolicy, func() bool) {
+func (s *Server) conflictPolicy(incoming incomingRelease, upgrades bool, profile quality.Profile, current func() (currentFile, bool)) (organizer.ConflictPolicy, func() bool) {
 	v, _ := s.Settings.Get(settings.KeyImportConflictPolicy)
 	ifBetter := func() (organizer.ConflictPolicy, func() bool) {
 		isBetter := func() bool {
-			current, ok := currentTier()
+			cur, ok := current()
 			if !ok {
 				return false
 			}
-			return profile.TierRank(incomingTier) > profile.TierRank(current)
+			return importBetter(profile, incoming, cur)
 		}
 		return organizer.ConflictOverwriteIfBetter, isBetter
 	}
@@ -784,7 +840,9 @@ func (s *Server) resolveConflict(queueID int64, overwrite bool) error {
 		// The download is not wanted: its working folder goes (a torrent
 		// still seeding keeps it until its seeding goal is met). Nothing was
 		// imported, so a torrent in an external client is left there.
-		s.discardWorkDir(s.workDirFor(queueID), indexers.Protocol(item.Protocol))
+		data := s.discardWorkDirReport(s.workDirFor(queueID), indexers.Protocol(item.Protocol))
+		s.recordKept(queueID, item.DestPath, data)
+		s.logKeptData(item.MovieID, 0, data, item.ReleaseTitle)
 		// The movie keeps the file it has: downloaded when that is still
 		// there, missing otherwise.
 		m, err := s.MovieRepo.Get(item.MovieID)
@@ -825,7 +883,7 @@ func (s *Server) resolveConflict(queueID int64, overwrite bool) error {
 	_ = s.QueueRepo.LogActivity(item.MovieID, "imported", message)
 	replacedItem := notify.Item{Media: "movie", Title: item.ReleaseTitle}
 	if m, err := s.MovieRepo.Get(item.MovieID); err == nil {
-		replacedItem = movieItem(m)
+		replacedItem = s.localizedMovieItem(m)
 	}
 	replacedItem.Quality, replacedItem.SizeBytes, replacedItem.Path = string(tier), fileSize(result.DestPath), result.DestPath
 	s.notifyItem("imported", replacedItem)
@@ -839,7 +897,8 @@ func (s *Server) resolveConflict(queueID int64, overwrite bool) error {
 const keptExistingMessage = "Kept the file you already have."
 
 func isMagnetURI(s string) bool {
-	return strings.HasPrefix(s, "magnet:")
+	s = strings.TrimSpace(s)
+	return len(s) >= 7 && strings.EqualFold(s[:7], "magnet:")
 }
 
 // looksLikeTorrentFile reports whether the bytes are a bencoded .torrent file
@@ -860,9 +919,11 @@ func looksLikeTorrentFile(b []byte) bool {
 // local .torrent file. Links from definition-based indexers are resolved
 // through that indexer's session (login, details page, Cloudflare).
 func (s *Server) torrentSource(ctx context.Context, downloadURL, destDir string) (magnet, torrentFile string, err error) {
+	downloadURL = strings.TrimSpace(downloadURL)
 	switch {
 	case isMagnetURI(downloadURL):
-		return downloadURL, "", nil
+		// An indexer may write the scheme as "Magnet:"; the clients look for "magnet:".
+		return "magnet:" + downloadURL[7:], "", nil
 	case isUploadRef(downloadURL):
 		data, err := s.readUpload(downloadURL)
 		if err != nil {
@@ -881,8 +942,8 @@ func (s *Server) torrentSource(ctx context.Context, downloadURL, destDir string)
 		path, err := writeTorrentFile(dl.Data, destDir)
 		return "", path, err
 	default:
-		path, err := downloadToTempFile(ctx, downloadURL, destDir)
-		return "", path, err
+		magnet, path, err := downloadToTempFile(ctx, downloadURL, destDir)
+		return magnet, path, err
 	}
 }
 
@@ -940,13 +1001,18 @@ func writeTorrentFile(data []byte, destDir string) (string, error) {
 
 // downloadToTempFile fetches a .torrent file's bytes and writes them into
 // destDir so torrentclient.AddTorrentFile (which reads from a local path,
-// mirroring the anacrolix/torrent API) can load it.
-func downloadToTempFile(ctx context.Context, url, destDir string) (string, error) {
-	data, err := fetchURL(ctx, url)
+// mirroring the anacrolix/torrent API) can load it. A download that redirects
+// to a magnet link returns the magnet instead.
+func downloadToTempFile(ctx context.Context, url, destDir string) (string, string, error) {
+	data, magnet, err := fetchTorrentURL(ctx, url)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	return writeTorrentFile(data, destDir)
+	if magnet != "" {
+		return magnet, "", nil
+	}
+	path, err := writeTorrentFile(data, destDir)
+	return "", path, err
 }
 
 func percent(done, total int64) float64 {
@@ -962,6 +1028,45 @@ func fetchURL(ctx context.Context, url string) ([]byte, error) {
 
 // fetchURLLimit is fetchURL for a file of at most maxBytes.
 func fetchURLLimit(ctx context.Context, url string, maxBytes int64) ([]byte, error) {
+	return fetchURLLimitWithClient(ctx, netproxy.Client(30*time.Second, netproxy.Indexers), url, maxBytes)
+}
+
+// errMagnetRedirect carries a redirect to a magnet link, which net/http can't
+// follow as a request.
+type errMagnetRedirect struct{ uri string }
+
+func (e errMagnetRedirect) Error() string { return "redirect to magnet link" }
+
+// fetchTorrentURL is fetchURL for a .torrent file, taking the target of a
+// redirect to a magnet link as the torrent's source instead of failing on the
+// magnet scheme. The existing redirect check still runs first, so its limit,
+// address checks and credential stripping apply to the whole chain.
+func fetchTorrentURL(ctx context.Context, url string) (data []byte, magnet string, err error) {
+	client := netproxy.Client(30*time.Second, netproxy.Indexers)
+	follow := client.CheckRedirect
+	client.CheckRedirect = func(next *http.Request, via []*http.Request) error {
+		if follow != nil {
+			if err := follow(next, via); err != nil {
+				return err
+			}
+		}
+		if strings.EqualFold(next.URL.Scheme, "magnet") {
+			return errMagnetRedirect{uri: next.URL.String()}
+		}
+		return nil
+	}
+	data, err = fetchURLLimitWithClient(ctx, client, url, 256<<20)
+	if err != nil {
+		var redirect errMagnetRedirect
+		if errors.As(err, &redirect) {
+			return nil, redirect.uri, nil
+		}
+		return nil, "", err
+	}
+	return data, "", nil
+}
+
+func fetchURLLimitWithClient(ctx context.Context, client *http.Client, url string, maxBytes int64) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -971,7 +1076,6 @@ func fetchURLLimit(ctx context.Context, url string, maxBytes int64) ([]byte, err
 	// even via a redirect), and the proxy when one is set for indexers;
 	// errors and messages never carry the link's query string, which holds
 	// the indexer key.
-	client := netproxy.Client(30*time.Second, netproxy.Indexers)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, netguard.CleanError(err)
@@ -999,7 +1103,7 @@ func fetchURLLimit(ctx context.Context, url string, maxBytes int64) ([]byte, err
 // missing is how many articles no server had. Then repair is mandatory: if
 // PAR2 cannot rebuild the file the release is unusable, so the step fails
 // rather than quietly passing on a file with holes in it.
-func verifyAndRepair(dir string, missing int) error {
+func verifyAndRepair(ctx context.Context, dir string, missing int) error {
 	// Obfuscated releases first get their real names back from the PAR2
 	// data, so repair, unpacking and import all see the names they expect.
 	if n, err := organizer.Deobfuscate(dir); err != nil {
@@ -1022,12 +1126,12 @@ func verifyAndRepair(dir string, missing int) error {
 		return fmt.Errorf("%s couldn't be found on your Usenet servers and the release has no PAR2 files to repair it", plural(missing, "article"))
 	}
 	for _, f := range par2Files {
-		result, err := repairer.Verify(f)
+		result, err := repairer.VerifyContext(ctx, f)
 		if err != nil {
 			return err
 		}
 		if !result.OK {
-			if err := repairer.Repair(f); err != nil {
+			if err := repairer.RepairContext(ctx, f); err != nil {
 				return err
 			}
 		}
@@ -1168,17 +1272,26 @@ func (s *Server) downloadsIncompleteDir() string {
 // buildDestPath renders the configured naming preset/format into a final
 // library path.
 func (s *Server) buildDestPath(root, movieTitle string, year, tmdbID int, releaseTitle, videoFile string) (string, error) {
+	dest, _, err := s.buildDestPathFor(root, movieTitle, year, tmdbID, releaseTitle, videoFile, false)
+	return dest, err
+}
+
+// buildDestPathFor is buildDestPath that also says where the file's name came
+// from. releaseMayName is true when releaseTitle is the name of the download
+// itself (not a guess made from the file): with "Keep the original file
+// names" on, a file named at random then takes the release's name.
+func (s *Server) buildDestPathFor(root, movieTitle string, year, tmdbID int, releaseTitle, videoFile string, releaseMayName bool) (string, nameSource, error) {
 	moviesPath := root
 	if moviesPath == "" {
 		moviesPath = s.moviesRoot()
 	}
 	if moviesPath == "" {
-		return "", fmt.Errorf("the movies folder isn't set. Choose one in Settings > Library > Folders")
+		return "", namedByPreset, fmt.Errorf("the movies folder isn't set. Choose one in Settings > Library > Folders")
 	}
 
 	preset, err := s.Settings.Get(settings.KeyNamingPreset)
 	if err != nil {
-		return "", err
+		return "", namedByPreset, err
 	}
 	format := organizer.Presets["plex"]
 	if preset == "custom" {
@@ -1200,12 +1313,16 @@ func (s *Server) buildDestPath(root, movieTitle string, year, tmdbID int, releas
 	}
 
 	sanitizeMode, replacement := s.illegalCharSettings()
+	// Folder and file use the title in the info language. Indexers are still
+	// searched for the English title the library stores.
+	ctx.MovieTitle = s.folderTitle(tmdbID, "movie", movieTitle)
 	folder := organizer.Sanitize(organizer.Render(s.movieFolderFormat(), ctx), sanitizeMode, replacement)
-	if name, ok := s.keptName(videoFile, sanitizeMode, replacement); ok {
-		return filepath.Join(moviesPath, folder, name), nil
+	name, src := s.keptName(videoFile, releaseTitle, releaseMayName, sanitizeMode, replacement)
+	if name != "" {
+		return filepath.Join(moviesPath, folder, name), src, nil
 	}
 	filename := organizer.Sanitize(organizer.Render(format, ctx), sanitizeMode, replacement) + filepath.Ext(videoFile)
-	return filepath.Join(moviesPath, folder, filename), nil
+	return filepath.Join(moviesPath, folder, filename), src, nil
 }
 
 // keepOriginalNames reports whether "Keep the original file names" is on:
@@ -1215,14 +1332,60 @@ func (s *Server) keepOriginalNames() bool {
 	return on
 }
 
+// nameSource says where a file's final name came from.
+type nameSource int
+
+const (
+	namedByPreset        nameSource = iota // "Keep the original file names" is off
+	namedByFile                            // the file's own name was kept
+	namedByRelease                         // the file's name was random: the release's name was used
+	namedByPresetInstead                   // the file's name was random and so was the release's (or it may not stand in): the naming setting
+)
+
 // keptName is the name videoFile keeps when "Keep the original file names"
-// is on. ok is false when the setting is off or the name is random letters
-// (an obfuscated post): the file is then named by the naming setting.
-func (s *Server) keptName(videoFile string, mode organizer.SanitizeMode, replacement string) (string, bool) {
+// is on. The name is empty when the file is to be named by the naming setting:
+// the setting is off, or the file's name is random letters (an obfuscated
+// post) and the release's name can't stand in for it. releaseMayName is true
+// for a movie or an episode that came on its own, where the release's name
+// says what the file is; for a season pack or a file holding several
+// episodes it is false, as one release name would fit many files.
+func (s *Server) keptName(videoFile, releaseTitle string, releaseMayName bool, mode organizer.SanitizeMode, replacement string) (string, nameSource) {
 	if !s.keepOriginalNames() {
-		return "", false
+		return "", namedByPreset
 	}
-	return organizer.OriginalName(videoFile, mode, replacement)
+	if name, ok := organizer.OriginalName(videoFile, mode, replacement); ok {
+		return name, namedByFile
+	}
+	if releaseMayName {
+		if name, ok := organizer.ReleaseFileName(releaseTitle, videoFile, mode, replacement); ok {
+			return name, namedByRelease
+		}
+	}
+	return "", namedByPresetInstead
+}
+
+// renamedLine formats one of renamedNote's sentences. It is a function of its
+// own so the sentences are found for translation (tools/msgextract lists its
+// first argument).
+func renamedLine(format string, args ...any) string { return fmt.Sprintf(format, args...) }
+
+// renamedNote is the activity line that says files were not saved under their
+// own names, so it can be understood without reading the code. It is empty
+// when there is nothing to say.
+func renamedNote(title string, src nameSource, files int) string {
+	switch {
+	case files <= 0:
+		return ""
+	case src == namedByRelease && files == 1:
+		return renamedLine("%s: the file inside was named at random, so it was saved under the release name.", title)
+	case src == namedByRelease:
+		return renamedLine("%s: some files inside were named at random, so they were saved under the release name.", title)
+	case src == namedByPresetInstead && files == 1:
+		return renamedLine("%s: the file inside was named at random, so it was saved under your naming preset.", title)
+	case src == namedByPresetInstead:
+		return renamedLine("%s: some files inside were named at random, so they were saved under your naming preset.", title)
+	}
+	return ""
 }
 
 // originalStem is a file's own name without its folder and extension, for

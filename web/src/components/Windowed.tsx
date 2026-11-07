@@ -18,7 +18,7 @@ export function WindowedGrid<T>({ items, render, className = 'poster-grid', styl
   const win = useWindowedRows(ref, rows, cols, POSTER_ROW)
   const shown = win.windowed ? items.slice(win.first * cols, win.last * cols) : items
   return (
-    <div ref={ref} className={className} style={{ ...style, paddingTop: win.before || undefined, paddingBottom: win.after || undefined }}>
+    <div ref={ref} className={win.windowed ? `${className} is-windowed` : className} style={{ ...style, paddingTop: win.before || undefined, paddingBottom: win.after || undefined }}>
       {shown.map(render)}
     </div>
   )

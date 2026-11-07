@@ -113,10 +113,8 @@ func (s *Server) collectHealth() []healthItem {
 		addHealth("indexers-unreadable", "error", "The list of indexers can't be read",
 			"Mediarium couldn't read the indexers from the database, so searches and automatic downloads find nothing. The log says why.",
 			"", "")
-	} else if usenetIndexers+torrentIndexers == 0 && unreadable == 0 && !keyMismatch {
-		addHealth("no-indexers", "error", "No indexer is set up",
-			"Without one, searches and automatic downloads find nothing.",
-			"Add an indexer", "/settings/indexers")
+	} else if unreadable == 0 && !keyMismatch {
+		indexerSetupHealth(instances, torrentsOn, time.Now(), addHealth)
 	}
 
 	for _, inst := range instances {

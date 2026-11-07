@@ -41,6 +41,9 @@ func TestTorrentSwitchDefaultsOnAndPersists(t *testing.T) {
 	if st["torrentEnabled"] != true {
 		t.Fatalf("switch should read back on: %+v", st)
 	}
+	if mods := getJSON[map[string]any](t, client, base+"/api/modules"); mods["torrentsOn"] != true {
+		t.Fatalf("the modules answer should say torrents are on: %+v", mods)
+	}
 }
 
 func TestTorrentGrabsRefusedWhileOff(t *testing.T) {
@@ -59,6 +62,12 @@ func TestTorrentGrabsRefusedWhileOff(t *testing.T) {
 	msg, _ := got["error"].(string)
 	if !strings.Contains(msg, "Torrents are switched off") {
 		t.Fatalf("expected a clear explanation, got %q", msg)
+	}
+	if got["code"] != "torrents_off" {
+		t.Fatalf("the refusal needs the stable code the page looks for, got %+v", got)
+	}
+	if mods := getJSON[map[string]any](t, client, base+"/api/modules"); mods["torrentsOn"] != false {
+		t.Fatalf("the modules answer should say torrents are off: %+v", mods)
 	}
 	if list := getJSON[[]map[string]any](t, client, base+"/api/queue"); len(list) != 0 {
 		t.Fatalf("a refused grab must not be queued: %+v", list)

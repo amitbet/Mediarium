@@ -312,3 +312,108 @@ func TestCoverArtURLAndEscaping(t *testing.T) {
 		t.Fatalf("empty version: %s", UserAgent(""))
 	}
 }
+
+// flakyTransport fails the first n requests like a dropped connection, then
+// lets them through.
+type flakyTransport struct {
+	failures atomic.Int32
+	calls    atomic.Int32
+}
+
+func (f *flakyTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	f.calls.Add(1)
+	if f.failures.Add(-1) >= 0 {
+		return nil, errors.New("connection reset by peer")
+	}
+	return http.DefaultTransport.RoundTrip(r)
+}
+
+const radioheadID = "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+
+// A patient request keeps going through a longer busy spell than a normal
+// one, and a 429 counts as busy too.
+func TestPatientRequestsRetryThroughALongBusySpell(t *testing.T) {
+	tiny := WithPatientWaits(time.Millisecond, time.Millisecond, time.Millisecond, time.Millisecond, time.Millisecond)
+	tests := []struct {
+		name        string
+		statuses    []int
+		patient     bool
+		wantErr     bool
+		unavailable bool // the error says MusicBrainz is busy
+		wantReqs    int
+	}{
+		{"normal request gives up after 3 retries", []int{503, 503, 503, 503}, false, true, true, 4},
+		{"patient request outlasts 4 busy answers", []int{503, 503, 503, 503}, true, false, false, 5},
+		{"patient request outlasts a mix of 503, 429, 502 and 504", []int{503, 429, 502, 504, 503}, true, false, false, 6},
+		{"normal request treats 429 as busy", []int{429, 429}, false, false, false, 3},
+		{"normal request does not retry a 502", []int{502}, false, true, false, 1},
+		{"patient request gives up after its last wait", []int{503, 503, 503, 503, 503, 503, 503}, true, true, true, 6},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c, f := newTestClient(t, tiny)
+			f.statuses = tc.statuses
+			ctx := context.Background()
+			if tc.patient {
+				ctx = Patient(ctx)
+			}
+			a, err := c.GetArtist(ctx, radioheadID)
+			switch {
+			case tc.wantErr && err == nil:
+				t.Fatalf("want an error, got %+v", a)
+			case !tc.wantErr && (err != nil || a.Name != "Radiohead"):
+				t.Fatalf("get artist: %+v, %v", a, err)
+			case tc.wantErr && errors.Is(err, ErrUnavailable) != tc.unavailable:
+				t.Fatalf("ErrUnavailable should be %v, got %v", tc.unavailable, err)
+			}
+			if f.count() != tc.wantReqs {
+				t.Fatalf("want %d requests, got %d", tc.wantReqs, f.count())
+			}
+		})
+	}
+}
+
+// A patient request also lives through timeouts and dropped connections; a
+// normal one fails at once.
+func TestPatientRequestsRetryNetworkErrors(t *testing.T) {
+	for _, patient := range []bool{false, true} {
+		ft := &flakyTransport{}
+		ft.failures.Store(2)
+		c, _ := newTestClient(t, WithHTTPClient(&http.Client{Transport: ft}), WithPatientWaits(time.Millisecond, time.Millisecond, time.Millisecond))
+		ctx := context.Background()
+		if patient {
+			ctx = Patient(ctx)
+		}
+		_, err := c.GetArtist(ctx, radioheadID)
+		if patient && err != nil {
+			t.Fatalf("patient: %v", err)
+		}
+		if !patient && (err == nil || errors.Is(err, ErrUnavailable)) {
+			t.Fatalf("a normal request fails straight away with its own error, got %v", err)
+		}
+		if want := map[bool]int32{false: 1, true: 3}[patient]; ft.calls.Load() != want {
+			t.Fatalf("patient=%v: %d calls, want %d", patient, ft.calls.Load(), want)
+		}
+	}
+
+	ft := &flakyTransport{}
+	ft.failures.Store(100)
+	c, _ := newTestClient(t, WithHTTPClient(&http.Client{Transport: ft}), WithPatientWaits(time.Millisecond, time.Millisecond))
+	_, err := c.GetArtist(Patient(context.Background()), radioheadID)
+	if !errors.Is(err, ErrUnavailable) || ft.calls.Load() != 3 {
+		t.Fatalf("an unreachable server ends as ErrUnavailable after the waits: %v (%d calls)", err, ft.calls.Load())
+	}
+}
+
+// A patient request stops waiting when its context ends, and that is not
+// reported as the music database being busy.
+func TestPatientRequestStopsWithItsContext(t *testing.T) {
+	c, f := newTestClient(t, WithPatientWaits(time.Hour))
+	f.statuses = []int{503, 503}
+	ctx, cancel := context.WithTimeout(Patient(context.Background()), 50*time.Millisecond)
+	defer cancel()
+	_, err := c.GetArtist(ctx, radioheadID)
+	if err == nil || errors.Is(err, ErrUnavailable) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("want the context's own error, got %v", err)
+	}
+}

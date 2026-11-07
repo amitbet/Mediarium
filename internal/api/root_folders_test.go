@@ -9,6 +9,12 @@ import (
 	"testing"
 )
 
+// folderLists is the part of GET /api/library/folders these tests read.
+type folderLists struct {
+	Movies []string `json:"movies"`
+	TV     []string `json:"tv"`
+}
+
 // A kind of media can have several folders, and each title says which one it
 // is kept in.
 func TestMoviesCanBeKeptInMoreThanOneFolder(t *testing.T) {
@@ -18,8 +24,8 @@ func TestMoviesCanBeKeptInMoreThanOneFolder(t *testing.T) {
 	putJSONStatus(t, client, base+"/api/settings", map[string]any{"moviesPath": main}, http.StatusOK)
 
 	// Nothing extra to start with: only the main folder is on offer.
-	folders := getJSON[map[string][]string](t, client, base+"/api/library/folders")
-	if len(folders["movies"]) != 1 || filepath.Clean(folders["movies"][0]) != filepath.Clean(main) {
+	folders := getJSON[folderLists](t, client, base+"/api/library/folders")
+	if len(folders.Movies) != 1 || filepath.Clean(folders.Movies[0]) != filepath.Clean(main) {
 		t.Fatalf("one folder at first: %v", folders)
 	}
 
@@ -29,9 +35,9 @@ func TestMoviesCanBeKeptInMoreThanOneFolder(t *testing.T) {
 	if len(extra) != 2 {
 		t.Fatalf("a repeat is dropped: %v", extra)
 	}
-	folders = getJSON[map[string][]string](t, client, base+"/api/library/folders")
-	if len(folders["movies"]) != 3 || folders["movies"][0] != main {
-		t.Fatalf("the main folder comes first: %v", folders["movies"])
+	folders = getJSON[folderLists](t, client, base+"/api/library/folders")
+	if len(folders.Movies) != 3 || folders.Movies[0] != main {
+		t.Fatalf("the main folder comes first: %v", folders.Movies)
 	}
 
 	// A movie asks for one of them; anything else is refused.
@@ -70,7 +76,7 @@ func TestMoviesCanBeKeptInMoreThanOneFolder(t *testing.T) {
 	putJSONStatus(t, client, base+"/api/settings", map[string]any{"moviesExtraPaths": []string{"relative/path"}}, http.StatusBadRequest)
 	// An empty list clears them again.
 	putJSONStatus(t, client, base+"/api/settings", map[string]any{"moviesExtraPaths": []string{}}, http.StatusOK)
-	if folders = getJSON[map[string][]string](t, client, base+"/api/library/folders"); len(folders["movies"]) != 1 {
+	if folders = getJSON[folderLists](t, client, base+"/api/library/folders"); len(folders.Movies) != 1 {
 		t.Fatalf("cleared: %v", folders)
 	}
 }

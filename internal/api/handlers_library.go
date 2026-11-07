@@ -96,6 +96,9 @@ type searchResultPayload struct {
 	// named by ("Der Herr der Ringe"), when it is not named by the main one.
 	// Only set for a search on a library item.
 	MatchedTitle string `json:"matchedTitle,omitempty"`
+	// Categories are the indexer's category numbers of the release. Only set for
+	// a book search, where the list shows them.
+	Categories []int `json:"categories,omitempty"`
 }
 
 // toSearchResultPayload builds a search result for the UI. Its download URL
@@ -261,6 +264,8 @@ func (s *Server) handleListMovies(w http.ResponseWriter, r *http.Request) {
 	short := s.incompleteNow().movies
 	for i, m := range list {
 		out[i] = toMoviePayload(m, who)
+		out[i].Title, out[i].PosterURL = s.shownFace("movie", m.TMDBID, m.Title, m.PosterPath)
+		out[i].Overview = s.shownOverview("movie", m.TMDBID, m.Overview)
 		if e, ok := short[m.ID]; ok && e.Path == m.FilePath {
 			n := e.note
 			out[i].ShortFile = &n
@@ -298,6 +303,8 @@ func (s *Server) handleGetMovie(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := toMoviePayload(m, s.accountNames())
+	out.Title, out.PosterURL = s.shownFace("movie", m.TMDBID, m.Title, m.PosterPath)
+	out.Overview = s.shownOverview("movie", m.TMDBID, m.Overview)
 	out.FilePath = fileLabel(r, m.FilePath)
 	out.RootPath = folderShown(r, s.movieFolders(), m.RootPath)
 	out.SizeBytes = fileSize(m.FilePath)
@@ -409,7 +416,8 @@ type addMovieRequest struct {
 	// swapped for a better version later. On when left out: better versions
 	// are something the person asks for.
 	NoUpgrade *bool `json:"noUpgrade"`
-	// RootPath is the movie folder to keep it in; left out = the main one.
+	// RootPath is the movie folder to keep it in; left out = where new movies
+	// go (Settings > Library > Folders).
 	RootPath string `json:"rootPath"`
 }
 
@@ -454,7 +462,7 @@ func (s *Server) handleAddMovie(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	monitored := req.Monitored == nil || *req.Monitored
-	rootPath, problem := s.checkFolderChoice(req.RootPath, s.movieFolders(), "movie")
+	rootPath, problem := s.folderForNewMovie(req.RootPath)
 	if problem != "" {
 		writeError(w, http.StatusBadRequest, problem)
 		return
@@ -482,6 +490,7 @@ func (s *Server) handleAddMovie(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	_ = s.QueueRepo.LogActivity(created.ID, "added", created.Title+" added to library"+byline)
+	go s.rememberDisplayFace("movie", created.TMDBID, created.Title, created.PosterPath, created.Overview)
 	if req.SearchNow {
 		go s.searchMovieInBackground(created.ID)
 	}

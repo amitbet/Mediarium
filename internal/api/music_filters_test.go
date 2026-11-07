@@ -10,6 +10,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"github.com/rdborg/mediarium/internal/music"
 )
 
 const filterArtist = "11111111-1111-4111-8111-111111111111"
@@ -332,5 +334,75 @@ func TestMusicFilterSettings(t *testing.T) {
 	got = getJSON[map[string]any](t, member, base+"/api/music/filters")
 	if f := got["filter"].(map[string]any); len(f["hideSecondary"].([]any)) != 0 || len(f["types"].([]any)) != 2 {
 		t.Fatalf("empty list: %v", f)
+	}
+}
+
+// The albums in the library that the filter leaves out of the list are the
+// ones without files; an album with files always stays, and no album is ever
+// removed or unmonitored by a filter.
+func TestDiscographyNamesLibraryAlbumsTheFilterHides(t *testing.T) {
+	e, _ := newFilterEnv(t)
+	artist := e.addArtist(t, "all")
+	url := e.artistURL(artist)
+	d := getJSON[map[string]any](t, e.client, url+"/discography")
+	if lib := d["library"].([]any); len(lib) != 0 {
+		t.Fatalf("the default filter hides nothing in the library: %v", lib)
+	}
+
+	// Studio One has been downloaded; it must stay whatever the filter says.
+	id := int64(artist["id"].(float64))
+	albums, err := e.server.MusicRepo.ListAlbums(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range albums {
+		if a.MBID == gid(1) {
+			if err := e.server.MusicRepo.SetAlbumImported(a.ID, "FLAC", t.TempDir()); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	// Mixed Editions is only partly downloaded: one of its two tracks has a file.
+	for _, a := range albums {
+		if a.MBID == gid(7) {
+			tracks := []music.Track{{Disc: 1, Position: 1, Title: "One"}, {Disc: 1, Position: 2, Title: "Two"}}
+			if err := e.server.MusicRepo.ReplaceTracks(a.ID, tracks); err != nil {
+				t.Fatal(err)
+			}
+			have, err := e.server.MusicRepo.ListTracks(a.ID)
+			if err != nil || len(have) != 2 {
+				t.Fatalf("tracks: %v %v", have, err)
+			}
+			if err := e.server.MusicRepo.SetTrackFile(have[0].ID, "/music/one.flac"); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	postJSONMethod[map[string]any](t, e.client, http.MethodPut, url, map[string]any{
+		"filter": map[string]any{"types": []string{"ep"}, "hideSecondary": []string{"live"}, "hideBootlegs": false},
+	}, http.StatusOK)
+	e.server.TestWaitBackground()
+	d = getJSON[map[string]any](t, e.client, url+"/discography")
+	got := map[string]string{}
+	for _, x := range d["library"].([]any) {
+		m := x.(map[string]any)
+		got[m["mbid"].(string)] = m["hiddenBy"].(string)
+	}
+	want := map[string]string{gid(2): "album", gid(4): "single"}
+	if len(got) != len(want) {
+		t.Fatalf("library hidden: %v, want %v", got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s: hidden by %q, want %q", k, got[k], v)
+		}
+	}
+	for _, n := range []int{1, 7} {
+		if _, ok := got[gid(n)]; ok {
+			t.Errorf("album %d has files (whole or partly) and must never be listed as hidden", n)
+		}
+	}
+	if after := getJSON[map[string]any](t, e.client, url); len(albumTitles(after)) != 6 {
+		t.Fatalf("a filter must not remove albums: %v", albumTitles(after))
 	}
 }

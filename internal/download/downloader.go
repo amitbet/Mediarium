@@ -191,7 +191,7 @@ func DownloadFromServers(ctx context.Context, servers []ClientConfig, nzb *NZB, 
 	for i, f := range nzb.Files {
 		limits[i] = fileSizeLimit(f)
 	}
-	st := &dlState{files: files, limits: limits, total: nzb.TotalBytes(), onProgress: onProgress, resume: resume, abort: cancel, nzb: nzb, repairable: par2Bytes(nzb)}
+	st := &dlState{files: files, limits: limits, total: nzb.TotalBytes(), onProgress: onProgress, resume: resume, abort: cancel, nzb: nzb, yencNames: make([]string, len(nzb.Files)), repairable: par2Bytes(nzb)}
 	st.done = resume.savedBytes()
 	if st.done > 0 && onProgress != nil {
 		onProgress(st.done, st.total)
@@ -281,6 +281,10 @@ func DownloadFromServers(ctx context.Context, servers []ClientConfig, nzb *NZB, 
 		return Result{}, st.fatal
 	}
 	resume.remove()
+	// Files posted under a hidden name get the name they were posted under before the
+	// repair and unpack steps look for them.
+	closeAll(files)
+	paths = renameFromYenc(paths, st.yencNames)
 	return Result{Paths: paths, TotalSegments: totalSegments, MissingSegments: int(atomic.LoadInt64(&st.missing))}, nil
 }
 
@@ -295,8 +299,9 @@ type dlState struct {
 	done       int64
 	missing    int64
 	nzb        *NZB
-	repairable int64 // bytes of articles PAR2 files in this release could rebuild, at most
-	lostBytes  int64 // bytes of articles no server has
+	yencNames  []string // per file: the name its articles' yEnc header gave, "" until one is seen
+	repairable int64    // bytes of articles PAR2 files in this release could rebuild, at most
+	lostBytes  int64    // bytes of articles no server has
 	onProgress ProgressFunc
 	resume     *resumeState
 	abort      context.CancelFunc // stops the download once a fatal error is recorded
@@ -315,6 +320,19 @@ func (s *dlState) keepProgress() {
 		}
 	}
 	s.resume.save()
+}
+
+// noteName keeps the name the yEnc header of file i's articles gave, the first
+// time one is seen.
+func (s *dlState) noteName(i int, name string) {
+	if name == "" {
+		return
+	}
+	s.mu.Lock()
+	if i < len(s.yencNames) && s.yencNames[i] == "" {
+		s.yencNames[i] = name
+	}
+	s.mu.Unlock()
 }
 
 // segmentBytes is the declared size of the article job j fetches.
@@ -389,12 +407,16 @@ func forward(ctx context.Context, st *dlState, chans []chan job, i int, j job, o
 
 // dialAndAuth opens a connection to the server and signs in. The connection
 // is closed again if signing in fails.
-func dialAndAuth(cfg ClientConfig) (*NNTPConn, error) {
-	c, err := DialNNTP(cfg.Host, cfg.Port, cfg.UseSSL, 30*time.Second)
+func dialAndAuth(ctx context.Context, cfg ClientConfig) (*NNTPConn, error) {
+	c, err := DialNNTPContext(ctx, cfg.Host, cfg.Port, cfg.UseSSL, 30*time.Second)
 	if err != nil {
 		return nil, err
 	}
-	if err := c.Authenticate(cfg.Username, cfg.Password); err != nil {
+	// A cancelled download must not sit waiting for a slow login.
+	stop := context.AfterFunc(ctx, func() { c.Close() })
+	err = c.Authenticate(cfg.Username, cfg.Password)
+	stop()
+	if err != nil {
 		c.Quit()
 		return nil, fmt.Errorf("nntp authenticate on %s: %w", cfg.Host, err)
 	}
@@ -467,10 +489,13 @@ func runWorker(ctx context.Context, st *dlState, nzb *NZB, cfg ClientConfig, job
 			if err != nil {
 				return err
 			}
-			c, err := dialAndAuth(cfg)
+			c, err := dialAndAuth(ctx, cfg)
+			if err == nil && !gate.track(c) {
+				c.Quit()
+				err = errServerRemoved
+			}
 			if err == nil {
 				conn, release, selectedGroup = c, rel, ""
-				gate.track(c)
 				gate.succeeded()
 				// A cancelled download must not sit waiting on a slow read.
 				stopWatch = context.AfterFunc(ctx, func() { c.Close() })
@@ -546,6 +571,7 @@ func runWorker(ctx context.Context, st *dlState, nzb *NZB, cfg ClientConfig, job
 				last = outcome{kind: failNone}
 				break
 			}
+			st.noteName(j.fileIndex, part.Name)
 			st.resume.mark(j.fileIndex, j.segmentIndex, int64(len(part.Data)))
 			st.reportBytes(int64(len(part.Data)))
 			health.delivered()

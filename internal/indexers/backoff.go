@@ -97,6 +97,12 @@ func failureReason(err error) string {
 	if errors.As(err, &se) && se.Status == http.StatusTooManyRequests {
 		return "it said you made too many requests"
 	}
+	if _, ok := FlareSolverrDown(err); ok {
+		return "FlareSolverr isn't running or can't be reached"
+	}
+	if status, ok := GoneStatus(err); ok {
+		return fmt.Sprintf("the site says the page is gone (HTTP %d)", status)
+	}
 	switch problems.IndexerCode(err) {
 	case problems.CodeIndexerRateLimited:
 		return "it said you made too many requests"

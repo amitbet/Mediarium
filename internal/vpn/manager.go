@@ -44,21 +44,24 @@ const (
 // connection is meant to be on, so a restart, a failed start or a silent
 // server shows up as "not connected" instead of looking fine.
 type Manager struct {
-	mu          sync.Mutex
-	tunnel      *Tunnel
-	label       string // the connection that is meant to be on; empty when none
-	upAt        time.Time
-	problem     string // why the selected connection isn't up, in plain words
-	cancel      context.CancelFunc
-	gen         int
-	up          func(Config) (*Tunnel, error)
-	now         func() time.Time
-	retryAfter  func(attempt int) time.Duration
+	mu         sync.Mutex
+	tunnel     *Tunnel
+	label      string // the connection that is meant to be on; empty when none
+	upAt       time.Time
+	problem    string // why the selected connection isn't up, in plain words
+	cancel     context.CancelFunc
+	gen        int
+	up         func(Config) (*Tunnel, error)
+	now        func() time.Time
+	retryAfter func(attempt int) time.Duration
+	// checkIP is the request Test makes through the tunnel; tests swap it.
+	checkIP     func(ctx context.Context, t *Tunnel) (string, error)
 	restoreDone chan struct{} // closed when the current background start ends
 }
 
 func NewManager() *Manager {
-	return &Manager{up: Up, now: time.Now, retryAfter: retryDelay}
+	return &Manager{up: Up, now: time.Now, retryAfter: retryDelay,
+		checkIP: func(ctx context.Context, t *Tunnel) (string, error) { return t.PublicIP(ctx) }}
 }
 
 // retryDelay is the wait before the next try to bring a saved connection up:
@@ -223,6 +226,15 @@ type Status struct {
 	ConnectedAt time.Time
 	// Reason says, in plain words, why a selected connection isn't connected.
 	Reason string
+	// TunnelUp is true while a tunnel exists, whether or not its server answers.
+	TunnelUp bool
+	// LastHandshake is when the server last answered; zero if it never has.
+	LastHandshake time.Time
+	// NoHandshake is true when the tunnel has been up longer than the grace
+	// period and the server has still never answered.
+	NoHandshake bool
+	// RxBytes and TxBytes are what the tunnel carried since it came up.
+	RxBytes, TxBytes int64
 }
 
 func (m *Manager) Status() Status {
@@ -240,8 +252,14 @@ func (m *Manager) Status() Status {
 		}
 		return st
 	}
-	handshake, err := m.tunnel.LastHandshake()
+	traffic, err := m.tunnel.Traffic()
+	handshake := traffic.Handshake
 	now := m.now()
+	st.TunnelUp = true
+	if err == nil {
+		st.LastHandshake, st.RxBytes, st.TxBytes = handshake, traffic.RxBytes, traffic.TxBytes
+		st.NoHandshake = handshake.IsZero() && now.Sub(m.upAt) >= handshakeGrace
+	}
 	switch {
 	case err != nil:
 		st.State, st.Reason = StateDown, "Couldn't check the connection."
@@ -318,5 +336,75 @@ func Explain(err error) string {
 		return "One of the keys isn't right. Copy it again from your VPN provider."
 	default:
 		return "Couldn't start the connection. Check the details you entered."
+	}
+}
+
+// testTimeout is how long the Test request gets to come back through the tunnel.
+const testTimeout = 8 * time.Second
+
+// TestResult is the outcome of Manager.Test.
+type TestResult struct {
+	// OK is true when a real request came back through the tunnel.
+	OK bool
+	// IP is the public address the request left from (only when OK).
+	IP string
+	// Reason says, in plain words, what is wrong (only when not OK).
+	Reason string
+	// LastHandshake is when the server last answered; zero if it never has.
+	LastHandshake time.Time
+	RxBytes       int64
+	TxBytes       int64
+}
+
+// Test makes a small real request through the tunnel and says whether it
+// worked. The provider is the id of the connection's provider (such as "pia");
+// it only adds a hint that fits that provider.
+func (m *Manager) Test(ctx context.Context, provider string) TestResult {
+	m.mu.Lock()
+	tunnel, label, problem, upAt, now, check := m.tunnel, m.label, m.problem, m.upAt, m.now, m.checkIP
+	m.mu.Unlock()
+	if label == "" {
+		return TestResult{Reason: "No VPN is switched on."}
+	}
+	if tunnel == nil {
+		if problem == "" {
+			problem = "The connection is still starting. Try again in a few seconds."
+		}
+		return TestResult{Reason: problem}
+	}
+	ctx, cancel := context.WithTimeout(ctx, testTimeout)
+	defer cancel()
+	ip, ipErr := check(ctx, tunnel)
+	traffic, _ := tunnel.Traffic()
+	res := TestResult{LastHandshake: traffic.Handshake, RxBytes: traffic.RxBytes, TxBytes: traffic.TxBytes}
+	if ipErr == nil {
+		res.OK, res.IP = true, ip
+		return res
+	}
+	slog.Info("vpn: the connection test failed", "label", label, "err", ipErr)
+	res.Reason = explainTest(now(), upAt, traffic.Handshake, ipErr, provider)
+	return res
+}
+
+// explainTest turns a failed test into a sentence a person can act on.
+func explainTest(now, upAt, handshake time.Time, ipErr error, provider string) string {
+	// PIA keys expire, and the fix is theirs: a new file from their script.
+	// Each sentence is written out whole so it can be translated.
+	pia := provider == "pia"
+	switch {
+	case handshake.IsZero() && now.Sub(upAt) < handshakeGrace:
+		return "The VPN server hasn't answered yet. Give it a few seconds and test again."
+	case handshake.IsZero() && pia:
+		return "The VPN server did not answer, so the key may have expired or the address is wrong. For PIA, run their script again and load the new file."
+	case handshake.IsZero():
+		return "The VPN server did not answer, so the key may have expired or the address is wrong."
+	case now.Sub(handshake) >= handshakeFresh && pia:
+		return "The VPN server answered earlier but has gone quiet, so the key may have expired. For PIA, run their script again and load the new file."
+	case now.Sub(handshake) >= handshakeFresh:
+		return "The VPN server answered earlier but has gone quiet, so the key may have expired."
+	case errors.Is(ipErr, context.DeadlineExceeded):
+		return "The tunnel is up, but the test request got no answer in time. The VPN server may be blocking traffic or be overloaded. Try another server."
+	default:
+		return "The tunnel is up, but the test request failed. Try another server, or check the DNS setting of the connection."
 	}
 }

@@ -47,13 +47,14 @@ import (
 )
 
 type Server struct {
-	resumeStop  context.CancelFunc // ends the resume of interrupted downloads (resume_interrupted.go)
-	streamPause streamPauseState   // pause while someone is watching (stream_pause.go)
-	libStats    libraryStatsCache  // the Statistics page's answer, kept for a few minutes (stats_library.go)
-	mediaInfo   mediaInfoState     // what the video files hold, read from their headers (media_info.go)
-	appFrames   atomic.Value       // []string: the origins of add-ons shown in a frame, kept in memory so the security headers never wait for the database (app_links.go)
-	cfg         config.Config
-	db          *sql.DB // for backups (VACUUM INTO); repos hold their own handles
+	resumeStop    context.CancelFunc // ends the resume of interrupted downloads (resume_interrupted.go)
+	streamPause   streamPauseState   // pause while someone is watching (stream_pause.go)
+	libStats      libraryStatsCache  // the Statistics page's answer, kept for a few minutes (stats_library.go)
+	displayFaceMu sync.Mutex         // one display-face lookup at a time (display_face.go)
+	mediaInfo     mediaInfoState     // what the video files hold, read from their headers (media_info.go)
+	appFrames     atomic.Value       // []string: the origins of add-ons shown in a frame, kept in memory so the security headers never wait for the database (app_links.go)
+	cfg           config.Config
+	db            *sql.DB // for backups (VACUUM INTO); repos hold their own handles
 
 	Auth              *auth.Service
 	Settings          *settings.Store
@@ -92,6 +93,8 @@ type Server struct {
 	authorCheck       authorCheck    // when followed authors were last checked (books_authors.go)
 	seriesCheck       authorCheck    // when followed series were last checked (books_series.go)
 	hc                hardcoverState // the Hardcover client for the saved token (books_series.go)
+	googleBooksBase   string         // tests point Google Books elsewhere; "" = the real API (books_google.go)
+	gbooks            googleMemo     // recent Google Books answers, including "no cover" (books_google.go)
 	coverLink         *http.Client   // downloads a book cover from a pasted link; nil = the public-internet-only client (books_owncover.go)
 
 	mediaClient    *mediaservers.Client
@@ -103,10 +106,11 @@ type Server struct {
 	version      string
 	security     securityState // trusted proxies, allowed origins, per-account sign-in limit (security.go)
 
-	arrRecs arrRecommended
-	tmdbMu  sync.RWMutex
-	tmdb    *metadata.Client
-	tvmaze  *tvmaze.Client // episode air times (tvmaze_airtimes.go); never contacted while the switch is off
+	arrRecs      arrRecommended
+	tmdbMu       sync.RWMutex
+	tmdb         *metadata.Client
+	folderTitles folderTitleCache // localized titles for new movie and show folders (folder_title.go)
+	tvmaze       *tvmaze.Client   // episode air times (tvmaze_airtimes.go); never contacted while the switch is off
 
 	subsMu sync.RWMutex
 	subs   *subtitles.Client
@@ -142,6 +146,7 @@ type Server struct {
 	// library changes (library_overview.go).
 	overviewCache   sharedCache[libraryOverview]
 	seriesListCache sharedCache[seriesListData]
+	ownedCache      sharedCache[ownedData]
 	builtin         BuiltinKeys // app-wide keys baked into official releases (see keys.go)
 
 	importMu         sync.Mutex
@@ -259,6 +264,7 @@ func New(db *sql.DB, cfg config.Config, box *crypto.Box, defaultTMDBAPIKey, vers
 	}
 	s.QueueRepo.SetBox(box) // download addresses carry indexer keys: kept encrypted
 	s.startProblems()
+	s.applyDebugLogging()
 	s.Definitions = indexers.NewDefinitionStore(filepath.Join(cfg.ConfigDir, "indexer-definitions"))
 	s.Definitions.CustomDir = filepath.Join(cfg.ConfigDir, "indexer-definitions-custom")
 	s.Cardigann = indexers.NewCardigannManager(s.Definitions, s.flareSolverrURL)
@@ -310,6 +316,7 @@ func New(db *sql.DB, cfg config.Config, box *crypto.Box, defaultTMDBAPIKey, vers
 	s.Announce = announce.NewManager(s.AnnounceRepo, ircDecider{s}, slog.Default())
 	s.torrents.noPortMapping = !s.torrentPortMapping()
 	s.torrents.allowLocal = s.torrentAllowLocal()
+	s.torrents.discover = s.vpnUDPDiscovery()
 	queue.SetNewestFirst(s.newestFirstOn())
 	s.refreshAppFrames()
 	s.dispatch = s.newDispatcher()
@@ -418,7 +425,7 @@ func (s *Server) Routes() http.Handler {
 	public.Handle("/api/", s.signedIn(routes))
 
 	root := http.NewServeMux()
-	root.Handle("/api/", s.busyGuard(noStore(metricsBearerOnly(public))))
+	root.Handle("/api/", s.busyGuard(noStore(gzipJSON(metricsBearerOnly(public)))))
 	// Prometheus' default path. It is the same protected page as /api/metrics.
 	root.Handle("GET /metrics", s.busyGuard(noStore(metricsAlias(public))))
 	root.Handle("/mcp", s.busyGuard(noStore(http.HandlerFunc(s.handleMCP))))
@@ -551,6 +558,7 @@ func (s *Server) protectedRoutes() *routeTable {
 	manage.HandleFunc("PUT /api/series/{id}/folder", s.handleSetSeriesFolder)
 	member.HandleFunc("GET /api/library/folders", s.handleLibraryFolders)
 	member.HandleFunc("GET /api/library/counts", s.handleLibraryCounts)
+	member.HandleFunc("GET /api/library/owned", revalidated(s.handleLibraryOwned))
 	member.HandleFunc("GET /api/library/file-details", s.handleMediaInfoStatus)
 
 	// Shows: the same.
@@ -575,6 +583,8 @@ func (s *Server) protectedRoutes() *routeTable {
 	member.HandleFunc("GET /api/books", revalidated(s.handleListBooks))
 	member.Need(auth.PermBooks).HandleFunc("POST /api/books", s.handleAddBook)
 	member.HandleFunc("GET /api/books/search", s.handleBookSearch)
+	member.HandleFunc("GET /api/books/search/google", s.handleSearchGoogleBooks)
+	member.Need(auth.PermBooks).HandleFunc("POST /api/books/search/google", s.handleAdoptGoogleBook)
 	member.HandleFunc("GET /api/book-covers/{file}", s.handleBookCover)
 	member.HandleFunc("GET /api/books/discover", s.handleBookDiscover)
 	member.HandleFunc("GET /api/books/subjects", s.handleBookSubjects)
@@ -657,6 +667,7 @@ func (s *Server) protectedRoutes() *routeTable {
 
 	// Downloads: watch and retry.
 	member.HandleFunc("GET /api/queue", revalidated(s.handleListQueue))
+	member.HandleFunc("GET /api/queue/count", s.handleQueueCount)
 	member.HandleFunc("GET /api/plex-watchlist", s.handleWatchlistStatus)
 	member.HandleFunc("PUT /api/plex-watchlist", s.handleUpdateWatchlist)
 	member.HandleFunc("DELETE /api/plex-watchlist", s.handleDisconnectWatchlist)
@@ -725,6 +736,7 @@ func (s *Server) protectedRoutes() *routeTable {
 	admin.HandleFunc("DELETE /api/indexer-definitions/custom/{id}", s.handleRemoveCustomDefinition)
 	admin.HandleFunc("POST /api/indexers/test", s.handleTestIndexerConfig)
 	admin.HandleFunc("POST /api/indexers/{id}/test", s.handleTestIndexer)
+	admin.HandleFunc("GET /api/indexers/{id}/categories", s.handleIndexerCategories)
 	admin.HandleFunc("PUT /api/indexers/{id}/enabled", s.handleSetIndexerEnabled)
 	admin.HandleFunc("PUT /api/indexers/{id}/priority", s.handleSetIndexerPriority)
 	admin.HandleFunc("GET /api/usenet-servers", s.handleListUsenetServers)
@@ -885,6 +897,7 @@ func (s *Server) protectedRoutes() *routeTable {
 	admin.HandleFunc("POST /api/vpn/configs/{id}/activate", s.handleActivateVPNConfig)
 	admin.HandleFunc("POST /api/vpn/deactivate", s.handleDeactivateVPN)
 	admin.HandleFunc("GET /api/vpn/status", s.handleVPNStatus)
+	admin.HandleFunc("POST /api/vpn/test", s.handleVPNTest)
 	admin.HandleFunc("GET /api/proxy", s.handleGetProxy)
 	admin.HandleFunc("PUT /api/proxy", s.handlePutProxy)
 	admin.HandleFunc("POST /api/proxy/test", s.handleTestProxy)
@@ -937,6 +950,7 @@ func (s *Server) protectedRoutes() *routeTable {
 	admin.HandleFunc("POST /api/system/problems/read", s.handleProblemsRead)
 	admin.HandleFunc("GET /api/system/problems/export", s.handleProblemsExport)
 	admin.HandleFunc("PUT /api/system/problems/notify", s.handleProblemsNotify)
+	admin.HandleFunc("PUT /api/system/problems/debug", s.handleDebugLogging)
 	admin.HandleFunc("GET /api/system/update", s.handleUpdateState)
 	admin.HandleFunc("POST /api/system/update", s.handlePushUpdate)
 	admin.HandleFunc("DELETE /api/system/update", s.handleRemoveUpdate)
@@ -995,6 +1009,8 @@ func (s *Server) protectedRoutes() *routeTable {
 	admin.HandleFunc("POST /api/watched/cleanup/run", s.handleLibraryCleanupRun)
 	admin.HandleFunc("GET /api/settings/hardcover", s.handleGetHardcover)
 	admin.HandleFunc("PUT /api/settings/hardcover", s.handlePutHardcover)
+	admin.HandleFunc("GET /api/settings/google-books", s.handleGetGoogleBooks)
+	admin.HandleFunc("PUT /api/settings/google-books", s.handlePutGoogleBooks)
 	admin.HandleFunc("GET /api/settings/simkl", s.handleGetSimkl)
 	admin.HandleFunc("DELETE /api/settings/simkl", s.handleDisconnectSimkl)
 	admin.HandleFunc("POST /api/settings/simkl/test", s.handleTestSimkl)

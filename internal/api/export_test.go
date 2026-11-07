@@ -68,6 +68,11 @@ func (s *Server) TestRunCleanup(now time.Time) (removed int, prunedQueue, pruned
 }
 func (s *Server) TestCleanupJob(ctx context.Context) { s.cleanupJob(ctx) }
 
+// TestCleanUsenetLeftovers runs the clean-up's pass over SABnzbd or NZBGet.
+func (s *Server) TestCleanUsenetLeftovers(now time.Time) (int, error) {
+	return s.cleanUsenetLeftovers(now)
+}
+
 // TestWorkDir is the downloads working folder, TestMoviesRoot the movie
 // library folder.
 func (s *Server) TestWorkDir() string    { return s.downloadsIncompleteDir() }
@@ -150,6 +155,14 @@ func (s *Server) TestRouteAccess() map[string]string {
 		out[p] = string(level)
 	}
 	return out
+}
+
+// TestBackfillDisplayFaces runs the job that stores translated titles and posters.
+func (s *Server) TestBackfillDisplayFaces(ctx context.Context) { s.backfillDisplayFaces(ctx) }
+
+// TestSetGoogleBooks points the Google Books client at a fake server.
+func (s *Server) TestSetGoogleBooks(url string) {
+	s.googleBooksBase = url
 }
 
 // TestBackfillGenres runs the scheduled genre backfill once.
@@ -251,9 +264,8 @@ func SetDebridPollForTest(d time.Duration) func() {
 
 // SetDownloadClientPollForTest makes the download client status checks quick.
 func SetDownloadClientPollForTest(d time.Duration) func() {
-	old := downloadClientPoll
-	downloadClientPoll = d
-	return func() { downloadClientPoll = old }
+	old := downloadClientPoll.Swap(int64(d))
+	return func() { downloadClientPoll.Store(old) }
 }
 
 // TestAddonRoundTrip searches the subtitle add-ons for a movie by its TMDB id

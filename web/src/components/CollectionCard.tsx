@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, type CollectionInfo, type CollectionRef, type QualityProfile, type SourcePref } from '../api'
 import { plural, st, t } from '../i18n'
+import type { NewTitleFolder } from '../api'
+import { laterChoices } from '../newTitleFolder'
 import Icon from './Icon'
 import PosterCard from './PosterCard'
 import { sortProfiles } from './qualityBlurb'
@@ -125,6 +127,7 @@ function AddAll({ info, missing, onClose, onDone }: { info: CollectionInfo; miss
   const [profiles, setProfiles] = useState<QualityProfile[]>([])
   const [defaultProfileId, setDefaultProfileId] = useState(0)
   const [folders, setFolders] = useState<string[]>([])
+  const [newNow, setNewNow] = useState<NewTitleFolder | undefined>()
   const [profileId, setProfileId] = useState(info.followProfileId ?? 0)
   const [rootPath, setRootPath] = useState(info.followRootPath ?? '')
   const [monitored, setMonitored] = useState(true)
@@ -144,7 +147,10 @@ function AddAll({ info, missing, onClose, onDone }: { info: CollectionInfo; miss
       .catch(() => undefined)
     api
       .libraryFolders()
-      .then((f) => setFolders(f.movies))
+      .then((f) => {
+        setFolders(f.movies)
+        setNewNow(f.newTitles.movies)
+      })
       .catch(() => undefined)
   }, [])
 
@@ -182,10 +188,9 @@ function AddAll({ info, missing, onClose, onDone }: { info: CollectionInfo; miss
           <label>
             {t('Keep them in')}
             <select value={rootPath} onChange={(e) => setRootPath(e.target.value)} disabled={busy}>
-              <option value="">{t('{folder} (main)', { folder: folders[0] })}</option>
-              {folders.slice(1).map((f) => (
-                <option key={f} value={f}>
-                  {f}
+              {laterChoices(folders, newNow).map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
                 </option>
               ))}
             </select>

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, type MusicArtist, type MusicDiscography, type MusicFilterChoices } from '../api'
+import { api, type MusicArtist, type MusicDiscography, type MusicFilterChoices, type MusicHiddenAlbum } from '../api'
 import { hiddenSummary, reasonWord, toggleKey, typeName, type MusicFilter } from '../musicFilter'
 import { plural, t } from '../i18n'
 import Collapsible from './Collapsible'
@@ -20,12 +20,22 @@ export default function MusicArtistFilters({
   canManage,
   onArtist,
   onChanged,
+  onLibraryHidden,
+  leftOut,
+  showLeftOut,
+  onShowLeftOut,
 }: {
   artist: MusicArtist
   admin: boolean
   canManage: boolean
   onArtist: (a: MusicArtist) => void
   onChanged: () => void
+  // Told which albums of the library the filter leaves out of the list.
+  onLibraryHidden: (list: MusicHiddenAlbum[]) => void
+  // How many albums the list leaves out now, and whether they are shown anyway.
+  leftOut: number
+  showLeftOut: boolean
+  onShowLeftOut: (show: boolean) => void
 }) {
   const toast = useToast()
   const [disco, setDisco] = useState<MusicDiscography | null>(null)
@@ -33,19 +43,28 @@ export default function MusicArtistFilters({
   const [show, setShow] = useState(false)
   const [saving, setSaving] = useState(false)
   const [adding, setAdding] = useState('')
+  const [refreshing, setRefreshing] = useState(false)
   const timer = useRef<number | undefined>(undefined)
+  const asked = useRef(0)
 
   const loadDisco = useCallback(() => {
     window.clearTimeout(timer.current)
+    const mine = ++asked.current
+    setRefreshing(true)
     api
       .artistDiscography(artist.id)
       .then((d) => {
+        if (mine !== asked.current) return // a newer answer is on its way
+        setRefreshing(false)
         setDisco(d)
+        onLibraryHidden(d.library ?? [])
         // Releases still being checked: ask again in a few seconds until they are known.
         if (d.checking > 0) timer.current = window.setTimeout(loadDisco, 4000)
       })
-      .catch(() => undefined)
-  }, [artist.id])
+      .catch(() => {
+        if (mine === asked.current) setRefreshing(false)
+      })
+  }, [artist.id, onLibraryHidden])
   useEffect(() => {
     loadDisco()
     return () => window.clearTimeout(timer.current)
@@ -62,7 +81,10 @@ export default function MusicArtistFilters({
       onArtist(await api.updateArtist(artist.id, changes))
       loadDisco()
       // A followed artist adds what the new choice lets in in the background.
-      window.setTimeout(onChanged, 4000)
+      window.setTimeout(() => {
+        loadDisco()
+        onChanged()
+      }, 4000)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
     } finally {
@@ -86,7 +108,7 @@ export default function MusicArtistFilters({
 
   const summary = disco ? hiddenSummary(disco.counts) : ''
   const checking = disco?.checking ?? 0
-  if (!admin && !summary && checking === 0) return null
+  if (!admin && !summary && checking === 0 && leftOut === 0) return null
   return (
     <section className="music-artist-filters" aria-label={t('What this page shows')}>
       {admin && filter && (
@@ -120,7 +142,7 @@ export default function MusicArtistFilters({
           </div>
         </Collapsible>
       )}
-      {(summary || checking > 0) && (
+      {(summary || checking > 0 || leftOut > 0 || refreshing) && (
         <div className="music-hidden-line">
           {summary && (
             <>
@@ -130,6 +152,15 @@ export default function MusicArtistFilters({
               </button>
             </>
           )}
+          {leftOut > 0 && (
+            <>
+              <span>{plural(leftOut, '{n} in your library is hidden by this filter', '{n} in your library are hidden by this filter')}</span>
+              <button type="button" className="btn-sm" aria-expanded={showLeftOut} onClick={() => onShowLeftOut(!showLeftOut)}>
+                {showLeftOut ? t('Hide them again') : t('Show them')}
+              </button>
+            </>
+          )}
+          {refreshing && <span className="music-checking">{t('Updating the list…')}</span>}
           {checking > 0 && <span className="music-checking">{plural(checking, 'Checking {n} release…', 'Checking {n} releases…')}</span>}
         </div>
       )}

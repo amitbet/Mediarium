@@ -127,3 +127,17 @@ export function toggleKey(list: string[], key: string, order: string[]): string[
   const next = list.includes(key) ? list.filter((k) => k !== key) : [...list, key]
   return order.filter((k) => next.includes(k))
 }
+
+// The albums of an artist's page that the filter leaves out of the list: those
+// the server named (they have no files) and are not on screen because of
+// "Show them". An album with files is always listed, whatever was named.
+export function listedAlbums<A extends { id: number; status: string }>(albums: A[], hidden: { albumId: number }[], showHidden: boolean): A[] {
+  if (showHidden || hidden.length === 0) return albums
+  const ids = new Set(hidden.map((h) => h.albumId))
+  return albums.filter((a) => a.status === 'downloaded' || !ids.has(a.id))
+}
+
+// How many albums of the list are left out right now.
+export function leftOutCount<A extends { id: number; status: string }>(albums: A[], hidden: { albumId: number }[]): number {
+  return albums.length - listedAlbums(albums, hidden, false).length
+}

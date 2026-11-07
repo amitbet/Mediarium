@@ -32,6 +32,28 @@ type searchAnswer[T any] struct {
 	// Searched lists every indexer the search had to do with, one line each:
 	// what it found, or why it found nothing.
 	Searched []searchedIndexer `json:"searched"`
+	// Ignored is how many releases the indexers sent back that were left out of
+	// the list because their title or year is not this title's, and
+	// IgnoredSamples a few of their names. They let the page tell "nothing was
+	// found" from "releases came back, but none of them is this film".
+	Ignored        int      `json:"ignored,omitempty"`
+	IgnoredSamples []string `json:"ignoredSamples,omitempty"`
+}
+
+// ignoredReleases counts the releases a search left out because they are not the
+// title asked for, and keeps the names of the first few.
+type ignoredReleases struct {
+	count   int
+	samples []string
+}
+
+const maxIgnoredSamples = 3
+
+func (g *ignoredReleases) add(title string) {
+	g.count++
+	if len(g.samples) < maxIgnoredSamples {
+		g.samples = append(g.samples, title)
+	}
 }
 
 // What a searched indexer did.
@@ -51,10 +73,14 @@ type searchedIndexer struct {
 	Count     int    `json:"count"`  // releases of this indexer in the list
 	Ms        int64  `json:"ms"`     // how long its search took
 	// Code is the short why behind a failed or skipped line: "timeout",
-	// "daily_limit", "rate_limited", "auth", "unreachable", "error", "vpn",
-	// "paused", "disabled" or "no_category". Reason is the same in a sentence.
+	// "daily_limit", "rate_limited", "auth", "unreachable", "flaresolverr",
+	// "gone", "error", "vpn", "paused", "disabled" or "no_category". Reason is
+	// the same in a sentence.
 	Code   string `json:"code,omitempty"`
 	Reason string `json:"reason,omitempty"`
+	// Detail is the technical text behind Reason, when Reason is an
+	// explanation written for the person ("flaresolverr", "gone").
+	Detail string `json:"detail,omitempty"`
 }
 
 // namedIndexer is a result that knows which indexer it came from.
@@ -83,6 +109,12 @@ func whyFailed(err error) string {
 		return "daily_limit"
 	case errors.Is(err, context.DeadlineExceeded):
 		return "timeout"
+	}
+	if _, ok := indexers.FlareSolverrDown(err); ok {
+		return "flaresolverr"
+	}
+	if _, ok := indexers.GoneStatus(err); ok {
+		return "gone"
 	}
 	switch problems.IndexerCode(err) {
 	case problems.CodeIndexerRateLimited:
@@ -124,6 +156,7 @@ func searchedLine(l searchedIndexer, outs []indexers.Outcome) searchedIndexer {
 		l.Status, l.Code, l.Reason = searchSkipped, "vpn", indexers.ProblemMessage(first)
 	default:
 		l.Status, l.Code, l.Reason = searchFailed, whyFailed(first.Err), indexers.ProblemMessage(first)
+		l.Detail = indexers.ProblemDetail(first)
 	}
 	return l
 }
@@ -245,6 +278,12 @@ func writeSearchSkipping[T any](w http.ResponseWriter, r *http.Request, results 
 // writeSearchAll is writeSearchSkipping that also lists, in "searched", every
 // indexer in all with what it found.
 func writeSearchAll[T any](w http.ResponseWriter, r *http.Request, results []T, sources int, outcomes []indexers.Outcome, skipped []string, all []indexers.Instance) {
+	writeSearchIgnoring(w, r, results, sources, outcomes, skipped, all, ignoredReleases{})
+}
+
+// writeSearchIgnoring is writeSearchAll that also says how many releases were
+// left out for not being the title asked for.
+func writeSearchIgnoring[T any](w http.ResponseWriter, r *http.Request, results []T, sources int, outcomes []indexers.Outcome, skipped []string, all []indexers.Instance, ignored ignoredReleases) {
 	if results == nil {
 		results = []T{}
 	}
@@ -252,5 +291,5 @@ func writeSearchAll[T any](w http.ResponseWriter, r *http.Request, results []T, 
 		writeJSON(w, http.StatusOK, results)
 		return
 	}
-	writeJSON(w, http.StatusOK, searchAnswer[T]{Results: results, Sources: sources, Unanswered: unansweredFrom(outcomes), Warnings: limitWarnings(outcomes), Skipped: skipped, Searched: searchedFrom(all, outcomes, indexerCounts(results), skipped)})
+	writeJSON(w, http.StatusOK, searchAnswer[T]{Results: results, Sources: sources, Unanswered: unansweredFrom(outcomes), Warnings: limitWarnings(outcomes), Skipped: skipped, Searched: searchedFrom(all, outcomes, indexerCounts(results), skipped), Ignored: ignored.count, IgnoredSamples: ignored.samples})
 }

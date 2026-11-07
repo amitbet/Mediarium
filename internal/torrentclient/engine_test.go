@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -213,11 +214,23 @@ func TestMagnetWithoutPeersGivesUp(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer engine.Close()
-	magnet := "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=dead"
+	magnet := "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=dead&tr=udp%3A%2F%2Ftracker.invalid%3A6969%2Fannounce"
 	start := time.Now()
 	_, err = engine.AddMagnetIn(context.Background(), magnet, t.TempDir())
 	if !errors.Is(err, mediarium.ErrNoMetadata) {
 		t.Fatalf("err = %v, want ErrNoMetadata", err)
+	}
+	// The error says what was tried: the one tracker the magnet lists, and no
+	// peers.
+	var de mediarium.DiagError
+	if !errors.As(err, &de) {
+		t.Fatalf("err = %v, want a DiagError", err)
+	}
+	if d := de.Diagnosis(); d.TrackersTried != 1 || d.PeersConnected != 0 {
+		t.Fatalf("diagnosis = %+v, want 1 tracker tried and no peers connected", d)
+	}
+	if !strings.HasPrefix(err.Error(), "no metadata after ") || !strings.Contains(err.Error(), "of 1 tracker answered") {
+		t.Fatalf("message = %q", err.Error())
 	}
 	if time.Since(start) > 10*time.Second {
 		t.Fatal("the metadata wait took far longer than its limit")

@@ -1,13 +1,14 @@
 import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { albumRescanNote, type AlbumRescanReport } from '../albumRescan'
-import { api, can, isAdmin, type MusicAlbum, type MusicArtist as MusicArtistData, type MusicProfile, type MusicRelease, type QueueItem, type SearchResult } from '../api'
+import { api, can, isAdmin, type MusicAlbum, type MusicArtist as MusicArtistData, type MusicHiddenAlbum, type MusicProfile, type MusicRelease, type QueueItem, type SearchResult } from '../api'
 import { useAuth } from '../AuthContext'
 import { useConfirm } from '../components/ConfirmProvider'
 import Cover from '../components/Cover'
 import FilesPanel from '../components/FilesPanel'
 import Icon from '../components/Icon'
 import MusicArtistFilters from '../components/MusicArtistFilters'
+import { leftOutCount, listedAlbums } from '../musicFilter'
 import MusicMenu from '../components/MusicMenu'
 import { useMusicPlayer } from '../components/MusicPlayer'
 import { artistQueue, playable } from '../musicPlay'
@@ -17,6 +18,7 @@ import { describeState, type ItemState } from '../components/state'
 import Switch from '../components/Switch'
 import TitleEvents from '../components/TitleEvents'
 import { useToast } from '../components/Toast'
+import { useTorrentsSwitch } from '../useTorrentsSwitch'
 import { useModules } from '../ModulesContext'
 import { useLive } from '../useLive'
 import { artistState } from './MusicLibrary'
@@ -123,10 +125,16 @@ function ArtistPage() {
   }, [artist, location.hash])
 
   const albums = useMemo(() => artist?.albums ?? [], [artist])
+  // What the artist's filter leaves out of the list (albums without files); the
+  // rest of the page keeps counting every album.
+  const [filtered, setFiltered] = useState<MusicHiddenAlbum[]>([])
+  const [showFiltered, setShowFiltered] = useState(false)
+  const listed = useMemo(() => listedAlbums(albums, filtered, showFiltered), [albums, filtered, showFiltered])
+  const leftOut = useMemo(() => leftOutCount(albums, filtered), [albums, filtered])
   const grouped = useMemo(() => {
-    const byType = (t: string) => albums.filter((a) => (GROUPS.some((g) => g.type === a.type) ? a.type === t : t === 'other')).sort((a, b) => b.releaseDate.localeCompare(a.releaseDate))
+    const byType = (t: string) => listed.filter((a) => (GROUPS.some((g) => g.type === a.type) ? a.type === t : t === 'other')).sort((a, b) => b.releaseDate.localeCompare(a.releaseDate))
     return [...GROUPS, { type: 'other', title: t('Other releases'), hint: '' }].map((g) => ({ ...g, items: byType(g.type) })).filter((g) => g.items.length > 0)
-  }, [albums])
+  }, [listed])
 
   const liveFor = (albumId: number) => queue.find((q) => q.albumId === albumId && (q.status === 'downloading' || q.status === 'importing'))
   const cover = useMemo(() => {
@@ -376,9 +384,19 @@ function ArtistPage() {
         </div>
       </section>
 
-      <MusicArtistFilters artist={artist} admin={admin} canManage={can(me, 'manage')} onArtist={setArtist} onChanged={load} />
+      <MusicArtistFilters
+        artist={artist}
+        admin={admin}
+        canManage={can(me, 'manage')}
+        onArtist={setArtist}
+        onChanged={load}
+        onLibraryHidden={setFiltered}
+        leftOut={leftOut}
+        showLeftOut={showFiltered}
+        onShowLeftOut={setShowFiltered}
+      />
 
-      {grouped.length === 0 && (
+      {grouped.length === 0 && leftOut === 0 && (
         <div className="empty-state">
           <Icon name="disc" size={44} />
           <p>{t('No albums, EPs or singles found for this artist yet.')}</p>
@@ -476,7 +494,7 @@ function AlbumCard({
       <div className="album-top">
         <span className="album-sleeve">
           <span className="sleeve-disc" aria-hidden="true" />
-          <Cover src={album.coverUrl} alt={t('{title} cover', { title: album.title })} className="album-cover" />
+          <Cover thumb src={album.coverUrl} alt={t('{title} cover', { title: album.title })} className="album-cover" />
         </span>
         <div className="album-info">
           <h3 title={album.title}>{album.title}</h3>
@@ -695,6 +713,7 @@ function TracksPanel({ album }: { album: MusicAlbum }) {
 
 function ReleasesPanel({ album, onChanged }: { album: MusicAlbum; onChanged: () => void }) {
   const toast = useToast()
+  const { grabError } = useTorrentsSwitch()
   const [results, setResults] = useState<MusicRelease[] | null>(null)
   const [answered, setAnswered] = useState<{ sources: number; unanswered: Unanswered[]; warnings?: string[]; searched?: Searched[] }>({ sources: 0, unanswered: [] })
   const [error, setError] = useState('')
@@ -720,7 +739,7 @@ function ReleasesPanel({ album, onChanged }: { album: MusicAlbum; onChanged: () 
       toast.success(t('Started downloading "{title}". Follow it in Activity.', { title: r.title }))
       setTimeout(onChanged, 500)
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e))
+      grabError(e, () => void grab(r))
     } finally {
       setGrabbing(null)
     }

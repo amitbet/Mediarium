@@ -96,11 +96,28 @@ type Item struct {
 	// file a movie has now (a smaller version of it): the path of that file.
 	// Get fills it in; List leaves it out.
 	ReplacesFile string
+	// ReplaceByHand is set when a person picked this release by hand for a
+	// title that has a file and agreed to replace it: the import then swaps
+	// the new file in whatever the title's "Better versions" setting and
+	// "If a file already exists" say. Get and List fill it in.
+	ReplaceByHand bool
+	// KeptFile and KeptData are set when the download finished but the file
+	// the title already had was kept: that file's path, and what became of the
+	// downloaded data (KeptDeleted, KeptSeeding or KeptClient).
+	KeptFile string
+	KeptData string
 	// AddedAt/CompletedAt are set by List (RFC 3339 text; CompletedAt is
 	// empty until the item finishes).
 	AddedAt     string
 	CompletedAt string
 }
+
+// What became of the downloaded data of a download whose file was not imported.
+const (
+	KeptDeleted = "deleted" // the working folder was removed
+	KeptSeeding = "seeding" // a torrent still seeds from it; it goes when seeding is done
+	KeptClient  = "client"  // the files are in an external download client, which keeps them
+)
 
 type Repo struct {
 	db  *sql.DB
@@ -220,10 +237,10 @@ func (r *Repo) Enqueue(item Item) (int64, error) {
 	// place anyone has taken, and always above 0 (0 and below mark resumed
 	// items, see Requeue).
 	res, err := r.db.Exec(
-		`INSERT INTO download_queue (movie_id, series_id, season, episode, album_id, book_id, book_format, indexer_id, release_title, nzb_url, size_bytes, protocol, status, priority, replaces_file, line_seq)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT MAX(COALESCE(MAX(line_seq), 0), 0) + 1 FROM download_queue))`,
+		`INSERT INTO download_queue (movie_id, series_id, season, episode, album_id, book_id, book_format, indexer_id, release_title, nzb_url, size_bytes, protocol, status, priority, replaces_file, replace_by_hand, line_seq)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT MAX(COALESCE(MAX(line_seq), 0), 0) + 1 FROM download_queue))`,
 		nullIfZero(item.MovieID), nullIfZero(item.SeriesID), nullIfZero(int64(item.Season)), nullIfZero(int64(item.Episode)), nullIfZero(item.AlbumID), nullIfZero(item.BookID), item.BookFormat,
-		item.IndexerID, item.ReleaseTitle, storedURL, item.SizeBytes, string(item.Protocol), string(StatusQueued), int(item.Priority), item.ReplacesFile,
+		item.IndexerID, item.ReleaseTitle, storedURL, item.SizeBytes, string(item.Protocol), string(StatusQueued), int(item.Priority), item.ReplacesFile, item.ReplaceByHand,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("enqueue download: %w", err)
@@ -259,6 +276,16 @@ func (r *Repo) SetStatus(id int64, status Status, errMsg string) error {
 		return fmt.Errorf("update queue item %d status: %w", id, err)
 	}
 	r.statusEvent(id, status)
+	return nil
+}
+
+// SetKept records, on a download that finished without importing because the
+// file the title already had was kept, which file that was and what became of
+// the downloaded data (one of the Kept constants).
+func (r *Repo) SetKept(id int64, file, data string) error {
+	if _, err := r.db.Exec(`UPDATE download_queue SET kept_file = ?, kept_data = ? WHERE id = ?`, file, data, id); err != nil {
+		return fmt.Errorf("record the kept file of queue item %d: %w", id, err)
+	}
 	return nil
 }
 
@@ -306,8 +333,8 @@ func (r *Repo) Get(id int64) (Item, error) {
 	var status, protocol string
 	var sourcePath, destPath sql.NullString
 	err := r.db.QueryRow(
-		`SELECT id, COALESCE(movie_id, 0), COALESCE(series_id, 0), COALESCE(season, 0), COALESCE(episode, 0), COALESCE(album_id, 0), COALESCE(book_id, 0), book_format, indexer_id, release_title, nzb_url, size_bytes, protocol, status, progress_pct, COALESCE(error, ''), source_path, dest_path, interrupted, priority, line_seq, replaces_file, COALESCE((SELECT release_date FROM movies WHERE id = download_queue.movie_id), (SELECT air_date FROM episodes WHERE series_id = download_queue.series_id AND season = download_queue.season AND episode = download_queue.episode), '') FROM download_queue WHERE id = ?`, id,
-	).Scan(&it.ID, &it.MovieID, &it.SeriesID, &it.Season, &it.Episode, &it.AlbumID, &it.BookID, &it.BookFormat, &it.IndexerID, &it.ReleaseTitle, &it.NZBURL, &it.SizeBytes, &protocol, &status, &it.ProgressPct, &it.Error, &sourcePath, &destPath, &it.Interrupted, &it.Priority, &it.LineSeq, &it.ReplacesFile, &it.Released)
+		`SELECT id, COALESCE(movie_id, 0), COALESCE(series_id, 0), COALESCE(season, 0), COALESCE(episode, 0), COALESCE(album_id, 0), COALESCE(book_id, 0), book_format, indexer_id, release_title, nzb_url, size_bytes, protocol, status, progress_pct, COALESCE(error, ''), source_path, dest_path, interrupted, priority, line_seq, replaces_file, replace_by_hand, kept_file, kept_data, COALESCE((SELECT release_date FROM movies WHERE id = download_queue.movie_id), (SELECT air_date FROM episodes WHERE series_id = download_queue.series_id AND season = download_queue.season AND episode = download_queue.episode), '') FROM download_queue WHERE id = ?`, id,
+	).Scan(&it.ID, &it.MovieID, &it.SeriesID, &it.Season, &it.Episode, &it.AlbumID, &it.BookID, &it.BookFormat, &it.IndexerID, &it.ReleaseTitle, &it.NZBURL, &it.SizeBytes, &protocol, &status, &it.ProgressPct, &it.Error, &sourcePath, &destPath, &it.Interrupted, &it.Priority, &it.LineSeq, &it.ReplacesFile, &it.ReplaceByHand, &it.KeptFile, &it.KeptData, &it.Released)
 	if err != nil {
 		return Item{}, fmt.Errorf("get queue item %d: %w", id, err)
 	}
@@ -445,7 +472,7 @@ func (r *Repo) ListUnfinished() ([]Item, error) {
 
 func (r *Repo) list(where string) ([]Item, error) {
 	rows, err := r.db.Query(
-		`SELECT id, COALESCE(movie_id, 0), COALESCE(series_id, 0), COALESCE(season, 0), COALESCE(episode, 0), COALESCE(album_id, 0), COALESCE(book_id, 0), book_format, indexer_id, release_title, nzb_url, size_bytes, protocol, status, progress_pct, COALESCE(error, ''), dest_path, added_at, COALESCE(completed_at, ''), interrupted, priority, line_seq, COALESCE((SELECT release_date FROM movies WHERE id = download_queue.movie_id), (SELECT air_date FROM episodes WHERE series_id = download_queue.series_id AND season = download_queue.season AND episode = download_queue.episode), '') FROM download_queue ` + where + ` ORDER BY added_at DESC, id DESC`)
+		`SELECT id, COALESCE(movie_id, 0), COALESCE(series_id, 0), COALESCE(season, 0), COALESCE(episode, 0), COALESCE(album_id, 0), COALESCE(book_id, 0), book_format, indexer_id, release_title, nzb_url, size_bytes, protocol, status, progress_pct, COALESCE(error, ''), dest_path, added_at, COALESCE(completed_at, ''), interrupted, priority, line_seq, replace_by_hand, kept_file, kept_data, COALESCE((SELECT release_date FROM movies WHERE id = download_queue.movie_id), (SELECT air_date FROM episodes WHERE series_id = download_queue.series_id AND season = download_queue.season AND episode = download_queue.episode), '') FROM download_queue ` + where + ` ORDER BY added_at DESC, id DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("list queue: %w", err)
 	}
@@ -456,7 +483,7 @@ func (r *Repo) list(where string) ([]Item, error) {
 		var it Item
 		var status, protocol string
 		var destPath sql.NullString
-		if err := rows.Scan(&it.ID, &it.MovieID, &it.SeriesID, &it.Season, &it.Episode, &it.AlbumID, &it.BookID, &it.BookFormat, &it.IndexerID, &it.ReleaseTitle, &it.NZBURL, &it.SizeBytes, &protocol, &status, &it.ProgressPct, &it.Error, &destPath, &it.AddedAt, &it.CompletedAt, &it.Interrupted, &it.Priority, &it.LineSeq, &it.Released); err != nil {
+		if err := rows.Scan(&it.ID, &it.MovieID, &it.SeriesID, &it.Season, &it.Episode, &it.AlbumID, &it.BookID, &it.BookFormat, &it.IndexerID, &it.ReleaseTitle, &it.NZBURL, &it.SizeBytes, &protocol, &status, &it.ProgressPct, &it.Error, &destPath, &it.AddedAt, &it.CompletedAt, &it.Interrupted, &it.Priority, &it.LineSeq, &it.ReplaceByHand, &it.KeptFile, &it.KeptData, &it.Released); err != nil {
 			return nil, fmt.Errorf("scan queue item: %w", err)
 		}
 		it.Protocol = Protocol(protocol)

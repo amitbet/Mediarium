@@ -9,6 +9,9 @@ import InfoTip from '../components/InfoTip'
 import HelpLink from '../components/HelpLink'
 import { PosterFallback } from '../components/PosterCard'
 import { useToast } from '../components/Toast'
+import TorrentsOffNote from '../components/TorrentsOffNote'
+import { useTorrentsSwitch } from '../useTorrentsSwitch'
+import { isTorrentsOffText } from '../torrentsOff'
 import { formatBytes, timeAgo } from '../format'
 import { useConfirm } from '../components/ConfirmProvider'
 import AddDownloadDialog from '../components/AddDownloadDialog'
@@ -24,9 +27,11 @@ import { lostMarkerFolder } from '../rootMarker'
 import { useModules } from '../ModulesContext'
 import { bulkState, groupQueue, RUNNING, stateNote, statusLabel, stillWaiting, unpackLine } from '../queueView'
 import { useLive } from '../useLive'
+import { anyMoving, pollEvery } from '../pollPlan'
 import { etaText, nextSample, type RateSample } from '../transferRate'
 import { locale, plural, t, tx, st } from '../i18n'
 import { useUrlState } from '../useUrlState'
+import { keptDataText, keptFileLine } from '../keptFile'
 import '../activity.css'
 
 type Tab = 'queue' | 'clients' | 'history' | 'requests' | 'reports' | 'blocklist' | 'bin'
@@ -272,6 +277,18 @@ function QueueDetails({ q, admin }: { q: QueueItem; admin: boolean }) {
             <dd className="mono">{q.destPath}</dd>
           </>
         )}
+        {q.keptFile && (
+          <>
+            <dt>{t('Kept file')}</dt>
+            <dd className="mono">{q.keptFile}</dd>
+          </>
+        )}
+        {q.keptData && (
+          <>
+            <dt>{t('Downloaded files')}</dt>
+            <dd>{keptDataText(q.keptData)}</dd>
+          </>
+        )}
       </dl>
       {admin && q.protocol === 'torrent' && ['queued', 'downloading', 'importing', 'paused', 'completed'].includes(q.status) && <TorrentControls q={q} open={open} />}
       {events !== null && events.length > 0 && (
@@ -294,14 +311,14 @@ function QueueRow({ q, admin, busy, act, stop, remove, picked, onPick }: RowProp
   const link = itemLink(q)
   const running = RUNNING.has(q.status)
   const working = busy !== null || !!q.pending
-  const animated = q.status === 'downloading' || q.status === 'importing'
+  const animated = (q.status === 'downloading' || q.status === 'importing') && !q.waiting
   const showBar = (running && q.status !== 'queued') || q.status === 'conflict' || q.status === 'paused'
   const barTone = q.status === 'failed' ? 'bad' : q.status === 'conflict' ? 'warn' : q.status === 'paused' ? 'paused' : ''
   const note = stateNote(q)
   return (
     <div className={`qrow st-${q.status}${q.status === 'failed' ? ' failed' : ''} kind-${q.bookId ? 'book' : q.albumId ? 'music' : q.seriesId ? 'tv' : 'movie'}`}>
       <div className="qthumb">
-        {q.albumId ? <Cover src={q.posterUrl} /> : q.posterUrl ? <img src={q.posterUrl} alt="" loading="lazy" /> : <PosterFallback />}
+        {q.albumId ? <Cover src={q.posterUrl} thumb /> : q.posterUrl ? <img src={q.posterUrl} alt="" loading="lazy" /> : <PosterFallback />}
         {admin && onPick && (
           <label className="qpick" title={t('Pick this download')}>
             <input type="checkbox" checked={!!picked} onChange={(e) => onPick(q.id, e.target.checked)} aria-label={t('Pick {title}', { title: q.title })} />
@@ -356,6 +373,9 @@ function QueueRow({ q, admin, busy, act, stop, remove, picked, onPick }: RowProp
         {note && <div className="qnote">{note}</div>}
         {q.note && <div className="qnote">{st(q.note)}</div>}
         {q.error && (q.status === 'completed' ? <div className="qnote">{st(q.error)}</div> : <div className="error-text qerror">{st(q.error)}</div>)}
+        {q.status === 'completed' && q.keptFile && <div className="qnote mono">{keptFileLine(q.keptFile)}</div>}
+        {q.status === 'completed' && q.keptData && <div className="qnote">{keptDataText(q.keptData)}</div>}
+        {q.status === 'failed' && isTorrentsOffText(q.error) && <TorrentsOffNote failed />}
         {q.status === 'failed' && admin && lostMarkerFolder(q.error) && <RootMarkerFix path={lostMarkerFolder(q.error)!} />}
         {q.status === 'failed' && <FailureTips q={q} link={link} />}
         {q.status === 'conflict' && q.destPath && <div className="qrelease">{t('A file already exists at {path}', { path: q.destPath })}</div>}
@@ -426,6 +446,11 @@ function QueueRow({ q, admin, busy, act, stop, remove, picked, onPick }: RowProp
             </button>
           </>
         )}
+        {q.status === 'importing' && q.waiting && can(me, 'retry') && (
+          <button className="btn-sm btn-with-icon" disabled={working} title={t('Try the import again now, from the files already downloaded')} onClick={() => void act(q, () => api.retryQueueItem(q.id), t('Trying the import again.'))}>
+            <Icon name="refresh" size={15} /> {t('Retry now')}
+          </button>
+        )}
         {(q.status === 'failed' || q.status === 'stopped') && can(me, 'retry') && (
           <button className="btn-sm btn-with-icon" disabled={working} onClick={() => void act(q, () => api.retryQueueItem(q.id), t('Trying that release again.'))}>
             <Icon name="refresh" size={15} /> {t('Retry')}
@@ -457,6 +482,7 @@ function QueueRow({ q, admin, busy, act, stop, remove, picked, onPick }: RowProp
 export default function Queue() {
   const confirm = useConfirm()
   const toast = useToast()
+  const { grabError } = useTorrentsSwitch()
   // Members can watch the queue and retry, but pausing, stopping, removing,
   // blocklisting and resolving conflicts are for administrators.
   const admin = isAdmin(useAuth().user)
@@ -481,7 +507,8 @@ export default function Queue() {
   const [blLimit, setBlLimit] = useState(100)
   const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState('')
-  const [busy, setBusy] = useState<{ id: number; doing: Doing } | null>(null)
+  // What each download is being told to do right now, so two quick actions on different rows don't free each other.
+  const [busy, setBusy] = useState<ReadonlyMap<number, Doing>>(new Map())
   const [bulkBusy, setBulkBusy] = useState<'pause' | 'resume' | null>(null)
   // The downloads picked with the checkboxes, for doing one thing to all of them.
   const [picked, setPicked] = useState<ReadonlySet<number>>(new Set())
@@ -555,6 +582,7 @@ export default function Queue() {
       }
       setError('')
     } catch (e) {
+      if (mine !== latest.current) return // a newer refresh has taken over
       setError(e instanceof Error ? e.message : String(e))
     } finally {
       setLoaded(true)
@@ -564,7 +592,8 @@ export default function Queue() {
   useEffect(() => {
     void load()
   }, [load])
-  useLive(load, 3000)
+  // Every 3 seconds while a download moves, every 10 when nothing does.
+  useLive(load, pollEvery(anyMoving(queue), 3000, 10000))
 
   // The number next to the Blocklist tab.
   const loadBlocklistCount = useCallback(() => {
@@ -576,18 +605,22 @@ export default function Queue() {
 
   const act = useCallback(
     async (item: QueueItem, fn: () => Promise<unknown>, done: string, doing: Doing = 'other') => {
-      setBusy({ id: item.id, doing })
+      setBusy((cur) => new Map(cur).set(item.id, doing))
       try {
         await fn()
         toast.success(done)
         await load()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : String(e))
+        grabError(e)
       } finally {
-        setBusy(null)
+        setBusy((cur) => {
+          const next = new Map(cur)
+          next.delete(item.id)
+          return next
+        })
       }
     },
-    [load, toast],
+    [load, toast, grabError],
   )
 
   // Stop asks first, and offers to delete the partly downloaded files (on by
@@ -710,15 +743,24 @@ export default function Queue() {
       return next
     })
   }, [])
-  async function pickedDo(action: 'pause' | 'resume' | 'stop' | 'retry' | 'front' | 'remove') {
+  async function pickedDo(action: 'pause' | 'resume' | 'stop' | 'retry' | 'front' | 'remove' | 'blocklist') {
     // In the order they are shown, so "to the front" keeps the line's own order.
     // Retry only goes to the failed and stopped ones, so "Pick all" then Retry
     // leaves what is running alone instead of reporting it as refused.
     const ids = pickable
-      .filter((q) => livePicked.has(q.id) && (action !== 'retry' || q.status === 'failed' || q.status === 'stopped'))
+      .filter((q) => livePicked.has(q.id) && ((action !== 'retry' && action !== 'blocklist') || q.status === 'failed' || q.status === 'stopped'))
       .map((q) => q.id)
     if (ids.length === 0 || pickBusy) return
     let deleteFiles = false
+    if (action === 'blocklist') {
+      const r = await confirm({
+        title: plural(ids.length, 'Blocklist this release?', 'Blocklist these {n} releases?'),
+        body: <p>{t('They are never grabbed again, and Mediarium looks for another release for each title.')}</p>,
+        confirmLabel: t('Blocklist releases'),
+        danger: true,
+      })
+      if (!r) return
+    }
     if (action === 'stop' || action === 'remove') {
       const anyFiles = pickable.some((q) => livePicked.has(q.id) && (q.keptFiles || q.progressPct > 0))
       const removing = action === 'remove'
@@ -765,7 +807,7 @@ export default function Queue() {
         key={q.id}
         q={q}
         admin={admin}
-        busy={busy?.id === q.id ? busy.doing : null}
+        busy={busy.get(q.id) ?? null}
         act={act}
         stop={stop}
         remove={remove}
@@ -907,6 +949,9 @@ export default function Queue() {
               <button className="btn-sm btn-with-icon" disabled={pickBusy} onClick={() => void pickedDo('retry')}>
                 <Icon name="refresh" size={14} /> {t('Retry')}
               </button>
+              <button className="btn-sm btn-with-icon" disabled={pickBusy} onClick={() => void pickedDo('blocklist')}>
+                <Icon name="ban" size={14} /> {t('Blocklist')}
+              </button>
               <button className="btn-sm btn-with-icon danger-ghost" disabled={pickBusy} onClick={() => void pickedDo('remove')}>
                 <Icon name="trash" size={14} /> {t('Remove')}
               </button>
@@ -915,6 +960,9 @@ export default function Queue() {
               </button>
               <button className="btn-sm" disabled={pickBusy} onClick={() => setPicked(new Set(pickable.filter((q) => q.status === 'paused').map((q) => q.id)))}>
                 {t('Pick paused')}
+              </button>
+              <button className="btn-sm" disabled={pickBusy} onClick={() => setPicked(new Set(pickable.filter((q) => q.status === 'failed' || q.status === 'stopped').map((q) => q.id)))}>
+                {t('Pick problems')}
               </button>
               <button className="btn-sm" disabled={pickBusy} onClick={() => setPicked(new Set())}>
                 {t('Clear')}
@@ -947,6 +995,11 @@ export default function Queue() {
               <div className="rail-head">
                 <h2>{t('Failed')}</h2>
                 <span>{t('retry, pick another release, or remove')}</span>
+                {admin && (
+                  <button className="btn-sm" onClick={() => setPicked(new Set(pickable.filter((q) => q.status === 'failed' || q.status === 'stopped').map((q) => q.id)))}>
+                    {t('Pick problems')}
+                  </button>
+                )}
               </div>
               {rows(failed, true)}
             </section>
@@ -979,12 +1032,12 @@ export default function Queue() {
               </h2>
               <ul>
                 {waiting.slice(0, 20).map((w) => {
-                  const search = w.lastSearch ? `${w.lastSearch.replace(/^Searched: /, '')}${w.lastSearchAt ? ` (${timeAgo(w.lastSearchAt)})` : ''}` : t('Not searched yet.')
+                  const search = w.lastSearch ? `${st(w.lastSearch.replace(/^Searched: /, ''))}${w.lastSearchAt ? ` (${timeAgo(w.lastSearchAt)})` : ''}` : t('Not searched yet.')
                   const meta = [w.year ? String(w.year) : '', w.episodes && w.episodes > 1 ? plural(w.episodes, '{n} episode waiting', '{n} episodes waiting') : w.subtitle ?? ''].filter(Boolean).join(' · ')
                   return (
                     <li key={w.key} className={`kind-${w.kind}`}>
                       <Link to={w.to} className="wait-thumb" aria-hidden="true" tabIndex={-1}>
-                        {w.kind === 'music' ? <Cover src={w.posterUrl} /> : w.posterUrl ? <img src={w.posterUrl} alt="" loading="lazy" /> : <PosterFallback />}
+                        {w.kind === 'music' ? <Cover src={w.posterUrl} thumb /> : w.posterUrl ? <img src={w.posterUrl} alt="" loading="lazy" /> : <PosterFallback />}
                       </Link>
                       <div className="wait-body">
                         <Link to={w.to} className="wait-title">
@@ -1037,7 +1090,7 @@ export default function Queue() {
           {shownActivity.length === 0 ? (
             <div className="empty-state">
               <Icon name="activity" size={44} />
-              <p>{actQuery.trim() ? t('Nothing in the history matches that.') : t('No activity yet.')}</p>
+              <p>{actQuery.trim() ? t('Nothing in the history matches that.') : activity.length > 0 ? t('Nothing in this group among the latest lines. Older lines may have some.') : t('No activity yet.')}</p>
             </div>
           ) : (
             <ul className="timeline">

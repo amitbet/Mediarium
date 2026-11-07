@@ -92,7 +92,7 @@ Switch it off with **Count subtitles already inside the video file** under **Set
 
 [SubDL](https://subdl.com) is a second place to find subtitles. It's optional and needs a free API key: create an account at subdl.com, copy the key from your account panel and paste it into the **SubDL** card under **Settings > Info, lists and subtitles > Subtitles** (stored encrypted as `subtitles.subdl_api_key`; `subdlApiKey` in `PUT /api/settings`; test it with `POST /api/settings/test-service` and `{"service": "subdl"}`).
 
-While SubDL is switched on (it is as soon as you save a key), every search asks it along with the other sources that are on, and the best fit for your file wins, whichever site it's from. SubDL has no file hash, so "made for this exact file" only ever comes from OpenSubtitles; a SubDL subtitle can later be swapped for one of those if [upgrades](#subtitles-made-for-your-exact-file) are on. When the OpenSubtitles daily limit is used up, automatic downloads carry on with SubDL and the add-ons. You can also use SubDL without OpenSubtitles: switch OpenSubtitles off, or just leave it without a key.
+While SubDL is switched on (it is as soon as you save a key), every search asks it along with the other sources that are on, and the best fit for your file wins, whichever site it's from. SubDL has no file hash, so "made for this exact file" only ever comes from OpenSubtitles; a SubDL subtitle can later be swapped for one of those if [upgrades](#subtitles-made-for-your-exact-file) are on. When the OpenSubtitles daily limit is used up, automatic downloads carry on with SubDL and the add-ons. A short "too many requests" from OpenSubtitles is not the daily limit: Mediarium waits the few seconds it asks for and tries again. You can also use SubDL without OpenSubtitles: switch OpenSubtitles off, or just leave it without a key.
 
 SubDL allows about 2,000 searches a day on a free key and a few hundred downloads a day from one address. Its downloads are zip files: Mediarium takes the SRT out (for an episode, the file named for that episode) and saves only that. When you choose a subtitle by hand, the list says which site each one is from. Scripts: results from SubDL carry `"source": "subdl"` and a `link`; download one with `{"source": "subdl", "link": "...", "language": "en"}`.
 
@@ -145,7 +145,7 @@ For scripts: the switch is the setting `subtitles.wizdom` (`subtitleWizdom` in `
 - A `forced` file (foreign-language lines only) is kept as `Movie.en.forced.srt` and doesn't count as a full subtitle. A `sdh` (hearing-impaired) file is kept as `Movie.en.sdh.srt` and counts as a full subtitle unless you chose [**Normal only**](#normal-sdh-and-forced-subtitles) for that language.
 - In a season pack, a subtitle goes to the episode named in its file name or folder (`S01E02`). One that names no episode is skipped rather than guessed. In a single-episode or movie download, the subtitles belong to that video.
 - Sample clips are ignored. Existing files are never overwritten, and nothing in the download folder is changed or deleted.
-- Activity records it, for example: `Movie imported with 2 subtitle file(s): en, fr`.
+- Activity records it, for example: `Movie imported with 2 subtitle file(s): en, fr`. A subtitle Mediarium downloads is logged with the service it came from, for example `Downloaded en subtitle for Heat from SubDL`, so you can see over time which service gives you the most.
 
 ## Getting subtitles from OpenSubtitles
 

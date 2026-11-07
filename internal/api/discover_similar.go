@@ -181,23 +181,19 @@ func pickSeeds(ids []int, n int, day int) []int {
 
 // libraryIDs returns the TMDB ids of the library's movies or shows, newest
 // added first.
-func (s *Server) libraryIDs(kind string) ([]int, error) {
+func (s *Server) libraryIDs(ctx context.Context, kind string) ([]int, error) {
+	o, err := s.ownedLibrary(ctx)
+	if err != nil {
+		return nil, err
+	}
 	var ids []int
 	if kind == "tv" {
-		list, err := s.MovieRepo.ListSeries()
-		if err != nil {
-			return nil, err
-		}
-		for _, sr := range list {
+		for _, sr := range o.shows {
 			ids = append(ids, sr.TMDBID)
 		}
 		return ids, nil
 	}
-	list, err := s.MovieRepo.List()
-	if err != nil {
-		return nil, err
-	}
-	for _, m := range list {
+	for _, m := range o.movies {
 		ids = append(ids, m.TMDBID)
 	}
 	return ids, nil
@@ -261,7 +257,7 @@ func (s *Server) suggestions(ctx context.Context, kind string, seeds []int) ([][
 
 // rankedSimilar builds the whole ranked list for a kind ("movie" or "tv").
 func (s *Server) rankedSimilar(ctx context.Context, kind string, older bool) ([]similarCandidate, error) {
-	ids, err := s.libraryIDs(kind)
+	ids, err := s.libraryIDs(ctx, kind)
 	if err != nil {
 		return nil, err
 	}

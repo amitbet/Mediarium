@@ -14,6 +14,8 @@ import {
 import { defaultProfileFor } from '../profileDefaults'
 import { timeAgo } from '../format'
 import { plural, t, tx } from '../i18n'
+import type { LibraryFolders } from '../api'
+import { laterChoices } from '../newTitleFolder'
 import { sortProfiles } from './qualityBlurb'
 import { useConfirm } from './ConfirmProvider'
 import Icon from './Icon'
@@ -115,7 +117,7 @@ export default function ImportLists() {
   const [profiles, setProfiles] = useState<QualityProfile[]>([])
   const [defaultProfile, setDefaultProfile] = useState(0)
   const [defaultTvProfile, setDefaultTvProfile] = useState(0)
-  const [folders, setFolders] = useState<{ movies: string[]; tv: string[] }>({ movies: [], tv: [] })
+  const [folders, setFolders] = useState<LibraryFolders>({ movies: [], tv: [], newTitles: { movies: { folder: '', mostRoom: false }, tv: { folder: '', mostRoom: false } } })
   const [knownTags, setKnownTags] = useState<string[]>([])
   const [editing, setEditing] = useState<{ id?: number; draft: ImportListInput; hasKey: boolean; hasCsv: boolean } | null>(null)
   const [adding, setAdding] = useState(false)
@@ -381,7 +383,7 @@ function ListForm({
   profiles: QualityProfile[]
   defaultProfile: number
   defaultTvProfile: number
-  folders: { movies: string[]; tv: string[] }
+  folders: LibraryFolders
   knownTags: string[]
   onCancel: () => void
   onSaved: (l: ImportList, created: boolean) => void
@@ -652,10 +654,9 @@ function ListForm({
             <label>
               {t('Movies go in')}
               <select value={d.movieRoot} onChange={(e) => set({ movieRoot: e.target.value })}>
-                <option value="">{t('{folder} (main)', { folder: folders.movies[0] })}</option>
-                {folders.movies.slice(1).map((f) => (
-                  <option key={f} value={f}>
-                    {f}
+                {laterChoices(folders.movies, folders.newTitles.movies).map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
                   </option>
                 ))}
               </select>
@@ -665,10 +666,9 @@ function ListForm({
             <label>
               {t('Shows go in')}
               <select value={d.tvRoot} onChange={(e) => set({ tvRoot: e.target.value })}>
-                <option value="">{t('{folder} (main)', { folder: folders.tv[0] })}</option>
-                {folders.tv.slice(1).map((f) => (
-                  <option key={f} value={f}>
-                    {f}
+                {laterChoices(folders.tv, folders.newTitles.tv).map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
                   </option>
                 ))}
               </select>

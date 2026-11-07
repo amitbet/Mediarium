@@ -304,6 +304,31 @@ func (r *Repo) ListSeries() ([]Series, error) {
 	return r.listSeries(` WHERE s.copy_of IS NULL ORDER BY s.added_at DESC`)
 }
 
+// ListSeriesNames lists every main show with only what tells same-named shows
+// apart (id, title, year, origin countries). The other fields stay empty. It
+// is one plain table read, for screens that only need the names and must not
+// pay for the episode counts and aliases ListSeries works out.
+func (r *Repo) ListSeriesNames() ([]Series, error) {
+	rows, err := r.db.Query(`SELECT id, title, COALESCE(year, 0), origin_country FROM series WHERE copy_of IS NULL ORDER BY added_at DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("list show names: %w", err)
+	}
+	defer rows.Close()
+	var out []Series
+	for rows.Next() {
+		var (
+			s      Series
+			origin sql.NullString
+		)
+		if err := rows.Scan(&s.ID, &s.Title, &s.Year, &origin); err != nil {
+			return nil, fmt.Errorf("scan show name: %w", err)
+		}
+		s.OriginCountry = decodeCountries(origin)
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 // ListSeriesWithCopies lists every show row, second copies included.
 func (r *Repo) ListSeriesWithCopies() ([]Series, error) {
 	return r.listSeries(` ORDER BY s.added_at DESC`)

@@ -72,6 +72,7 @@ export interface ProblemList {
   counts: ProblemCounts
   areas: { id: string; label: string }[]
   notifyOnProblems: boolean
+  debugLogging: boolean
   keepDays: number
 }
 

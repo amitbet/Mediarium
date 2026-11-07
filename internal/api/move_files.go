@@ -40,6 +40,8 @@ const (
 	moveSpaceMargin = 512 << 20
 	// moveProblemsShown is how many problems the preview and the status list.
 	moveProblemsShown = 200
+	// moveMaxTitles is the most titles one move takes.
+	moveMaxTitles = 50
 )
 
 type bulkFolderRequest struct {
@@ -158,6 +160,11 @@ type moveTitle struct {
 	Problem string `json:"problem,omitempty"`
 	// Note is something to know that does not stop the move.
 	Note string `json:"note,omitempty"`
+	// Linked is how many of the files are hard-linked to something else (a
+	// torrent that is still seeding). A rename keeps the link; a copy to
+	// another drive does not.
+	Linked   int    `json:"linkedFiles,omitempty"`
+	LinkNote string `json:"linkNote,omitempty"`
 
 	units   []organizer.MoveUnit
 	oldRoot string
@@ -399,12 +406,39 @@ func (s *Server) planMove(ref library.Ref, newRoot, stored string, busyMovies, b
 	if outside > 0 {
 		t.Note = plural(outside, "file") + " outside the show's folder stay where they are."
 	}
+	if t.Method == "copy" {
+		for _, u := range units {
+			t.Linked += linkedFiles(u.Src)
+		}
+		switch {
+		case t.Linked == 1:
+			t.LinkNote = "One file is linked to a download. The copy in the new folder is not linked, so it takes up space twice until that download is removed. The download's own file is kept."
+		case t.Linked > 1:
+			t.LinkNote = fmt.Sprintf("There are %d files linked to a download. The copies in the new folder are not linked, so they take up space twice until those downloads are removed. The downloads' own files are kept.", t.Linked)
+		}
+	}
 	for _, f := range files {
 		if p, ok := organizer.MapPath(units, f); ok {
 			t.newFile = append(t.newFile, p)
 		}
 	}
 	return t
+}
+
+// linkedFiles counts the files under path that have more than one name on disk
+// (hard links, for example to a torrent that is still seeding).
+func linkedFiles(path string) int {
+	n := 0
+	_ = filepath.WalkDir(path, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if info, err := d.Info(); err == nil && organizer.LinkCount(info) > 1 {
+			n++
+		}
+		return nil
+	})
+	return n
 }
 
 // videosInDir counts the video files directly in dir, samples left out.
@@ -456,6 +490,10 @@ func (s *Server) moveContext(w http.ResponseWriter, r *http.Request) (plans []mo
 	}
 	if newRoot == "" {
 		writeError(w, http.StatusBadRequest, "That folder isn't set up. Choose it in Settings > Library > Folders.")
+		return
+	}
+	if len(refs) > moveMaxTitles {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("Move at most %d titles at a time, so a move stays easy to follow. Pick fewer and do the rest afterwards.", moveMaxTitles))
 		return
 	}
 	busyMovies, busyShows, err := s.busyTitles()
@@ -637,9 +675,12 @@ func (s *Server) runMoveJob(ctx context.Context, plans []moveTitle, newRoot, sto
 	j.status.Finished = time.Now().UTC().Format(time.RFC3339)
 	j.status.Message = moveDoneMessage(j.status)
 	j.cancel = nil
-	msg := j.status.Message
+	msg, moved := j.status.Message, j.status.Moved
 	j.mu.Unlock()
-	_ = s.QueueRepo.LogActivity(0, "moved", msg)
+	// One title that moved already has its own line ("Moved X from A to B").
+	if len(plans) != 1 || moved != 1 {
+		_ = s.QueueRepo.LogActivity(0, "moved", msg)
+	}
 }
 
 func moveDoneMessage(st moveStatus) string {
@@ -735,6 +776,15 @@ func (s *Server) moveOneTitle(ctx context.Context, t moveTitle, newRoot, stored 
 		})
 	}
 	update(func(st *moveStatus) { st.Moved++ })
+	var movieID int64
+	if t.Kind == library.KindMovie {
+		movieID = t.ID
+	}
+	if t.Files == 1 {
+		_ = s.QueueRepo.LogActivity(movieID, "moved", fmt.Sprintf("Moved %s from %s to %s (1 file, %s).", t.Title, t.oldRoot, newRoot, humanBytes(t.Bytes)))
+	} else {
+		_ = s.QueueRepo.LogActivity(movieID, "moved", fmt.Sprintf("Moved %s from %s to %s (%d files, %s).", t.Title, t.oldRoot, newRoot, t.Files, humanBytes(t.Bytes)))
+	}
 
 	// The media servers look at the new place.
 	if t.Kind == library.KindMovie {

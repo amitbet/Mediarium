@@ -164,7 +164,7 @@ export function ArtistCards({ items, onAdd }: { items: MusicDiscoverArtist[]; on
         return (
           <article key={a.mbid} className="artist-card">
             <div className="artist-cover">
-              <Cover src={a.coverUrl} />
+              <Cover src={a.coverUrl} thumb />
             </div>
             <div className="artist-text">
               <strong title={a.name}>{a.name}</strong>

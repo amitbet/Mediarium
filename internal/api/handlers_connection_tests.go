@@ -22,6 +22,10 @@ import (
 type connTestResult struct {
 	OK      bool   `json:"ok"`
 	Message string `json:"message"`
+	// Detail is the technical text behind Message when Message is an
+	// explanation written for the person (FlareSolverr not answering, a site
+	// that says its page is gone).
+	Detail string `json:"detail,omitempty"`
 }
 
 const connTestTimeout = 15 * time.Second
@@ -44,10 +48,17 @@ func testNNTP(host string, port int, useSSL bool, username, password string) con
 	if host == "" || port == 0 {
 		return connTestResult{Message: "Enter the server host and port first."}
 	}
+	login := download.ClientConfig{Host: host, Port: port, UseSSL: useSSL, Username: username}
+	if working, _ := download.LoginUse(login); working {
+		// Downloads hold signed-in connections right now, which proves the
+		// server and the login work. A test would only add one more connection
+		// to a login that may be full.
+		return connTestResult{OK: true, Message: "Connected and logged in. Downloads are using this login right now."}
+	}
 	conn, err := download.DialNNTP(host, port, useSSL, 10*time.Second)
 	if err != nil {
 		if download.IsTooManyConnections(err) {
-			return connTestResult{Message: download.TooManyConnectionsMessage}
+			return tooManyTestResult(login)
 		}
 		if msg, ok := certificateProblem(err); ok {
 			return connTestResult{Message: msg}
@@ -57,7 +68,7 @@ func testNNTP(host string, port int, useSSL bool, username, password string) con
 	defer conn.Quit()
 	if err := conn.Authenticate(username, password); err != nil {
 		if download.IsTooManyConnections(err) {
-			return connTestResult{Message: download.TooManyConnectionsMessage}
+			return tooManyTestResult(login)
 		}
 		if msg, ok := download.FriendlyError(err); ok {
 			return connTestResult{Message: "Connected, but the login failed. " + msg}
@@ -65,6 +76,17 @@ func testNNTP(host string, port int, useSSL bool, username, password string) con
 		return connTestResult{Message: "Connected, but signing in failed: " + err.Error()}
 	}
 	return connTestResult{OK: true, Message: "Connected and logged in."}
+}
+
+// tooManyTestResult is the answer to a test the provider refused for having too
+// many connections open. When Mediarium's own downloads have the login busy (or
+// just closed connections the provider has not counted out yet), that says
+// nothing about the server or the login, so it is not a failure.
+func tooManyTestResult(login download.ClientConfig) connTestResult {
+	if _, busy := download.LoginUse(login); busy {
+		return connTestResult{OK: true, Message: "The server is up. Downloads are using every connection this login allows right now, so there was no room for the test."}
+	}
+	return connTestResult{Message: download.TooManyConnectionsMessage}
 }
 
 // certificateProblem puts a refused SSL certificate in plain words. Mediarium
@@ -161,6 +183,44 @@ func (s *Server) handleTestIndexer(w http.ResponseWriter, r *http.Request) {
 		s.IndexerRepo.Tracker().Resume(inst.ID) // it answered: searches may use it again
 	}
 	writeJSON(w, http.StatusOK, res)
+}
+
+// handleIndexerCategories lists the categories a saved Newznab or Torznab
+// indexer says it has (its capabilities), as suggestions for the extra
+// categories. It is a help only: when the indexer can't be asked, or it is a
+// site from the definition list, the answer is an empty list.
+func (s *Server) handleIndexerCategories(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "That isn't a valid indexer ID.")
+		return
+	}
+	inst, err := s.IndexerRepo.Get(id)
+	if errors.Is(err, indexers.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "That indexer no longer exists.")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	out := struct {
+		Categories []indexers.CapCategory `json:"categories"`
+	}{Categories: []indexers.CapCategory{}}
+	if inst.IsCardigann() || inst.SecretError != "" {
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+	inst.Tracker.CountRequest(inst.ID, 1)
+	cctx, cancel := context.WithTimeout(r.Context(), max(connTestTimeout, indexers.FeedWait(inst.BaseURL)))
+	defer cancel()
+	cats, err := indexers.NewNewznabClient(inst.Name, inst.BaseURL, inst.APIKey).Categories(cctx)
+	if err != nil {
+		log.Printf("api: could not read the categories of indexer %q: %v", inst.Name, err)
+	} else {
+		out.Categories = cats
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 type enabledRequest struct {

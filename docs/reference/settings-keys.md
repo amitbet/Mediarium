@@ -25,6 +25,7 @@ The keys the app stores in its settings table. You normally change these from th
 | `backup.cloud` | encrypted; copies of the nightly backup in S3-style storage or a WebDAV folder (JSON: enabled, kind, storage details, passphrase, keep). Off unless enabled is true. Only a signed-in browser session can read or set it, not an API key |
 | `backup.cloud_status` | what the last cloud copy did (JSON; set by the app, not user-editable) |
 | `backup.keep` | how many saved backups are kept in /config/backups; unset = 7 |
+| `books.google_books_api_key` | encrypted; an optional personal Google Books API key. Book search asks Google Books without one. A key is for people who reach Google's limit. |
 | `books.hardcover_token` | encrypted; a personal Hardcover API token for better book series and release dates. Unset = Open Library only |
 | `cleanup.auto` | "0" turns the daily automatic clean-up off; anything else (including unset) leaves it on |
 | `cleanup.history_retention_days` | days finished downloads and activity are kept; unset = 90, "0" = forever |
@@ -73,7 +74,7 @@ The keys the app stores in its settings table. You normally change these from th
 | `formats.trash_last_check` | what the last check of the TRaSH Guides found, as JSON (shown under the switch on the Custom formats card) |
 | `formats.trash_last_update` | when the TRaSH Guides were last read for the daily update (RFC 3339) |
 | `import.check_duration` | "0" turns off the check that a video is about as long as its episode or movie before it is imported (Settings > Library > File names and importing); anything else, including unset, leaves it on |
-| `info.language` | the language titles, plots, genres and posters are read in, as a TMDB tag like "de-DE" (en-US when unset); file and folder names always use the English title |
+| `info.language` | the language titles, plots, genres and posters are read in, as a TMDB tag like "de-DE" (en-US when unset); with naming.folders_in_info_language on, new movie and show folders and file names use that language's title too |
 | `info.release_country` | the country release dates are read for, as a code like "IN"; unset = the country of the info language |
 | `legal.acknowledged_at` |  |
 | `library.default_profile_id` | id of the stored quality profile used by items with no profile of their own |
@@ -88,12 +89,13 @@ The keys the app stores in its settings table. You normally change these from th
 | `library.illegal_char_replacement` | used when mode=replace, e.g. "-" |
 | `library.import_added_backfill` | "1" once it has run (set by the app, not user-editable) |
 | `library.import_conflict_policy` | "skip" \| "overwrite" \| "overwrite_if_better" \| "ask" |
-| `library.keep_original_names` | "1" keeps the file name an imported video came with (folders are still named by the preset; a random, obfuscated name falls back to the preset); unset or "0" renames as the preset says |
+| `library.keep_original_names` | "1" keeps the file name an imported video came with (folders are still named by the preset; a random, obfuscated name is replaced by the release's name for a movie or single episode, else by the preset); unset or "0" renames as the preset says |
 | `library.metadata_files` | JSON: movies and tv, each {nfo, artwork}, and replace (true replaces files Mediarium wrote earlier); unset = nothing is written |
 | `library.movie_copies_path` | where second copies of movies go (a 4K copy next to the 1080p one); unset = second copies of movies are off |
 | `library.movie_folder_format` | token string; unset = "{Movie Title} ({Year})" |
 | `library.movie_name_format` | token string, used when preset=custom |
 | `library.movies_extra_paths` | more movie folders next to the main one (a JSON list of paths); each movie says which one its files go to |
+| `library.movies_new_folder` | where a movie added without a folder choice is kept: unset = the main folder, a path = that one of the extra folders, "most-room" = whichever movie folder has the most free space at the time |
 | `library.movies_path` |  |
 | `library.naming_preset` | plex\|jellyfin\|kodi\|minimal\|custom |
 | `library.presets_version` | revision of the built-in quality presets last applied; unset means never (set at start, not user-editable) |
@@ -104,9 +106,11 @@ The keys the app stores in its settings table. You normally change these from th
 | `library.trash_days` | days removed titles' files stay in the recycle bin (.mediarium-trash in the library folder); unset = 7, "0" = delete straight away |
 | `library.tv_copies_path` | the same for shows |
 | `library.tv_extra_paths` | the same for shows |
+| `library.tv_new_folder` | the same for shows |
 | `library.tv_path` | falls back to the TV_DIR env default when unset |
 | `library.unmonitor_downloaded` | "1" stops monitoring a movie once it is downloaded; unset or "0" keeps it monitored |
 | `library.unmonitor_finished_shows` | "1" stops monitoring a show once it has ended and every monitored episode is in; unset or "0" keeps it monitored |
+| `log.debug` | "1" writes the extra detail (debug lines) to the log, taking effect at once and after a restart; unset or "0" keeps the log to normal detail |
 | `mcp.enabled` | "1" lets AI assistants connect to the MCP address (POST /mcp) with an administrator's API key; unset or "0" keeps it off. Only a signed-in browser session can switch it on, not an API key |
 | `mediaservers.client_id` | set by the app, not user-editable |
 | `metadata.simkl_client_id` | encrypted; the Client ID of a Simkl app (own, or the one a release ships with) |
@@ -129,6 +133,7 @@ The keys the app stores in its settings table. You normally change these from th
 | `music.lyrics_online` | "0" stops the player asking LRCLIB for lyrics a file doesn't have; anything else (including unset) leaves it on |
 | `music.path` | music library folder; falls back to the MUSIC_DIR env default (/music) when unset |
 | `music.show_types` | release types the artist pages list and following adds, a comma separated list of album, ep, single; unset = all three |
+| `naming.folders_in_info_language` | "1" names new movie and show folders and files with the title in the info language; unset or "0" keeps the English title |
 | `network.proxy` | e.g. "socks5://user:pass@10.0.0.2:1080" |
 | `network.proxy_for` | e.g. "torrents,indexers" |
 | `notify.digest_day` | the day of the weekly summary, "0" (Sunday) to "6"; unset = no summary |
@@ -207,6 +212,7 @@ The keys the app stores in its settings table. You normally change these from th
 | `usenetclient.url` | the client's web address, e.g. http://192.168.1.10:8080 |
 | `usenetclient.use` | "1" sends Usenet releases to it; unset or "0" keeps the built-in downloader |
 | `usenetclient.username` | NZBGet's login (ControlUsername) |
+| `vpn.discover_through_tunnel` | "1" sends UDP tracker announces and DHT through the VPN and looks their names up through the VPN's DNS. A failed lookup, or a tunnel socket that will not open, sends nothing from the home address. Unset or "0" skips them |
 | `vpn.notice_acknowledged` |  |
 | `vpn.require_for_torrents` |  |
 | `vpn.route_indexers` | "1" sends searches, RSS, release downloads, IRC announces and debrid through the VPN, and they wait while it isn't up. Home-network addresses still connect directly |

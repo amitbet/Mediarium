@@ -1,7 +1,8 @@
 import { sortProfiles } from './qualityBlurb'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { defaultProfileFor } from '../profileDefaults'
 import { api, can, isAdmin, type QualityProfile, type SeasonPackChoice, type SourcePref } from '../api'
+import MoveToFolderDialog from './MoveToFolderDialog'
 import { useAuth } from '../AuthContext'
 import { t } from '../i18n'
 import InfoTip from './InfoTip'
@@ -12,7 +13,7 @@ const SOURCE_NAME: Record<string, string> = { both: t('Usenet and torrents'), us
 
 // Per-item download choices for a movie or a show: which quality profile it
 // follows and which downloaders it may use. "Default" follows Settings.
-export default function ProfilePicker(props: { kind: 'movie' | 'series'; itemId: number; children?: React.ReactNode }) {
+export default function ProfilePicker(props: { kind: 'movie' | 'series'; itemId: number; onMoved?: () => void; children?: React.ReactNode }) {
   const { user } = useAuth()
   // The profile, source and upgrade choices are for administrators; the folder
   // and the tags (the children) follow the manage right.
@@ -21,7 +22,7 @@ export default function ProfilePicker(props: { kind: 'movie' | 'series'; itemId:
   return children ? <div className="picker-row">{children}</div> : null
 }
 
-function Picker({ kind, itemId, children }: { kind: 'movie' | 'series'; itemId: number; children?: React.ReactNode }) {
+function Picker({ kind, itemId, onMoved, children }: { kind: 'movie' | 'series'; itemId: number; onMoved?: () => void; children?: React.ReactNode }) {
   const [profiles, setProfiles] = useState<QualityProfile[]>([])
   const [defaultId, setDefaultId] = useState(0)
   const [defaultSources, setDefaultSources] = useState<SourcePref>('both')
@@ -34,7 +35,10 @@ function Picker({ kind, itemId, children }: { kind: 'movie' | 'series'; itemId: 
   // More than one library folder: which one the next files go to ('' = the main one).
   const [folders, setFolders] = useState<string[]>([])
   const [root, setRoot] = useState('')
+  // The folder just picked for a title that has files: asks whether they move too.
+  const [moving, setMoving] = useState<string | null>(null)
   const toast = useToast()
+  const titles = useMemo(() => [{ kind: kind === 'movie' ? ('movie' as const) : ('tv' as const), id: itemId }], [kind, itemId])
 
   useEffect(() => {
     api.listProfiles().then((r) => {
@@ -59,7 +63,23 @@ function Picker({ kind, itemId, children }: { kind: 'movie' | 'series'; itemId: 
       .catch(() => undefined)
   }, [kind, itemId])
 
+  // A title with files in its old folder: show what moving them would do and
+  // let the person choose. A title with nothing on disk just changes folder.
   async function chooseFolder(next: string) {
+    try {
+      const p = await api.previewMoveFiles(titles, next || folders[0])
+      const first = p.titles[0]
+      if (first && (first.files > 0 || first.problem)) {
+        setMoving(next)
+        return
+      }
+    } catch {
+      // The check is only a convenience: the folder is still saved as before.
+    }
+    await saveFolder(next)
+  }
+
+  async function saveFolder(next: string) {
     const previous = root
     setRoot(next)
     try {
@@ -185,7 +205,7 @@ function Picker({ kind, itemId, children }: { kind: 'movie' | 'series'; itemId: 
         <label>
           <span className="has-tip">
             {t('Keep it in')}
-            <InfoTip text={t('The library folder new files go to. Files that are already there stay where they are.')} />
+            <InfoTip text={t('The library folder this title is kept in. When you change it, you choose whether its files move too.')} />
           </span>
           <select value={root} onChange={(e) => void chooseFolder(e.target.value)}>
             <option value="">{t('{folder} (main)', { folder: folders[0] })}</option>
@@ -198,6 +218,21 @@ function Picker({ kind, itemId, children }: { kind: 'movie' | 'series'; itemId: 
         </label>
       )}
       {children}
+      {moving !== null && (
+        <MoveToFolderDialog
+          kind={kind === 'movie' ? 'movie' : 'tv'}
+          titles={titles}
+          folders={folders}
+          initial={moving || folders[0]}
+          single
+          onClose={() => setMoving(null)}
+          onChanged={() => {
+            const load = kind === 'movie' ? api.getMovie(itemId) : api.getSeries(itemId)
+            load.then((item) => setRoot(item.rootPath ?? '')).catch(() => undefined)
+            onMoved?.()
+          }}
+        />
+      )}
     </div>
   )
 }

@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -84,10 +85,24 @@ func (s *Server) cleanupWorkDir(dir string, protocol indexers.Protocol) {
 // person chose to keep the file already in the library): its folder goes, but
 // the torrent stays in the external client, which may still be wanted there.
 func (s *Server) discardWorkDir(dir string, protocol indexers.Protocol) {
+	s.discardWorkDirReport(dir, protocol)
+}
+
+// discardWorkDirReport is discardWorkDir that says what became of the data: a
+// torrent still seeding keeps its folder until seeding is done (KeptSeeding),
+// the links to an external client's files are removed while the client keeps
+// the files (KeptClient), and anything else is deleted (KeptDeleted).
+func (s *Server) discardWorkDirReport(dir string, protocol indexers.Protocol) string {
 	if protocol == indexers.ProtocolTorrent && s.torrents.activeDir(dir) {
-		return
+		return queue.KeptSeeding
 	}
+	_, err := os.Lstat(filepath.Join(dir, clientContentFile))
+	viaClient := err == nil
 	s.removeWorkDir(dir)
+	if viaClient {
+		return queue.KeptClient
+	}
+	return queue.KeptDeleted
 }
 
 // removeWorkDir deletes one queue-N working folder directly inside the
@@ -208,6 +223,7 @@ type cleanupResult struct {
 	RemovedBytes   int64
 	PrunedQueue    int64
 	PrunedActivity int64
+	ClientJobs     int // old jobs removed from SABnzbd or NZBGet
 	Errors         []string
 	RanAt          time.Time
 }
@@ -230,6 +246,9 @@ func (s *Server) runCleanup(now time.Time) cleanupResult {
 	res.Removed = removed
 	for _, it := range removed {
 		res.RemovedBytes += it.SizeBytes
+	}
+	if res.ClientJobs, err = s.cleanUsenetLeftovers(now); err != nil {
+		res.Errors = append(res.Errors, plainerror.Message(err))
 	}
 
 	if days := s.historyRetentionDays(); days > 0 {
@@ -323,6 +342,7 @@ type cleanupRunPayload struct {
 	Removed        []cleanupItemPayload `json:"removed"`
 	PrunedQueue    int64                `json:"prunedQueueItems"` // finished downloads dropped from the history
 	PrunedActivity int64                `json:"prunedActivity"`   // activity entries dropped
+	ClientJobs     int                  `json:"clientJobs"`       // old jobs removed from SABnzbd or NZBGet
 	LastRunAt      string               `json:"lastRunAt"`
 	Errors         []string             `json:"errors,omitempty"`
 }
@@ -333,7 +353,7 @@ func (s *Server) handleCleanupRun(w http.ResponseWriter, r *http.Request) {
 	res := s.runCleanup(time.Now())
 	writeJSON(w, http.StatusOK, cleanupRunPayload{
 		RemovedBytes: res.RemovedBytes, Removed: toCleanupItems(res.Removed),
-		PrunedQueue: res.PrunedQueue, PrunedActivity: res.PrunedActivity,
+		PrunedQueue: res.PrunedQueue, PrunedActivity: res.PrunedActivity, ClientJobs: res.ClientJobs,
 		LastRunAt: res.RanAt.UTC().Format(time.RFC3339), Errors: res.Errors,
 	})
 }

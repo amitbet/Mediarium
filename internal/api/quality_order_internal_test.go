@@ -112,7 +112,7 @@ func TestRejectionForUpgradeInsideAGroup(t *testing.T) {
 	grouped := orderedProfile(t, quality.TierBluray1080p,
 		quality.QualityItem{Tiers: []quality.Tier{quality.TierBluray1080p}},
 		quality.QualityItem{Name: "Web or TV", Tiers: []quality.Tier{quality.TierHDTV1080p, quality.TierWebDL1080p}})
-	reasons := rejectionReasonsFor(relWeb, grouped, true, string(quality.TierHDTV1080p), "")
+	reasons := rejectionReasonsFor(relWeb, grouped, true, string(quality.TierHDTV1080p), "", keepsNothing)
 	found := false
 	for _, r := range reasons {
 		found = found || (r.Kind == "upgrade" && strings.Contains(r.Text, "not an upgrade"))

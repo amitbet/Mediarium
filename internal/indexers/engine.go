@@ -70,6 +70,9 @@ type Instance struct {
 	// MinSeeders is the fewest seeders a torrent release from this indexer needs
 	// to be picked by itself; 0 = off. Usenet indexers ignore it.
 	MinSeeders int
+	// ExtraCategories are category numbers the indexer is searched in besides the
+	// standard ones, per kind of media (see ExtraCategories).
+	ExtraCategories ExtraCategories
 	// SecretError is set when the saved key or password of this indexer could
 	// not be read (usually a secret.key that does not belong to the database).
 	// The indexer is still listed, so it can be fixed, but it is never searched.
@@ -241,9 +244,12 @@ func SearchAll(ctx context.Context, instances []Instance, query string, categori
 			defer cancel()
 
 			var (
-				results []Result
-				err     error
+				results  []Result
+				err      error
+				laterErr error // a page after the first failed (Newznab)
 			)
+			// The indexer's own extra categories go along with the standard ones.
+			categories := inst.ExtraCategories.WithExtraCategories(categories)
 			if inst.IsCardigann() {
 				if inst.Cardigann == nil {
 					err = fmt.Errorf("%s: sites from the site list are not available", inst.Name)
@@ -253,6 +259,10 @@ func SearchAll(ctx context.Context, instances []Instance, query string, categori
 			} else {
 				client := NewNewznabClient(inst.Name, inst.BaseURL, inst.APIKey)
 				results, err = client.Search(reqCtx, query, categories)
+				laterErr = client.LaterPageErr
+				if client.ExtraRequests > 0 {
+					inst.Tracker.CountRequest(inst.ID, client.ExtraRequests)
+				}
 			}
 			for j := range results {
 				results[j].Protocol = inst.Protocol
@@ -269,6 +279,9 @@ func SearchAll(ctx context.Context, instances []Instance, query string, categori
 			// nothing about the indexer.
 			if ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, netproxy.ErrWaitingForVPN) {
 				inst.Tracker.RecordSearch(inst.ID, results, err)
+				if lerr := laterErr; err == nil && lerr != nil && !errors.Is(lerr, context.Canceled) && !errors.Is(lerr, context.DeadlineExceeded) {
+					inst.Tracker.RecordLaterPage(inst.ID, lerr)
+				}
 			}
 		}(i, inst, limitNote)
 	}
@@ -304,6 +317,12 @@ func ProblemMessage(o Outcome) string {
 	}
 	if msg := netproxy.WaitMessage(o.Err); msg != "" {
 		return msg
+	}
+	if addr, ok := FlareSolverrDown(o.Err); ok {
+		return FlareSolverrDownMessage(addr)
+	}
+	if status, ok := GoneStatus(o.Err); ok {
+		return GoneMessage(status)
 	}
 	if IsDailyLimit(o.Err) {
 		return fmt.Sprintf("The daily limit of requests for %s is used up. It is used again after midnight (UTC).", o.IndexerName)

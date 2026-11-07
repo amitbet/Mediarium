@@ -5,12 +5,19 @@ interface ToastItem {
   id: number
   kind: 'success' | 'error' | 'info'
   message: string
+  action?: ToastAction
+}
+
+// A button inside a toast, for the one thing that fixes what it says.
+export interface ToastAction {
+  label: string
+  onClick: () => void
 }
 
 interface ToastApi {
-  success: (message: string) => void
-  error: (message: string) => void
-  info: (message: string) => void
+  success: (message: string, action?: ToastAction) => void
+  error: (message: string, action?: ToastAction) => void
+  info: (message: string, action?: ToastAction) => void
 }
 
 const ToastContext = createContext<ToastApi | null>(null)
@@ -26,10 +33,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     setItems((cur) => cur.filter((t) => t.id !== id))
   }, [])
 
-  const push = useCallback((kind: ToastItem['kind'], message: string) => {
+  const push = useCallback((kind: ToastItem['kind'], message: string, action?: ToastAction) => {
     const id = nextId.current++
-    setItems((cur) => [...cur.slice(-3), { id, kind, message }])
-    hold.current.set(id, { kind, timer: setTimeout(() => drop(id), kind === 'error' ? 6000 : 2600) })
+    setItems((cur) => [...cur.slice(-3), { id, kind, message, action }])
+    // A toast with a button stays long enough to be read and pressed.
+    hold.current.set(id, { kind, timer: setTimeout(() => drop(id), action ? 12000 : kind === 'error' ? 6000 : 2600) })
   }, [drop])
 
   // Pointing at a toast keeps it on screen; it goes shortly after the
@@ -51,9 +59,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
   const api = useMemo<ToastApi>(
     () => ({
-      success: (m) => push('success', m),
-      error: (m) => push('error', m),
-      info: (m) => push('info', m),
+      success: (m, a) => push('success', m, a),
+      error: (m, a) => push('error', m, a),
+      info: (m, a) => push('info', m, a),
     }),
     [push],
   )
@@ -68,6 +76,19 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               {t.kind === 'success' ? '✓' : t.kind === 'error' ? '!' : 'i'}
             </span>
             {t.message}
+            {t.action && (
+              <button
+                type="button"
+                className="btn-sm toast-action"
+                onClick={() => {
+                  const run = t.action?.onClick
+                  drop(t.id)
+                  run?.()
+                }}
+              >
+                {t.action.label}
+              </button>
+            )}
           </div>
         ))}
         <BusyNotice />

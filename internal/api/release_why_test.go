@@ -51,7 +51,7 @@ func TestAddReasonsKeepsRejections(t *testing.T) {
 
 func TestRejectionReasonKinds(t *testing.T) {
 	_, profile := profileChain(true, quality.PresetCinema)
-	got := rejectionReasonsFor("Film.2026.1080p.TeleSync.x264-GRP", profile, false, "", "")
+	got := rejectionReasonsFor("Film.2026.1080p.TeleSync.x264-GRP", profile, false, "", "", keepsNothing)
 	if len(got) == 0 || got[0].Kind != "quality" {
 		t.Fatalf("a quality the profile does not allow should come first as quality: %+v", got)
 	}

@@ -110,6 +110,18 @@ func (t Torrent) Paused() bool {
 	return t.State == "pausedDL" || t.State == "stoppedDL"
 }
 
+// Waiting reports whether the torrent is in line or being checked in the
+// client, not downloading yet: the client's own limit on active downloads has
+// not let it start, or it is checking the files on disk. That is the client's
+// delay, not a torrent that nobody shares.
+func (t Torrent) Waiting() bool {
+	switch t.State {
+	case "queuedDL", "checkingDL", "checkingUP", "checkingResumeData", "allocating", "moving":
+		return true
+	}
+	return false
+}
+
 // Failed reports whether the client gave up on the torrent.
 func (t Torrent) Failed() bool {
 	return t.State == "error" || t.State == "missingFiles"
@@ -202,7 +214,8 @@ func (c *Client) request(ctx context.Context, method, p string, body io.Reader) 
 }
 
 // call sends a request, signing in and trying once more when the client
-// says the session isn't valid (403).
+// says the session isn't valid (403, or 401 from the programs that copy the
+// API, such as Decypharr).
 func (c *Client) call(ctx context.Context, method, p string, body []byte, contentType string) ([]byte, error) {
 	for attempt := 0; ; attempt++ {
 		req, err := c.request(ctx, method, p, bytes.NewReader(body))
@@ -218,7 +231,7 @@ func (c *Client) call(ctx context.Context, method, p string, body []byte, conten
 		}
 		data, readErr := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
 		resp.Body.Close()
-		if resp.StatusCode == http.StatusForbidden && attempt == 0 {
+		if (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnauthorized) && attempt == 0 {
 			if err := c.Login(ctx); err != nil {
 				return nil, err
 			}

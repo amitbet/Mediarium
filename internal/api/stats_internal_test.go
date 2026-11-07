@@ -87,6 +87,18 @@ func TestSumStorage(t *testing.T) {
 			want: &statsStorage{TotalBytes: 1000, FreeBytes: 100, UsedBytes: 900},
 		},
 		{
+			// Docker Desktop on Windows and macOS: every folder shared from the
+			// host reports the same filesystem id, whichever drive it is on.
+			name:  "Docker Desktop mounts with one filesystem id but different drives add up",
+			paths: []string{"/data", "/movies2", "/config"},
+			vols: map[string]fakeVolume{
+				"/data":    {ids: []string{"dev:59", "fsid:5f5e100-0"}, usage: fsinfo.Usage{TotalBytes: 12000, FreeBytes: 1100}},
+				"/movies2": {ids: []string{"dev:69", "fsid:5f5e100-0"}, usage: fsinfo.Usage{TotalBytes: 14000, FreeBytes: 6400}},
+				"/config":  {ids: []string{"dev:44", "fsid:5f5e100-0"}, usage: fsinfo.Usage{TotalBytes: 250, FreeBytes: 67}},
+			},
+			want: &statsStorage{TotalBytes: 26250, FreeBytes: 7567, UsedBytes: 18683},
+		},
+		{
 			name:  "unreadable and empty paths are skipped",
 			paths: []string{"", "/gone", "/data"},
 			vols: map[string]fakeVolume{

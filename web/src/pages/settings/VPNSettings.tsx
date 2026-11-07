@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import Switch from '../../components/Switch'
 import ProxyCard from '../../components/ProxyCard'
 import { useAutosaveSetting } from '../../useAutosave'
-import { api, type VPNConfig, type VPNStatus } from '../../api'
+import { api, type VPNConfig, type VPNStatus, type VPNTestResult } from '../../api'
 import { useLive } from '../../useLive'
 import { useConfirm } from '../../components/ConfirmProvider'
 import { firstError, hostPort, ipWithPrefix, maxLength, required, wireguardKey } from '../../validate'
@@ -12,6 +12,30 @@ import { OTHER_PROVIDER, confHints, providerName, vpnProviders } from '../../vpn
 import { t, st } from '../../i18n'
 import TipLabel from '../../components/TipLabel'
 import { flareSolverrSetUp } from './vpnIndexers'
+import { handshakeLine, testSummary, trafficLine } from '../../vpnHealth'
+
+// What is known about the connection that is switched on: when its server last
+// answered, how much it carried, and the outcome of the last Test.
+function ConnectionHealth({ status, result, error }: { status: VPNStatus | null; result: VPNTestResult | null; error: string }) {
+  const handshake = handshakeLine(status)
+  const traffic = trafficLine(status)
+  return (
+    <>
+      {handshake && (
+        <div className={handshake.warn ? 'error-text' : undefined} style={{ fontSize: '0.85rem', color: handshake.warn ? undefined : 'var(--text-dim)' }}>
+          {handshake.text}
+        </div>
+      )}
+      {traffic && <div style={{ fontSize: '0.85rem', color: 'var(--text-dim)' }}>{traffic}</div>}
+      {result && (
+        <div className={`notice ${result.ok ? 'notice-info' : 'notice-danger'}`} role="status" style={{ margin: '6px 0 0' }}>
+          {testSummary(result)}
+        </div>
+      )}
+      {error && <div className="error-text" style={{ fontSize: '0.85rem' }}>{error}</div>}
+    </>
+  )
+}
 
 function VPNSection() {
   const [list, setList] = useState<VPNConfig[]>([])
@@ -46,6 +70,12 @@ function VPNSection() {
     (saved) => (saved ? t('Saved: indexer traffic now goes through the VPN.') : t('Saved: indexer traffic now connects directly.')),
     false,
   )
+  const discover = useAutosaveSetting<boolean>(
+    (s) => !!s.discoverThroughTunnel,
+    (v) => ({ discoverThroughTunnel: v }),
+    (saved) => (saved ? t('Saved: UDP trackers and DHT now go through the VPN.') : t('Saved: UDP trackers and DHT stay off while the VPN is on.')),
+    false,
+  )
   const acknowledged = useAutosaveSetting<boolean>(
     (s) => !!s.vpnNoticeAcknowledged,
     (v) => ({ vpnNoticeAcknowledged: v }),
@@ -58,6 +88,9 @@ function VPNSection() {
   }, [])
   const [egressIp, setEgressIp] = useState('')
   const [egressIpStatus, setEgressIpStatus] = useState('')
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<VPNTestResult | null>(null)
+  const [testError, setTestError] = useState('')
 
   function reload() {
     api.listVPNConfigs().then(setList).catch((e) => setError(e instanceof Error ? e.message : String(e)))
@@ -222,6 +255,22 @@ function VPNSection() {
     }
   }
 
+  // A small real request through the tunnel: shows whether traffic really flows,
+  // not just whether the connection looks up.
+  async function runTest() {
+    setTesting(true)
+    setTestResult(null)
+    setTestError('')
+    try {
+      setTestResult(await api.vpnTest())
+    } catch (e) {
+      setTestError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setTesting(false)
+      reload()
+    }
+  }
+
   async function checkEgressIp() {
     setEgressIpStatus(t('Checking…'))
     setEgressIp('')
@@ -286,7 +335,17 @@ function VPNSection() {
           label={t('Kill switch: only run torrents while a VPN is connected')}
           tip={t('When no VPN is connected, torrents wait instead of connecting directly, so the swarm never sees your real address. A connected VPN is always used.')}
           learnMore="downloads#the-kill-switch"
-          description={t('Torrents wait instead of connecting without the tunnel. A proxy for torrents (below) counts too. DHT and uTP stay off through the tunnel.')}
+          description={t('Torrents wait instead of connecting without the tunnel. A proxy for torrents (below) counts too. uTP stays off through the tunnel.')}
+          showState
+        />
+        <Switch
+          checked={discover.value}
+          onChange={discover.change}
+          disabled={!discover.loaded || discover.saving}
+          label={t('UDP trackers and DHT through the VPN')}
+          tip={t('Peers and trackers see the VPN address. Tracker and DHT names are looked up through the tunnel, and if that fails nothing is sent from your home address.')}
+          learnMore="downloads#udp-trackers-and-dht"
+          description={t("Announces to UDP trackers and DHT queries go out through the tunnel, so peers and trackers see the VPN address. Tracker and DHT names are looked up through the VPN's DNS, not from your home connection, and a failed lookup does not go out. While this is off, those are skipped and only HTTP trackers are used. A download that has already started keeps the previous choice until you retry it.")}
           showState
         />
         <Switch
@@ -333,11 +392,19 @@ function VPNSection() {
                     {providerName(c.provider)} · {c.endpoint}
                   </div>
                   {c.secretError && <div className="error-text" style={{ fontSize: '0.85rem' }}>{st(c.secretError)}</div>}
+                  {c.active && <ConnectionHealth status={status} result={testResult} error={testError} />}
                 </div>
                 <div style={{ whiteSpace: 'nowrap' }}>
                   <button onClick={() => activate(c.id)} disabled={busy !== null || !!c.secretError || (c.active && !!status?.connected)}>
                     {busy === c.id ? t('Connecting…') : c.active && !status?.connected ? t('Reconnect') : t('Activate')}
                   </button>{' '}
+                  {c.active && (
+                    <>
+                      <button onClick={() => void runTest()} disabled={testing || busy !== null}>
+                        {testing ? t('Testing…') : t('Test')}
+                      </button>{' '}
+                    </>
+                  )}
                   <button onClick={() => void remove(c)}>{t('Remove')}</button>
                 </div>
               </li>

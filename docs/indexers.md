@@ -16,6 +16,12 @@ Indexers are the sites Mediarium asks when it looks for releases. You'll find th
 
 **Search > Search your indexers for a release** asks every indexer for a release name, the way you would on the indexer's own site (for example "Heat 1995 1080p"). The results list the quality, indexer, size and seeders; blocklisted releases are hidden unless you untick **Hide blocklisted releases**. **Download** works out the movie or show from the release name, adds it to your library if it isn't there yet, and downloads it as usual. Scripts: `GET /api/search?q=...` and `POST /api/search/grab`.
 
+## How many releases a search reads
+
+A Newznab or Torznab indexer answers a search a page at a time, and many of them give 50 or 60 releases on a page unless asked for more. Mediarium asks for 100 and, when the indexer says it has more for that search, reads on for up to two more pages (300 releases at most) in a search Mediarium starts by itself, and up to nine more (1,000 at most) when you open Choose a release. The pages after the first count against the indexer's daily limit like any other request. A title with a great many releases, such as a popular film, is therefore no longer cut short in Choose a release or in automatic searches. Sites from the definition list return what their own page shows.
+
+**Searching with your own words.** Choose a release (for a movie, a season or an episode) has a **Search for other words** box above the list. Type what you want to look for, for example another title a release was posted under, and press **Search**. Mediarium sends exactly those words to your indexers and shows every answer, without leaving out releases that don't match the title. The download still goes to the movie, season or episode you opened, so it is imported as that title. Search with the box empty to get the usual list back.
+
 ## Priority, health and Test all
 
 The list on this page is sorted by that number, lowest first, and by name when two are equal; with more than eight indexers a box above the list filters it by name. Each indexer card has a **Priority**, a number from 1 to 50 like in Prowlarr. A lower number is tried first and wins ties: 1 is the highest priority, 50 the lowest, and 25 is the default. Quality always comes first. Between two releases that are equally good, the one from the lower-numbered indexer is picked, then a Usenet release over a torrent. Indexers that used to be Preferred, Normal or Last resort became 10, 25 and 40. Scripts: `PUT /api/indexers/{id}/priority` with `{"priority": 10}`. The old words (`preferred`, `normal`, `last resort`) are still accepted and mean 10, 25 and 40; a plain 1, 2 or 3 now means exactly that number. So an API client or settings file that still sends the old values 1, 2 and 3 (for preferred, normal and last resort) now sets ranks 1 to 3 of 50, all near the top, and a 3 that used to mean last resort no longer does. Change those to 10, 25 and 40, or to the words.
@@ -24,7 +30,14 @@ Under the address, each card says how its last test went ("Last test passed 2 ho
 
 ### Why some indexers are missing from a release list
 
-A release list (**Choose a release**) starts with a line like *Searched 8 indexers: 2 had releases, 5 had nothing for this title, 1 did not answer.* Press it to see every indexer in a table: its type, what it found (*12 releases*, *Nothing found*, *Did not answer: daily limit used up*, *Skipped: does not list this kind of release*) and how long it took. Seeing only a few indexers in the **Any indexer** list is normal when the others simply have nothing for that title. A movie site has no shows, and a Usenet indexer may not carry a new or small release. An indexer that did not answer is marked with a warning sign, and the table says why.
+A release list (**Choose a release**) starts with a line like *Searched 8 indexers: 2 had releases, 5 had nothing for this title, 1 did not answer.* Press it to see every indexer in a table: its type, what it found (*12 releases*, *Nothing found*, *Did not answer: daily limit used up*, *Skipped: does not list this kind of release*) and how long it took. Seeing only a few indexers in the **Any indexer** list is normal when the others simply have nothing for that title. A movie site has no shows, and a Usenet indexer may not carry a new or small release. An indexer that did not answer is marked with a warning sign, and the table says why. Two reasons come with a full sentence under the result, and the technical text on a line below it:
+
+- *FlareSolverr isn't running or Mediarium can't reach it at http://127.0.0.1:8191. Start FlareSolverr, or set its address under Settings > Indexers & Search.* It shows the address Mediarium used (without any login in it). The site needs FlareSolverr to pass a Cloudflare check, and nothing answered at that address: start FlareSolverr, or fix the address ([Sites behind a Cloudflare check](#sites-behind-a-cloudflare-check)).
+- *This site says the page is gone (HTTP 410). The site may have moved or closed. Check its address, or turn it off.* The site answered a search with "gone" (410) or "not found" (404). Sites move and close. Open the indexer, check its address against the site's own, or turn it off.
+
+When a movie's list is empty, the line above it tells which of three things happened: an indexer did not answer (it is named), nothing was found (*Your indexers answered, but none of them has this yet*), or releases did come back but none of them fits the movie's title and year (*Your indexers answered with releases, but none of them fits this title and year*, followed by the names of a few of them). In the last case the movie in your library most likely has a different name or year from the releases, for example a re-release year or a title with the maker's name in front; compare those names with the movie's title and year on its page. A release that fits the title but is turned down by your quality profile or size limits is never left out: it stays in the list, marked with the reason. (Reported by Hoopes80 on GitHub, #121.)
+
+The same sentences are used on the indexer card (after **Test**, with the technical text under it), in the pause reason and in the problem log, which keeps the technical text as the detail.
 
 
 ## When an indexer keeps failing
@@ -45,6 +58,8 @@ An indexer whose saved key or password can't be read (usually because the `secre
 
 When the error on an indexer card (the pause reason, the last test or a test you just ran) is one that a newer version already fixed, and you run an older one, a line under it says "This is fixed in 3.2.1. Update Mediarium and press Try again." The list of known errors is in `web/src/knownFixes.ts`.
 
+Health adds one line when your indexers as a group can't search. **No indexer is set up** only appears when you haven't added one. If they are all turned off, it says *All your indexers are turned off*. If you only have torrent indexers and torrents are off, it says so and links to the torrent settings. If every indexer that is turned on is failing (paused, or its last search or test failed), it says *None of your indexers works right now*. One indexer that still works is enough to hide it.
+
 Scripts: `POST /api/indexers/{id}/resume` is **Try again now**; `GET /api/indexers` adds `failures`, `pausedUntil`, `pausedNote` and `pausedWhy` to a paused indexer.
 
 ## Minimum seeders
@@ -57,6 +72,17 @@ A torrent with few or no seeders can sit in the download client for days. Each t
 - **From Prowlarr.** When you import from Prowlarr, a minimum seeders number set on a torrent indexer there comes along.
 
 Scripts: `GET /api/indexers` has `minSeeders`; `PUT /api/indexers/{id}` takes `minSeeders` (a whole number from 0 to 1000) and a search result has `belowMinSeeders` and `minSeeders` when it is under the minimum. In a settings file an indexer can have `minSeeders: 5`.
+
+## Extra categories
+
+Mediarium searches an indexer in the standard categories: 2000 for movies, 5000 for TV, 3000 for music, 7000 and 7020 for books and 3030 for audiobooks. Some indexers file releases under numbers of their own as well, such as 105000 for TV or 7120 for German ebooks, and a search for the standard number never finds those. **Edit** on a Newznab or Torznab indexer has an **Extra categories** part with a box for movies, TV, music, books and audiobooks. Type the extra numbers you want, separated by commas, for example `105000, 105010`, and **Save changes**. From then on those numbers are asked for together with the standard ones whenever that kind of media is searched on that indexer, in manual searches and in the automatic ones. Other indexers are not affected, and leaving a box empty keeps the standard search.
+
+- **Finding the numbers.** **Show the categories this indexer lists** asks the indexer what it offers and puts the categories that fit each box under it. Click one to add its number. This is only a help: you can always type a number yourself, and an indexer that doesn't list its categories simply shows nothing.
+- **What is accepted.** Whole numbers from 1 to 999999, up to 30 for each kind of media. Anything else is refused with a message under the box.
+- **Sites from the definition list.** They get the numbers too when the site's definition lists the number among its categories, but the box is only on the Newznab and Torznab cards for now.
+- **Language.** The numbers only change where Mediarium looks. A release found in an extra category is not treated as being in that language: the language of a release still comes from its name.
+
+Scripts: `GET /api/indexers` has `extraCategories`, an object such as `{"tv": [105000], "books": [7120]}` (the kinds are `movies`, `tv`, `music`, `books` and `audiobooks`); `PUT /api/indexers/{id}` takes it too, and an empty object clears it. `GET /api/indexers/{id}/categories` lists what the indexer says it has. In a settings file an indexer can have `extraCategories`.
 
 ## Daily limits
 
@@ -92,6 +118,8 @@ Trackers post every new release in an IRC channel seconds after it is uploaded. 
 Under **Add an indexer** on Settings > Indexers & Search, choose the **Usenet (NZB)** or **Torrent** tab. For Usenet, pick your indexer from the list (or **Other** and type its address) and paste your API key. For a Torznab link, choose **Paste a Torznab link** on the Torrent tab, then paste the address and the API key. Press **Test connection**, then **Add this indexer** (it stays greyed out until the test has passed). The name is required, the address must start with `http://` or `https://` and name a server, and the API key can't contain spaces or line breaks. Mistakes are pointed out under the field, and the server refuses the same ones from a script.
 
 **Indexers from Prowlarr or Jackett:** add each one with its own Torznab (or Newznab) feed address, not Prowlarr's main page. In Prowlarr, open the indexer and copy its feed address, which looks like `http://192.168.1.10:9696/5/api`, and use Prowlarr's API key (Settings > General). An address that gives back a web page instead of a feed is refused with a message saying so. To bring over all of them at once, use **Settings > System > Move from other apps** ([migrate.md](./migrate.md)). A few indexers are built into Prowlarr's own code rather than the shared definition list. Mediarium has its own definition for three of them (Toloka, IPTorrents and Knaben, see below); any other site like that can only be added through Prowlarr's feed address. Prowlarr also stays the fallback for IPTorrents: if the built-in one doesn't work for you, add IPTorrents in Prowlarr and give Mediarium its feed address.
+
+Torznab download links can return a `.torrent` file or redirect to a magnet link. Mediarium accepts either, including ordinary web redirects before the magnet link.
 
 If you added a torrent indexer on the **Usenet (NZB)** tab by mistake, Mediarium still tells torrents from NZB files by what the feed sends and downloads them as torrents. Still, add torrent sites on the **Torrent** tab: that's where the seeders, the VPN and the torrent client settings apply to them.
 
@@ -186,7 +214,7 @@ services:
     #   - "8191:8191"
 ```
 
-Then set its address in the **Cloudflare sites (optional)** section of Settings > Indexers & Search (stored as `flaresolverr.url`, `flareSolverrUrl` in `GET/PUT /api/settings`): `http://flaresolverr:8191` when both are in the same compose file, otherwise `http://<host>:8191`. With no address set, Cloudflare-protected sites fail with the message above.
+Then set its address in the **Cloudflare sites (optional)** section of Settings > Indexers & Search (stored as `flaresolverr.url`, `flareSolverrUrl` in `GET/PUT /api/settings`): `http://flaresolverr:8191` when both are in the same compose file, otherwise `http://<host>:8191`. With no address set, Cloudflare-protected sites fail with the message above. With an address that nothing answers on (FlareSolverr stopped, or the wrong host or port), the site's card, a release list and Health's pause reason say *FlareSolverr isn't running or Mediarium can't reach it at ...* with that address.
 
 Cloudflare's clearance is tied to your IP address and the browser's User-Agent, so FlareSolverr should reach the internet the same way Mediarium does (same host, same VPN or none). The built-in helper of the `-full` image does while **Send indexer traffic through the VPN** is off, because it runs in the same container. With the switch on, Mediarium's own requests use the VPN but FlareSolverr's don't, which breaks that rule unless FlareSolverr is behind the same VPN.
 

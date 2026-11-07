@@ -390,6 +390,7 @@ type arrSeriesRequest struct {
 	Seasons          []arrSeason `json:"seasons"`
 	Tags             []int64     `json:"tags"`
 	SeriesType       string      `json:"seriesType"`
+	RootFolderPath   string      `json:"rootFolderPath"`
 	AddOptions       *struct {
 		Monitor                  string `json:"monitor"`
 		SearchForMissingEpisodes bool   `json:"searchForMissingEpisodes"`
@@ -426,7 +427,12 @@ func (s *Server) arrAddSeries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	userID, byline := requester(r)
-	created, err := s.addSeriesFromTMDB(ctx, tmdbID, userID, true)
+	// The app's root folder when it is one of ours; else where new shows go.
+	rootPath, problem := s.folderForNewShow(req.RootFolderPath)
+	if problem != "" {
+		rootPath = s.newShowFolder()
+	}
+	created, err := s.addSeriesFromTMDB(ctx, tmdbID, userID, true, rootPath)
 	if err != nil {
 		writeUpstreamError(w, "add that show", err)
 		return
@@ -653,6 +659,12 @@ func (s *Server) arrListEpisodes(w http.ResponseWriter, r *http.Request) {
 		id, _ = strconv.ParseInt(r.URL.Query().Get("seriesid"), 10, 64)
 	}
 	if id <= 0 {
+		// Sonarr also answers a bare list of episode ids (apps such as nzb360
+		// look up the episodes of their history rows this way).
+		if ids := arrEpisodeIDList(r); len(ids) > 0 {
+			s.arrEpisodesByID(w, r, ids)
+			return
+		}
 		arrBadRequest(w, "SeriesId", "Ask for one show's episodes with seriesId.")
 		return
 	}
@@ -703,6 +715,48 @@ func (s *Server) arrListEpisodes(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		e.Series = series
+		if queryBool(r, "includeEpisodeFile") {
+			e.EpisodeFile = s.toArrEpisodeFile(ep)
+		}
+		out = append(out, e)
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// arrEpisodeIDList is the episode ids of ?episodeIds=1,2&episodeIds=3, capped
+// so a careless app cannot ask for the whole database one row at a time.
+func arrEpisodeIDList(r *http.Request) []int64 {
+	var ids []int64
+	for _, v := range r.URL.Query()["episodeIds"] {
+		for _, part := range strings.Split(v, ",") {
+			if n, err := strconv.ParseInt(strings.TrimSpace(part), 10, 64); err == nil && n > 0 && len(ids) < 500 {
+				ids = append(ids, n)
+			}
+		}
+	}
+	return ids
+}
+
+// arrEpisodesByID answers GET /episode?episodeIds=... without a show: the
+// episodes that exist, each with its show when asked for.
+func (s *Server) arrEpisodesByID(w http.ResponseWriter, r *http.Request, ids []int64) {
+	out := []arrEpisode{}
+	shows := map[int64]*arrSeries{}
+	for _, id := range ids {
+		ep, err := s.MovieRepo.GetEpisodeByID(id)
+		if err != nil {
+			continue
+		}
+		e := toArrEpisode(ep)
+		sr, seen := shows[ep.SeriesID]
+		if !seen {
+			if show, err := s.MovieRepo.GetSeries(ep.SeriesID); err == nil {
+				a := s.toArrSeries(show, s.newArrSeriesContext())
+				sr = &a
+			}
+			shows[ep.SeriesID] = sr
+		}
+		e.Series = sr
 		if queryBool(r, "includeEpisodeFile") {
 			e.EpisodeFile = s.toArrEpisodeFile(ep)
 		}

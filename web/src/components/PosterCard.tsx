@@ -4,6 +4,7 @@ import BrandMark from './BrandMark'
 import Icon, { type IconName } from './Icon'
 import type { ItemState } from './state'
 import { t } from '../i18n'
+import { coverThumb, isMusicCover, THUMB_SIDE } from '../coverThumb'
 
 // Shown when a title has no poster (or its image fails to load): the Mediarium
 // mark on a soft gradient, with no text, so every card stays the same shape.
@@ -138,7 +139,17 @@ export default function PosterCard({
   // Remember which address failed, so a poster that changes later (an import finishes) gets its own try.
   const [brokenSrc, setBrokenSrc] = useState<string | undefined>()
   const eager = useContext(EagerImages)
-  const image = poster && brokenSrc !== poster ? <img src={cardPoster(poster, 342)} srcSet={cardSrcSet(poster)} sizes="(max-width: 700px) 45vw, 240px" alt="" loading={eager ? 'eager' : 'lazy'} fetchPriority={eager ? 'low' : undefined} decoding="async" onError={() => setBrokenSrc(poster)} /> : kind === 'music' || kind === 'audiobook' ? <MusicFallback /> : <PosterFallback />
+  // A music cover on this server comes as a small thumbnail (the server keeps it), always at low priority so a
+  // grid of them never holds up a click.
+  const thumb = isMusicCover(poster)
+  const image =
+    poster && brokenSrc !== poster ? (
+      thumb ? (
+        <img src={coverThumb(poster)} width={THUMB_SIDE} height={THUMB_SIDE} alt="" loading={eager ? 'eager' : 'lazy'} fetchPriority="low" decoding="async" onError={() => setBrokenSrc(poster)} />
+      ) : (
+        <img src={cardPoster(poster, 342)} srcSet={cardSrcSet(poster)} sizes="(max-width: 700px) 45vw, 240px" alt="" loading={eager ? 'eager' : 'lazy'} fetchPriority={eager ? 'low' : undefined} decoding="async" onError={() => setBrokenSrc(poster)} />
+      )
+    ) : kind === 'music' || kind === 'audiobook' ? <MusicFallback /> : <PosterFallback />
   const wanted = !!state && WANTED.has(state.key)
   const live = state?.key === 'downloading'
   const pct = progress?.pct ?? (live ? Number(/(\d+)%/.exec(state.label)?.[1] ?? NaN) : NaN)

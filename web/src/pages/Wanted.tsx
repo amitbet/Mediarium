@@ -626,7 +626,7 @@ export default function Wanted() {
             return (
               <div key={`music-${a.id}`} className="wrow kind-music">
                 <div className="qthumb">
-                  <Cover src={a.coverUrl} />
+                  <Cover src={a.coverUrl} thumb />
                 </div>
                 <div className="wmain">
                   <Link to={to}>

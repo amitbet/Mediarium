@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -125,7 +127,7 @@ func (s *Server) refreshTitleNames(ctx context.Context, kind string, tmdbID int,
 			return nil, err
 		}
 	}
-	names := metadata.ExtraTitles(src, english, nameLanguageCodes(list, src.OriginalLanguage), metadata.MaxExtraTitles)
+	names := metadata.WithUmlautSpellings(metadata.ExtraTitles(src, english, nameLanguageCodes(list, src.OriginalLanguage), metadata.MaxExtraTitles))
 	if err := s.MovieRepo.SaveTitleNames(kind, tmdbID, names, list, time.Now()); err != nil {
 		return names, err
 	}
@@ -137,6 +139,30 @@ func (s *Server) refreshTitleNames(ctx context.Context, kind string, tmdbID int,
 // languages, or are old. loaded is what the title came with. Nothing is
 // returned while English is the only language wanted.
 func (s *Server) altTitlesFor(ctx context.Context, kind string, tmdbID int, english string, loaded []string) []string {
+	return withMainSpelling(english, s.languageTitlesFor(ctx, kind, tmdbID, english, loaded))
+}
+
+// withMainSpelling puts the main title written with "ae", "oe", "ue" and "ss"
+// first among the other titles, when it has umlauts or a sharp s (#148). With
+// German as the info language the main title itself is "Sams im Glück", and
+// an indexer that doesn't fold the letters only finds Sams.im.Glueck under
+// that spelling. It is added whatever languages are wanted.
+func withMainSpelling(title string, names []string) []string {
+	spellings := metadata.WithUmlautSpellings([]string{title})
+	if len(spellings) < 2 {
+		return names
+	}
+	extra := spellings[1]
+	for _, n := range names {
+		if strings.EqualFold(n, extra) {
+			return names
+		}
+	}
+	return append([]string{extra}, names...)
+}
+
+// languageTitlesFor is altTitlesFor without the main title's other spelling.
+func (s *Server) languageTitlesFor(ctx context.Context, kind string, tmdbID int, english string, loaded []string) []string {
 	list := s.audioLanguageList()
 	if tmdbID == 0 || !wantsOtherLanguage(list) {
 		return nil
@@ -202,6 +228,12 @@ func (s *Server) searchMovieTitles(ctx context.Context, instances []indexers.Ins
 		ctx = indexers.AsManual(ctx) // a person asked for this search
 	}
 	outcomes := indexers.SearchAll(ctx, instances, indexerQuery(m.Title), movieCategory)
+	// A popular title ("Dune", "Halloween") can have more releases than a
+	// search reads, and the right film's may never be among them: then the
+	// title is searched again with its year.
+	if m.Year > 0 && ctx.Err() == nil && slices.ContainsFunc(outcomes, func(o indexers.Outcome) bool { return indexers.Filled(ctx, o) }) {
+		outcomes = append(outcomes, indexers.SearchAll(ctx, instances, indexerQuery(m.Title)+" "+strconv.Itoa(m.Year), movieCategory)...)
+	}
 	extra := 0
 	for _, t := range m.AltTitles {
 		if ctx.Err() != nil {

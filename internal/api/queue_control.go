@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rdborg/mediarium/internal/books"
@@ -52,6 +53,26 @@ const stopWait = 10 * time.Second
 // queueControlMu makes one pause, resume or stop happen at a time, so a
 // double click or two people acting together cannot start a download twice.
 var queueControlMu sync.Mutex
+
+// windDownAtOnce is how many downloads pausing or stopping several at once
+// waits for together. One after another, each could take stopWait, so a list
+// of twenty held everything else up for minutes.
+const windDownAtOnce = 8
+
+// eachAtOnce runs do for 0..n-1, windDownAtOnce at a time, and waits for all.
+func eachAtOnce(n int, do func(i int)) {
+	sem := make(chan struct{}, windDownAtOnce)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer func() { <-sem; wg.Done() }()
+			do(i)
+		}()
+	}
+	wg.Wait()
+}
 
 // settleInterrupted is called by a pipeline that ended: when a person paused
 // or stopped it, it leaves the item paused or stopped and reports true along
@@ -550,16 +571,19 @@ func (s *Server) handlePauseAllQueue(w http.ResponseWriter, r *http.Request) {
 	// Nothing waiting starts while the running ones wind down.
 	defer s.dispatch.Hold()()
 	only := onlyProtocol(r)
-	n := 0
+	var running []queue.Item
 	for _, it := range items {
-		if only != "" && it.Protocol != only {
-			continue
-		}
-		if downloadInProgress(it.Status) && s.pauseItem(it) == nil {
-			n++
+		if (only == "" || it.Protocol == only) && downloadInProgress(it.Status) {
+			running = append(running, it)
 		}
 	}
-	writeJSON(w, http.StatusOK, pauseAllResponse{Paused: n})
+	var n atomic.Int64
+	eachAtOnce(len(running), func(i int) {
+		if s.pauseItem(running[i]) == nil {
+			n.Add(1)
+		}
+	})
+	writeJSON(w, http.StatusOK, pauseAllResponse{Paused: int(n.Load())})
 }
 
 type resumeAllResponse struct {
@@ -902,7 +926,7 @@ type bulkQueueResponse struct {
 }
 
 // handleBulkQueue does one thing (pause, resume, stop, retry, remove from the
-// list, or send to the front) to several downloads at once. Each one is tried
+// list, blocklist, or send to the front) to several downloads at once. Each one is tried
 // on its own: one that can't be done (say, pausing a finished download) is
 // listed in "failed" and the rest still go through.
 func (s *Server) handleBulkQueue(w http.ResponseWriter, r *http.Request) {
@@ -912,9 +936,9 @@ func (s *Server) handleBulkQueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch req.Action {
-	case "pause", "resume", "stop", "retry", "front", "remove":
+	case "pause", "resume", "stop", "retry", "front", "remove", "blocklist":
 	default:
-		writeError(w, http.StatusBadRequest, `Choose "pause", "resume", "stop", "retry", "front" or "remove".`)
+		writeError(w, http.StatusBadRequest, `Choose "pause", "resume", "stop", "retry", "front", "remove" or "blocklist".`)
 		return
 	}
 	if len(req.IDs) == 0 {
@@ -935,16 +959,22 @@ func (s *Server) handleBulkQueue(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	resp := bulkQueueResponse{Failed: []bulkQueueFailure{}}
-	if req.Action == "retry" {
-		// Retry is a new grab, like Retry on one download, which doesn't take
-		// queueControlMu either: grabbing can take it itself.
+	if req.Action == "retry" || req.Action == "blocklist" {
+		// Retry is a new grab, like Retry on one download, and blocklisting
+		// removes the download and looks again. Neither holds queueControlMu
+		// here: both take it themselves where they need it.
 		for _, id := range ids {
 			item, err := s.QueueRepo.Get(id)
 			if err != nil {
 				resp.Failed = append(resp.Failed, bulkQueueFailure{ID: id, Error: "This download no longer exists."})
 				continue
 			}
-			if _, err := s.retryQueueItem(item); err != nil {
+			if req.Action == "blocklist" {
+				err = s.blocklistQueueItem(item)
+			} else {
+				_, err = s.retryQueueItem(item)
+			}
+			if err != nil {
 				resp.Failed = append(resp.Failed, bulkQueueFailure{ID: id, Error: err.Error()})
 				continue
 			}
@@ -955,6 +985,29 @@ func (s *Server) handleBulkQueue(w http.ResponseWriter, r *http.Request) {
 	}
 	queueControlMu.Lock()
 	defer queueControlMu.Unlock()
+	if req.Action == "pause" || req.Action == "stop" {
+		// Each can wait for its download to wind down, so they do it together.
+		var mu sync.Mutex
+		eachAtOnce(len(ids), func(i int) {
+			item, err := s.QueueRepo.Get(ids[i])
+			if err != nil {
+				err = errors.New("This download no longer exists.")
+			} else if req.Action == "pause" {
+				err = s.pauseItem(item)
+			} else {
+				err = s.stopItem(item, req.DeleteFiles)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				resp.Failed = append(resp.Failed, bulkQueueFailure{ID: ids[i], Error: err.Error()})
+				return
+			}
+			resp.Done++
+		})
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
 	for _, id := range ids {
 		item, err := s.QueueRepo.Get(id)
 		if err != nil {

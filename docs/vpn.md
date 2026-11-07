@@ -6,7 +6,7 @@ Find it under **Settings > Downloading > VPN and proxy**. It's optional: nothing
 
 ## What goes through the VPN
 
-- **Torrent traffic** (talking to peers, to HTTP trackers, to web seeds and fetching the details a magnet link points to), whenever a VPN is connected. UDP trackers (`udp://`) cannot go through the tunnel, so they are not used while the VPN is on; HTTP trackers, the other peers and the swarm still work.
+- **Torrent traffic** (talking to peers, to HTTP trackers, to web seeds and fetching the details a magnet link points to), whenever a VPN is connected. UDP trackers (`udp://`) and DHT stay off unless you switch on **UDP trackers and DHT through the VPN**. They then leave through the tunnel, so peers and trackers see the VPN address, and their names are looked up through the VPN's DNS. If that lookup fails, nothing is sent from your home address. uTP stays off. See [UDP trackers and DHT](#udp-trackers-and-dht).
 - **Indexers, if you choose.** Switch on **Send indexer traffic through the VPN** and searches, RSS, release downloads, IRC announces and debrid go through it too. See [Indexers through the VPN](#indexers-through-the-vpn).
 - **Nothing else.** TMDB, subtitles, media servers and your Usenet provider all connect directly. Usenet downloads are encrypted between you and your provider, and do not show your address to other people the way a torrent swarm does. To send Usenet somewhere else too, use a [proxy](#a-socks5-or-http-proxy-instead).
 
@@ -97,6 +97,22 @@ A torrent that started without a VPN doesn't keep going from your home address o
 
 **Check my IP address** appears while connected. It makes a real request through the tunnel and shows the public address the internet sees, so you can check that it is your VPN's address and not your own.
 
+### Is traffic really flowing?
+
+"Connected" means the VPN server has answered. Under the connection that is switched on, Mediarium also shows:
+
+- **Last handshake**, with how long ago it was. WireGuard repeats the handshake about every two minutes while the tunnel is in use, so a few seconds to a couple of minutes is normal. It turns into a warning when the server has been quiet for four minutes or more.
+- **Received and sent**, what the tunnel has carried since it connected. If the sent number grows and the received number stays at zero, the server isn't answering.
+- **No handshake yet** in a warning colour, when a new tunnel has waited about 20 seconds and the server still hasn't answered. The usual causes are a wrong server address, a wrong key, or a key that has expired.
+
+The **Test** button on the connection goes one step further. It makes a small real request through the tunnel (it gets the public address, waiting at most 8 seconds) and answers in plain words:
+
+- **The tunnel works.** A request came back through the VPN, with the address it came from and the last handshake.
+- **The VPN server did not answer**, so the key may have expired or the address is wrong. Private Internet Access (PIA) keys expire, and a stale file looks connected but moves nothing. For PIA, run their script again and load the new file (remove the old connection and add the new one).
+- **The VPN server answered earlier but has gone quiet**, or **the tunnel is up but the test request got no answer**. Try another server of your provider; some servers block traffic or are overloaded.
+
+The test only runs when you press the button. Nothing is sent in the background, and no key or password is logged.
+
 ### If the server address is IPv6
 
 Docker gives a container IPv4 only unless you turn IPv6 on. If the server address in your connection is an IPv6 address (it looks like `[2a03:1b20:6:f011::a09f]:51820`), Mediarium can't reach it from such a container and says right away: "This VPN server address is IPv6, and this computer or Docker container has no IPv6 connection." Either of these fixes it:
@@ -115,7 +131,20 @@ While a VPN is connected, torrents always use it, whatever the switch says. The 
 - **On:** a torrent download waits and then fails, with a message that says to connect a VPN, instead of connecting directly. There is no direct fallback. A [proxy](#a-socks5-or-http-proxy-instead) ticked for torrents counts as well: torrents then go through the proxy.
 - **Off:** torrents connect directly, so your home address is visible to the swarm. This only applies when no connection is switched on. A connection that is switched on but not working holds torrents back, as described above.
 
-Through the tunnel, DHT and uTP are turned off (they need a direct UDP connection, which would show your address), so magnet links rely on the trackers they carry. The torrent listen port (58264) is not used, and nothing listens on your network, so no incoming connection is ever seen. Settings shows this as "Not used while your VPN is on". Port forwarding through a VPN provider is not supported.
+Through the tunnel, uTP stays off. DHT and UDP trackers stay off unless [UDP trackers and DHT through the VPN](#udp-trackers-and-dht) is on; they then use the tunnel, not a socket on your network. The torrent listen port (58264) is not used, and nothing listens on your network, so no incoming connection is ever seen. Settings shows this as "Not used while your VPN is on". Port forwarding through a VPN provider is not supported.
+
+## UDP trackers and DHT
+
+**UDP trackers and DHT through the VPN** sits under the kill switch. It is off until you turn it on.
+
+The built-in VPN is WireGuard inside the app. It does not create a network interface, so an ordinary UDP socket would leave from your home address. Mediarium does not open one while a VPN is connected. Peer connections, HTTP trackers, web seeds and magnet metadata already go through the tunnel. A `udp://` announce does not, unless this switch is on.
+
+Many torrents list only UDP trackers. A private or semi-private torrent also sets the private flag, which turns DHT off, so the UDP announce is the only way to find peers. With the switch off, that torrent never announces while the VPN is connected: it stays at 0 B/s and starts only after you disconnect. Opening a UDP socket on the machine would find the peers, and would also show your home address. The switch sends the announces through the tunnel instead.
+
+- **Off:** UDP trackers and DHT are skipped. HTTP trackers still work.
+- **On:** announces and DHT queries leave from the VPN address. Peers and trackers see that address, not your home address. Tracker and DHT names are looked up through the VPN's DNS (the **DNS servers** field on the connection), the same way indexer names are when that switch is on. If the connection has no DNS servers, or a name cannot be looked up, the announce fails and nothing is asked of your home DNS. If the tunnel cannot open the UDP socket, nothing is sent from your home address either. A download that has already started keeps the previous choice until you retry it.
+- **uTP stays off**, and nothing listens for incoming peers. The listen port stays unused while the VPN is on.
+- **A proxy is not covered.** A SOCKS or HTTP proxy cannot carry this UDP, so with only a proxy the trackers and DHT stay off.
 
 If you only use Usenet, you can also switch off **Use the built-in torrent client** under **Settings > Downloading > Torrents**.
 
@@ -134,7 +163,7 @@ If you already run a proxy, such as the SOCKS5 port of a VPN container (Gluetun,
 
 1. Pick **SOCKS5** or **HTTP**, and type the host (an IP address or a container name) and the port. Add a user name and password if the proxy wants them. The password is stored encrypted and never shown again.
 2. Tick what goes through it:
-   - **Torrents**: peers, trackers and web seeds. The rules are the same as for the VPN: no direct connections, no DHT or uTP, no UDP trackers and no incoming peers. A connected VPN still takes over for torrents.
+   - **Torrents**: peers, trackers and web seeds. The rules are the same as for the VPN: no direct connections, no DHT or uTP, no UDP trackers and no incoming peers. A proxy cannot carry UDP trackers or DHT. A connected VPN still takes over for torrents.
    - **Indexers**: searches, and fetching NZB and torrent files from them.
    - **Usenet**: the connections to your Usenet servers. Usually not needed, since they're already encrypted.
 3. Press **Test**. Mediarium connects through the proxy to TMDB's server (a secure connection is opened and closed, nothing is sent) and says whether it worked. Then press **Save**.
@@ -151,4 +180,4 @@ The endpoint is `host:port` with a port from 1 to 65535, the two keys are 44-cha
 
 ## For scripts
 
-The routes are `GET/POST /api/vpn/configs`, `DELETE /api/vpn/configs/{id}`, `POST /api/vpn/configs/{id}/activate`, `POST /api/vpn/deactivate`, `GET /api/vpn/status` (`connected`, `state` of `off`, `connecting`, `connected` or `down`, `label`, `reason`) and `GET /api/vpn/egress-ip`, all for administrators ([reference/api.md](./reference/api.md)). The kill switch is the setting `vpn.require_for_torrents`, and indexers through the VPN is `vpn.route_indexers` (`routeIndexersThroughVpn` in `/api/settings`). The code is in `internal/vpn`.
+The routes are `GET/POST /api/vpn/configs`, `DELETE /api/vpn/configs/{id}`, `POST /api/vpn/configs/{id}/activate`, `POST /api/vpn/deactivate`, `GET /api/vpn/status` (`connected`, `state` of `off`, `connecting`, `connected` or `down`, `label`, `reason`, and while a tunnel exists `tunnelUp`, `lastHandshake`, `handshakeAgeSec`, `noHandshake`, `rxBytes`, `txBytes`), `POST /api/vpn/test` (`ok`, `ip`, `reason`, `handshakeAgeSec`, `rxBytes`, `txBytes`) and `GET /api/vpn/egress-ip`, all for administrators ([reference/api.md](./reference/api.md)). The kill switch is the setting `vpn.require_for_torrents`, indexers through the VPN is `vpn.route_indexers` (`routeIndexersThroughVpn` in `/api/settings`), and UDP trackers and DHT through the VPN is `vpn.discover_through_tunnel` (`discoverThroughTunnel`). The code is in `internal/vpn`.

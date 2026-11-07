@@ -294,6 +294,9 @@ function OidcCard({ publicUrl, ssoDisabledByEnv, onSaved }: { publicUrl: string;
           <Field label={t('Administrator group')} note={t('People in this group are admins, checked at every sign-in. Empty: nobody becomes an admin this way.')}>
             <input value={cfg.adminGroup} onChange={(e) => set('adminGroup', e.target.value)} placeholder="mediarium-admins" spellCheck={false} />
           </Field>
+          <Field label={t('Viewer group')} note={t('People in this group are viewers (they can only look), checked at every sign-in. Someone in the administrator group is an admin instead. Empty: nobody becomes a viewer this way.')}>
+            <input value={cfg.viewerGroup} onChange={(e) => set('viewerGroup', e.target.value)} placeholder="mediarium-viewers" spellCheck={false} />
+          </Field>
           <Field label={t('Only this group may sign in')} note={t('Optional. Empty: anyone the provider signs in.')}>
             <input value={cfg.allowedGroup} onChange={(e) => set('allowedGroup', e.target.value)} spellCheck={false} />
           </Field>
@@ -462,6 +465,9 @@ function LdapCard({ ssoDisabledByEnv, onSaved }: { ssoDisabledByEnv: boolean; on
           <Field label={t('Administrator group filter')} note={t('Optional. {dn} stands for the person. People it finds are admins, checked at every sign-in.')}>
             <input value={cfg.adminGroupFilter} onChange={(e) => set('adminGroupFilter', e.target.value)} placeholder="(&(objectClass=groupOfNames)(cn=mediarium-admins)(member={dn}))" spellCheck={false} />
           </Field>
+          <Field label={t('Viewer group filter')} note={t('Optional. Works like the administrator group filter. People it finds are viewers, checked at every sign-in.')}>
+            <input value={cfg.viewerGroupFilter} onChange={(e) => set('viewerGroupFilter', e.target.value)} placeholder="(&(objectClass=groupOfNames)(cn=mediarium-viewers)(member={dn}))" spellCheck={false} />
+          </Field>
           <Field label={t('Where to look for groups')} note={t('Empty: the base DN.')}>
             <input value={cfg.groupBaseDn} onChange={(e) => set('groupBaseDn', e.target.value)} spellCheck={false} />
           </Field>
@@ -541,6 +547,7 @@ function LdapCard({ ssoDisabledByEnv, onSaved }: { ssoDisabledByEnv: boolean; on
                     </li>
                   )}
                   <li>{report.admin ? t('Would be an administrator.') : t('Would not be an administrator.')}</li>
+                  {report.viewer && !report.admin && <li>{t('Would be a viewer.')}</li>}
                   {report.passwordChecked && <li>{report.passwordOk ? t('The password is right.') : t('The password is wrong.')}</li>}
                 </ul>
               ) : (

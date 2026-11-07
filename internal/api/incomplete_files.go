@@ -56,11 +56,28 @@ func entryNote(f library.FileLength) shortFileNote {
 // and renewed when a file's details or a runtime were saved since.
 func (s *Server) incompleteNow() *incompleteSet {
 	st := &s.mediaInfo
+	cur := st.cache.incomplete()
+	if cur != nil && cur.gen == st.gen.Load() {
+		if time.Since(cur.at) < mediaSummaryTTL {
+			return cur
+		}
+		if time.Since(cur.at) < mediaSummaryMaxStale { // renewed in the background, as mediaSummaryNow does
+			st.cache.renew(&st.cache.renewingIncomplete, func() { s.buildIncomplete() })
+			return cur
+		}
+	}
+	return s.buildIncomplete()
+}
+
+// buildIncomplete reads the list afresh (unless another caller has just done
+// so) and keeps it.
+func (s *Server) buildIncomplete() *incompleteSet {
+	st := &s.mediaInfo
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	gen := st.gen.Load()
-	if st.incomplete != nil && st.incomplete.gen == gen && time.Since(st.incomplete.at) < mediaSummaryTTL {
-		return st.incomplete
+	if cur := st.cache.incomplete(); cur != nil && cur.gen == gen && time.Since(cur.at) < mediaSummaryTTL {
+		return cur
 	}
 	out := &incompleteSet{at: time.Now(), gen: gen, byPath: map[string]incompleteEntry{},
 		movies: map[int64]incompleteEntry{}, episodes: map[int64]incompleteEntry{}, series: map[int64][]incompleteEntry{}}
@@ -88,7 +105,7 @@ func (s *Server) incompleteNow() *incompleteSet {
 			out.movies[f.ID] = e
 		}
 	}
-	st.incomplete = out
+	st.cache.setIncomplete(out)
 	return out
 }
 

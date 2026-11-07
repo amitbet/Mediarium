@@ -20,8 +20,8 @@ import (
 // release groups that only exist as bootlegs. One choice for the whole
 // library (the music.* settings) and an optional one per artist. Albums that
 // are already in the library are never touched by a change of filter: it only
-// decides what is added from now on and what the artist page offers below the
-// albums.
+// decides what is added from now on, what the artist page offers below the
+// albums and which albums without files its list leaves out.
 
 // libraryMusicFilter is the library-wide choice; unset or unreadable parts
 // are the defaults (what the app always did).
@@ -302,10 +302,21 @@ type musicHiddenGroup struct {
 	HiddenBy       string   `json:"hiddenBy"` // a release type, a secondary type key or "bootleg"
 }
 
+// musicHiddenAlbum is an album in the library that the filter would hide.
+type musicHiddenAlbum struct {
+	AlbumID  int64  `json:"albumId"`
+	MBID     string `json:"mbid"`
+	HiddenBy string `json:"hiddenBy"`
+}
+
 type musicDiscography struct {
 	Filter musicFilterPayload `json:"filter"`
 	// Hidden lists the release groups the filter leaves out that are not in the library.
 	Hidden []musicHiddenGroup `json:"hidden"`
+	// Library lists the albums already in the library that the filter leaves out
+	// of the list: only those without files, albums with files always stay.
+	// Nothing is ever removed or unmonitored by a filter.
+	Library []musicHiddenAlbum `json:"library"`
 	// Counts is how many of them each reason accounts for.
 	Counts map[string]int `json:"counts"`
 	// Checking is how many groups are still being looked at for the bootleg test (they are shown until known).
@@ -349,21 +360,26 @@ func (s *Server) handleArtistDiscography(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	have := map[string]bool{}
+	filed, err := s.MusicRepo.AlbumsWithFiles(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	have := map[string]music.Album{}
 	for _, a := range albums {
-		have[a.MBID] = true
+		have[a.MBID] = a
+		if a.Status == music.StatusDownloaded {
+			filed[a.ID] = true // downloaded, even if no track is linked to its file
+		}
 	}
 	f, own := s.artistMusicFilter(id)
-	out := musicDiscography{Filter: musicFilterPayload{Filter: f, UseLibrary: !own}, Hidden: []musicHiddenGroup{}, Counts: map[string]int{}}
+	out := musicDiscography{Filter: musicFilterPayload{Filter: f, UseLibrary: !own}, Hidden: []musicHiddenGroup{}, Library: []musicHiddenAlbum{}, Counts: map[string]int{}}
 
 	var candidates []string
 	var typePass []musicbrainz.ReleaseGroup
 	for _, g := range groups {
-		if have[g.ID] {
-			continue
-		}
 		if reason := f.Reason(filterGroup(g)); reason != "" {
-			out.add(g, reason)
+			out.addHidden(g, reason, have, filed)
 			continue
 		}
 		typePass = append(typePass, g)
@@ -378,7 +394,7 @@ func (s *Server) handleArtistDiscography(w http.ResponseWriter, r *http.Request)
 			case !known:
 				unknown = append(unknown, g.ID)
 			case !official:
-				out.add(g, music.ReasonBootleg)
+				out.addHidden(g, music.ReasonBootleg, have, filed)
 			}
 		}
 		out.Checking = len(unknown)
@@ -388,6 +404,18 @@ func (s *Server) handleArtistDiscography(w http.ResponseWriter, r *http.Request)
 	}
 	sort.SliceStable(out.Hidden, func(i, j int) bool { return out.Hidden[i].ReleaseDate < out.Hidden[j].ReleaseDate })
 	writeJSON(w, http.StatusOK, out)
+}
+
+// addHidden files a hidden group under the library when the album is in it,
+// otherwise under the releases on offer.
+func (d *musicDiscography) addHidden(g musicbrainz.ReleaseGroup, reason string, have map[string]music.Album, filed map[int64]bool) {
+	if a, in := have[g.ID]; in {
+		if !filed[a.ID] {
+			d.Library = append(d.Library, musicHiddenAlbum{AlbumID: a.ID, MBID: a.MBID, HiddenBy: reason})
+		}
+		return
+	}
+	d.add(g, reason)
 }
 
 func (d *musicDiscography) add(g musicbrainz.ReleaseGroup, reason string) {

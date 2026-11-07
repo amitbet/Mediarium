@@ -198,11 +198,15 @@ func (s *Server) addCollectionMovie(ctx context.Context, tmdbID, collectionID in
 	if err != nil {
 		return library.Movie{}, err
 	}
+	rootPath, problem := s.folderForNewMovie(o.RootPath)
+	if problem != "" {
+		rootPath = s.newMovieFolder() // the folder was taken out of the settings
+	}
 	created, err := s.MovieRepo.Add(library.Movie{
 		TMDBID: tm.TMDBID, Title: tm.Title, Year: tm.Year(),
 		Overview: tm.Overview, PosterPath: tm.PosterPath, Monitored: o.Monitored, ReleaseDate: tm.ReleaseDate,
 		NoUpgrade: true, AddedBy: o.AddedBy, Genres: s.TMDB().MovieGenres(ctx, *tm),
-		RootPath: o.RootPath,
+		RootPath: rootPath,
 	})
 	if err != nil {
 		return library.Movie{}, err
@@ -225,7 +229,7 @@ func (s *Server) addCollectionMovie(ctx context.Context, tmdbID, collectionID in
 
 type addCollectionRequest struct {
 	ProfileID int64  `json:"profileId"`
-	RootPath  string `json:"rootPath"` // the movie folder to keep the films in; left out = the main one
+	RootPath  string `json:"rootPath"` // the movie folder to keep the films in; left out = where new movies go
 	Monitored *bool  `json:"monitored"`
 	Sources   string `json:"sources"`
 	SearchNow bool   `json:"searchNow"`
@@ -271,7 +275,7 @@ func (s *Server) handleAddCollection(w http.ResponseWriter, r *http.Request) {
 		writeProfileError(w, err)
 		return
 	}
-	rootPath, problem := s.checkFolderChoice(req.RootPath, s.movieFolders(), "movie")
+	rootPath, problem := s.checkFolderSetting(req.RootPath, s.movieFolders(), "movie")
 	if problem != "" {
 		writeError(w, http.StatusBadRequest, problem)
 		return
@@ -403,7 +407,7 @@ func (s *Server) handleFollowCollection(w http.ResponseWriter, r *http.Request) 
 		writeProfileError(w, err)
 		return
 	}
-	rootPath, problem := s.checkFolderChoice(req.RootPath, s.movieFolders(), "movie")
+	rootPath, problem := s.checkFolderSetting(req.RootPath, s.movieFolders(), "movie")
 	if problem != "" {
 		writeError(w, http.StatusBadRequest, problem)
 		return
@@ -521,8 +525,8 @@ func (s *Server) addFollowedCollectionFilms(ctx context.Context) {
 		}
 		opts := collectionAddOptions{ProfileID: c.FollowProfileID, RootPath: c.FollowRootPath, Monitored: c.FollowMonitored}
 		if opts.RootPath != "" {
-			if _, problem := s.checkFolderChoice(opts.RootPath, s.movieFolders(), "movie"); problem != "" {
-				opts.RootPath = "" // the folder was taken out of the settings: the main one
+			if _, problem := s.checkFolderSetting(opts.RootPath, s.movieFolders(), "movie"); problem != "" {
+				opts.RootPath = "" // the folder was taken out of the settings: wherever new movies go
 			}
 		}
 		allKnown := make([]int, 0, len(col.Parts))

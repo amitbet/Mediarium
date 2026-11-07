@@ -193,6 +193,30 @@ type vpnStatusPayload struct {
 	Label       string    `json:"label,omitempty"`
 	Reason      string    `json:"reason,omitempty"`
 	ConnectedAt time.Time `json:"connectedAt,omitzero"`
+	// TunnelUp is true while a tunnel exists, even if its server isn't
+	// answering. LastHandshake is when the server last answered, and
+	// HandshakeAgeSec how many seconds ago that was (both left out when it
+	// never has). NoHandshake is true once the server has stayed silent past
+	// the start-up grace time. RxBytes and TxBytes are what the tunnel has
+	// carried since it came up.
+	TunnelUp        bool      `json:"tunnelUp,omitempty"`
+	LastHandshake   time.Time `json:"lastHandshake,omitzero"`
+	HandshakeAgeSec *int64    `json:"handshakeAgeSec,omitempty"`
+	NoHandshake     bool      `json:"noHandshake,omitempty"`
+	RxBytes         int64     `json:"rxBytes,omitempty"`
+	TxBytes         int64     `json:"txBytes,omitempty"`
+}
+
+// handshakeAge is how many whole seconds ago at was, or nil when it never happened.
+func handshakeAge(at, now time.Time) *int64 {
+	if at.IsZero() {
+		return nil
+	}
+	age := int64(now.Sub(at) / time.Second)
+	if age < 0 {
+		age = 0
+	}
+	return &age
 }
 
 // handleVPNStatus surfaces connection state for the UI, so VPN status is
@@ -202,6 +226,36 @@ func (s *Server) handleVPNStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, vpnStatusPayload{
 		Connected: status.Connected, State: string(status.State), Label: status.Label,
 		Reason: status.Reason, ConnectedAt: status.ConnectedAt,
+		TunnelUp: status.TunnelUp, LastHandshake: status.LastHandshake, HandshakeAgeSec: handshakeAge(status.LastHandshake, time.Now()),
+		NoHandshake: status.NoHandshake, RxBytes: status.RxBytes, TxBytes: status.TxBytes,
+	})
+}
+
+type vpnTestPayload struct {
+	// Ok is true when a real request came back through the tunnel; IP is the
+	// public address it left from. Reason says what is wrong when it isn't Ok.
+	Ok              bool      `json:"ok"`
+	IP              string    `json:"ip,omitempty"`
+	Reason          string    `json:"reason,omitempty"`
+	LastHandshake   time.Time `json:"lastHandshake,omitzero"`
+	HandshakeAgeSec *int64    `json:"handshakeAgeSec,omitempty"`
+	RxBytes         int64     `json:"rxBytes"`
+	TxBytes         int64     `json:"txBytes"`
+}
+
+// handleVPNTest makes a small real request through the active tunnel and
+// answers whether it worked, with the time of the latest handshake or, when it
+// failed, a plain reason. A failed test is still a 200: the page shows the
+// reason. Only fired when the Test button is pressed, never in the background.
+func (s *Server) handleVPNTest(w http.ResponseWriter, r *http.Request) {
+	provider := ""
+	if active, ok, err := s.VPNRepo.Active(); err == nil && ok {
+		provider = active.Provider
+	}
+	res := s.VPNManager.Test(r.Context(), provider)
+	writeJSON(w, http.StatusOK, vpnTestPayload{
+		Ok: res.OK, IP: res.IP, Reason: res.Reason, LastHandshake: res.LastHandshake,
+		HandshakeAgeSec: handshakeAge(res.LastHandshake, time.Now()), RxBytes: res.RxBytes, TxBytes: res.TxBytes,
 	})
 }
 

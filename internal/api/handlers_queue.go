@@ -42,6 +42,11 @@ type queueItemPayload struct {
 	// naming collision was found at, under the "always ask" import
 	// conflict policy. See handleResolveQueueConflict.
 	DestPath string `json:"destPath,omitempty"`
+	// KeptFile and KeptData are set on a download that finished but was not
+	// imported because the file the title already had was kept: that file, and
+	// what became of the downloaded data ("deleted", "seeding" or "client").
+	KeptFile string `json:"keptFile,omitempty"`
+	KeptData string `json:"keptData,omitempty"`
 	// Interrupted is a paused download nobody paused: Mediarium was restarted
 	// while it was downloading.
 	Interrupted bool `json:"interrupted,omitempty"`
@@ -72,6 +77,9 @@ type queueItemPayload struct {
 	// waiting download does not start (the disk is nearly full), or that a
 	// failed release is held back from searches for now.
 	Note string `json:"note,omitempty"`
+	// Waiting says an album's files are downloaded and its import is waiting
+	// for MusicBrainz; Note says so and the page offers Retry now.
+	Waiting bool `json:"waiting,omitempty"`
 	// Unpack is how far the unpacking of an archive has come, while a download
 	// is being unpacked: the page shows it instead of a bar stuck at 100%.
 	Unpack *queueUnpack `json:"unpack,omitempty"`
@@ -193,7 +201,7 @@ func (s *Server) handleListQueue(w http.ResponseWriter, r *http.Request) {
 		p := queueItemPayload{
 			ID: it.ID, MovieID: it.MovieID, SeriesID: it.SeriesID, AlbumID: it.AlbumID, BookID: it.BookID, BookFormat: it.BookFormat, Title: title, Subtitle: subtitle, PosterURL: poster,
 			ReleaseTitle: it.ReleaseTitle, Protocol: string(it.Protocol), SizeBytes: it.SizeBytes, Status: string(it.Status),
-			ProgressPct: it.ProgressPct, Error: memberText(r, plainerror.Text(it.Error)), AddedAt: it.AddedAt, CompletedAt: it.CompletedAt, DestPath: fileLabel(r, it.DestPath),
+			ProgressPct: it.ProgressPct, Error: memberText(r, plainerror.Text(it.Error)), AddedAt: it.AddedAt, CompletedAt: it.CompletedAt, DestPath: fileLabel(r, it.DestPath), KeptFile: fileLabel(r, it.KeptFile), KeptData: it.KeptData,
 			Interrupted: it.Interrupted, Pending: s.pipelines.pending(it.ID), QueuePosition: positions[it.ID],
 		}
 		if it.IndexerID.Valid {
@@ -228,7 +236,11 @@ func (s *Server) handleListQueue(w http.ResponseWriter, r *http.Request) {
 			p.Resolution, p.Source, p.Codec = rel.Resolution, rel.Source, rel.Codec
 			p.Language = quality.FitLanguage(rel, preferred).Label
 		}
+		if s.musicWaitingNow(it) {
+			p.Waiting, p.Note = true, musicWaitNote
+		}
 		switch {
+		case p.Waiting:
 		case it.Status == queue.StatusQueued && diskNote != "-":
 			p.Note = diskNote
 		case it.Status == queue.StatusFailed && held[nzbLinkHoldKey(it.NZBURL, it.ReleaseTitle)]:
@@ -349,9 +361,15 @@ var errNotRetryable = errors.New("Only a failed or stopped download can be retri
 // retryQueueItem is Retry on one download (see handleRetryQueueItem), shared
 // with the bulk action. It answers the new queue item.
 func (s *Server) retryQueueItem(item queue.Item) (int64, error) {
+	// An album that is only waiting for MusicBrainz keeps its files: Retry
+	// repeats the import from them, it does not download again.
+	if s.retryMusicImport(item) {
+		return item.ID, nil
+	}
 	if item.Status != queue.StatusFailed && item.Status != queue.StatusStopped {
 		return 0, errNotRetryable
 	}
+	s.forgetFailedUsenetJob(item.ID) // or the downloader would get the same release twice
 	keptDir, reuse := s.keptDownload(item)
 	// The new item must not start before the earlier files are in its folder.
 	release := s.dispatch.Hold()
@@ -384,13 +402,13 @@ func (s *Server) regrab(item queue.Item) (int64, error) {
 		if err != nil {
 			return 0, fmt.Errorf("That show isn't in your library any more.")
 		}
-		return s.grabTVRelease(series, item.Season, item.Episode, item.ReleaseTitle, item.NZBURL, item.SizeBytes, protocol)
+		return s.grabTVOpts(series, item.Season, item.Episode, item.ReleaseTitle, item.NZBURL, item.SizeBytes, protocol, grabPicked, item.ReplaceByHand)
 	case item.MovieID > 0:
 		movie, err := s.MovieRepo.Get(item.MovieID)
 		if err != nil {
 			return 0, fmt.Errorf("That movie isn't in your library any more.")
 		}
-		return s.grabRelease(movie, item.ReleaseTitle, item.NZBURL, item.SizeBytes, protocol)
+		return s.grabMovieOpts(movie, item.ReleaseTitle, item.NZBURL, item.SizeBytes, protocol, grabPicked, grabOpts{byHand: item.ReplaceByHand})
 	case item.AlbumID > 0:
 		album, err := s.MusicRepo.GetAlbum(item.AlbumID)
 		if err != nil {
@@ -435,20 +453,34 @@ func (s *Server) handleBlocklistQueueItem(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusNotFound, "That download is no longer in the queue.")
 		return
 	}
-	if isActiveStatus(item.Status) {
-		writeError(w, http.StatusConflict, "This download is still running.")
+	if err := s.blocklistQueueItem(item); err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, errStillRunning) {
+			status = http.StatusConflict
+		}
+		writeError(w, status, err.Error())
 		return
+	}
+	writeJSON(w, http.StatusOK, nil)
+}
+
+var errStillRunning = errors.New("This download is still running.")
+
+// blocklistQueueItem blocklists the release of a download that is not running,
+// removes the download and looks for another release for its title. One
+// download from the Activity buttons, or each of several picked together.
+func (s *Server) blocklistQueueItem(item queue.Item) error {
+	if isActiveStatus(item.Status) {
+		return errStillRunning
 	}
 	reason, err := s.personBlocklistReason(item)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
+		return err
 	}
 	if err := s.Blocklist.Add(blocklist.Entry{
 		ReleaseTitle: item.ReleaseTitle, Protocol: string(item.Protocol), Reason: reason, MovieID: item.MovieID, SeriesID: item.SeriesID,
 	}); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
+		return err
 	}
 	_ = s.QueueRepo.LogItemEvent(queue.ItemEvent{MovieID: item.MovieID, SeriesID: item.SeriesID, AlbumID: item.AlbumID,
 		Kind: "blocklisted", Level: queue.LevelWarn, Message: "Blocklisted \"" + item.ReleaseTitle + "\": by you"})
@@ -463,7 +495,7 @@ func (s *Server) handleBlocklistQueueItem(w http.ResponseWriter, r *http.Request
 	case item.BookID > 0:
 		s.background(func() { s.searchBook(item.BookID, books.Format(item.BookFormat), true) })
 	}
-	writeJSON(w, http.StatusOK, nil)
+	return nil
 }
 
 // personBlocklistReason is the blocklist reason for a release a person

@@ -8,7 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rdborg/mediarium/internal/logbuf"
 	"github.com/rdborg/mediarium/internal/problems"
+	"github.com/rdborg/mediarium/internal/settings"
 )
 
 func problemsList(t *testing.T, client *http.Client, base, query string) map[string]any {
@@ -202,6 +204,7 @@ func TestOnlyAdministratorsUseTheProblemLog(t *testing.T) {
 		{http.MethodPost, "/api/system/problems/read"},
 		{http.MethodGet, "/api/system/problems/export"},
 		{http.MethodPut, "/api/system/problems/notify"},
+		{http.MethodPut, "/api/system/problems/debug"},
 	} {
 		status, body := doStatus(t, member, tc.method, base+tc.path)
 		if status != http.StatusForbidden || body["error"] != "Only an administrator can do this." {
@@ -250,5 +253,24 @@ func TestErrorsCanBeSentToNotificationTargets(t *testing.T) {
 	}
 	if !strings.Contains(rec.bodies[0], "Mediarium needs attention: the disk is full") || !strings.Contains(rec.bodies[0], "Free up some space") {
 		t.Errorf("the notification should say what happened and what to try: %s", rec.bodies[0])
+	}
+}
+
+func TestDetailedLoggingSwitch(t *testing.T) {
+	server, base, client := loginNewServer(t)
+	t.Cleanup(func() { logbuf.SetDebug(false) })
+	if got := problemsList(t, client, base, ""); got["debugLogging"] != false || logbuf.Debug() {
+		t.Fatalf("detailed logging starts switched off: %+v", got)
+	}
+	res := postJSONMethod[map[string]any](t, client, http.MethodPut, base+"/api/system/problems/debug", map[string]any{"enabled": true}, http.StatusOK)
+	if res["debugLogging"] != true || !logbuf.Debug() || problemsList(t, client, base, "")["debugLogging"] != true {
+		t.Fatalf("switching on applies at once: %+v", res)
+	}
+	if v, _ := server.Settings.Get(settings.KeyDebugLogging); v != "1" {
+		t.Fatalf("the switch is saved so it stays after a restart: %q", v)
+	}
+	postJSONMethod[map[string]any](t, client, http.MethodPut, base+"/api/system/problems/debug", map[string]any{"enabled": false}, http.StatusOK)
+	if logbuf.Debug() {
+		t.Fatal("switching off applies at once")
 	}
 }

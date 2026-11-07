@@ -371,6 +371,11 @@ func (s *Server) allShowEpisodes() ([]showEpisode, error) {
 	return out, nil
 }
 
+// arrWantedMissing answers GET /wanted/missing. Radarr lists the monitored
+// movies that have no file and are out. A title still waiting for a release
+// (no date yet, or a date ahead) can't be downloaded, so it is left off:
+// nzb360 showed those as something missing. Sonarr lists the episodes that
+// have aired.
 func (s *Server) arrWantedMissing(app arrApp) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		desc := !strings.EqualFold(r.URL.Query().Get("sortDirection"), "ascending")

@@ -338,10 +338,33 @@ func publishNew(staging, destPath string) error {
 	return nil
 }
 
+// sourceOpenWaits is how long openSource waits between tries when a file that
+// was just downloaded refuses to open. On Docker Desktop with a Windows drive
+// that is usually a virus scanner or another program still holding the file,
+// and it lets go within seconds.
+var sourceOpenWaits = []time.Duration{500 * time.Millisecond, time.Second, 2 * time.Second, 4 * time.Second}
+
+// openSourceFile is os.Open; tests replace it.
+var openSourceFile = os.Open
+
+// openSource opens the file an import reads from. Only a permission error is
+// tried again; any other error is returned at once.
+func openSource(path string) (*os.File, error) {
+	f, err := openSourceFile(path)
+	for _, wait := range sourceOpenWaits {
+		if err == nil || !errors.Is(err, fs.ErrPermission) {
+			break
+		}
+		time.Sleep(wait)
+		f, err = openSourceFile(path)
+	}
+	return f, err
+}
+
 // copyFile copies src to dest, which must not exist. On any failure the
 // partly written dest is removed. The copy keeps the modification time.
 func copyFile(src, dest string, srcInfo os.FileInfo) (err error) {
-	in, err := os.Open(src)
+	in, err := openSource(src)
 	if err != nil {
 		return fmt.Errorf("open source: %w", err)
 	}

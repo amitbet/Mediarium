@@ -148,7 +148,17 @@ type bookSearchResult struct {
 	LibraryID int64  `json:"libraryId,omitempty"`
 }
 
-// handleBookSearch looks books up on Open Library by title or author.
+// hardcoverSearchWait is how long a book search waits for Hardcover. After
+// that the answer is Open Library's alone, so a slow Hardcover cannot hold
+// the search for as long as two full API calls.
+const hardcoverSearchWait = 4 * time.Second
+
+// handleBookSearch looks books up on Open Library, and on Hardcover when a token is saved.
+// Hardcover fills in covers Open Library doesn't have, and books only Hardcover
+// knows are listed too. Google Books is asked afterwards, for a few seconds, with
+// or without an API key: it fills a missing cover or description, and a book
+// neither of the others lists is added from Google. If Google does not answer,
+// the books already found are shown. Without a Hardcover token, that part is skipped.
 func (s *Server) handleBookSearch(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	if len(q) < 2 {
@@ -156,41 +166,84 @@ func (s *Server) handleBookSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// With an author (Find it myself on the import list sends the title as q
-	// and the author apart), both go to Open Library, and the books by that
-	// author come first, in Open Library's own order.
+	// and the author apart), both go to the catalogues, and the books by that
+	// author come first.
 	author := strings.TrimSpace(r.URL.Query().Get("author"))
 	query := q
 	if author != "" {
 		query += " " + author
 	}
-	found, err := s.OpenLibrary.Search(r.Context(), query, 24)
-	if errors.Is(err, books.ErrBadQuery) {
-		slog.Info("open library refused a book search", "err", err)
-		writeError(w, http.StatusUnprocessableEntity, "Open Library couldn't read that search. Try fewer or simpler words.")
+	var (
+		found   []books.Found
+		olErr   error
+		hcFound []books.Found
+		hcErr   error
+	)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		found, olErr = s.OpenLibrary.Search(r.Context(), query, 24)
+	}()
+	var cancel context.CancelFunc
+	if hc := s.hardcover(); hc != nil {
+		var hcCtx context.Context
+		hcCtx, cancel = context.WithTimeout(r.Context(), hardcoverSearchWait)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			hcFound, hcErr = hc.Search(hcCtx, query, 24)
+		}()
+	}
+	wg.Wait()
+	if cancel != nil {
+		cancel()
+	}
+	if hcErr != nil {
+		slog.Info("books: Hardcover search failed, using Open Library", "err", hcErr)
+		hcFound = nil
+	}
+	if olErr != nil && len(hcFound) == 0 {
+		if gb := s.googleHits(r.Context(), query, s.infoLanguage()); len(gb) > 0 {
+			writeJSON(w, http.StatusOK, s.bookResults(gb))
+			return
+		}
+		if errors.Is(olErr, books.ErrBadQuery) {
+			slog.Info("open library refused a book search", "err", olErr)
+			writeError(w, http.StatusUnprocessableEntity, "Open Library couldn't read that search. Try fewer or simpler words.")
+			return
+		}
+		writeUpstreamError(w, "look up books", olErr)
 		return
 	}
-	if err != nil {
-		writeUpstreamError(w, "look up books", err)
-		return
+	if olErr != nil {
+		slog.Info("books: Open Library search failed, using Hardcover", "err", olErr)
+		found = nil
 	}
+	found = books.MergeHardcover(found, hcFound)
 	if author != "" {
 		books.RankByTitleAndAuthor(found, q, author)
 	} else {
 		newestFirst(found, q, func(f books.Found) string { return f.Title }, func(f books.Found) int { return f.Year })
 	}
+	// Google is residual: one short query after the others, remembered so the
+	// next keystroke does not ask again.
+	found = books.MergeGoogle(found, s.googleHits(r.Context(), query, s.infoLanguage()))
 	writeJSON(w, http.StatusOK, s.bookResults(found))
 }
 
 type addBookRequest struct {
-	OLKey     string `json:"olKey"`
-	Title     string `json:"title"`
-	Author    string `json:"author"`
-	AuthorKey string `json:"authorKey"`
-	Year      int    `json:"year"`
-	CoverID   int    `json:"coverId"`
-	Ebook     bool   `json:"ebook"`
-	Audiobook bool   `json:"audiobook"`
-	SearchNow bool   `json:"searchNow"`
+	OLKey       string `json:"olKey"`
+	Title       string `json:"title"`
+	Author      string `json:"author"`
+	AuthorKey   string `json:"authorKey"`
+	Year        int    `json:"year"`
+	CoverID     int    `json:"coverId"`
+	HardcoverID int    `json:"hardcoverId"`
+	GoogleID    string `json:"googleId"`
+	Ebook       bool   `json:"ebook"`
+	Audiobook   bool   `json:"audiobook"`
+	SearchNow   bool   `json:"searchNow"`
 }
 
 // handleAddBook adds a book with the formats asked for. Details (the
@@ -213,14 +266,31 @@ func (s *Server) handleAddBook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "That format is switched off. Switch it on in Settings > Media types.")
 		return
 	}
+	s.finishAddBook(w, r, req)
+}
+
+// finishAddBook stores a book that was already chosen from Open Library or
+// Hardcover. The caller has checked the formats.
+func (s *Server) finishAddBook(w http.ResponseWriter, r *http.Request, req addBookRequest) {
 	b := books.Book{OLKey: strings.TrimPrefix(req.OLKey, "/works/"), Title: strings.TrimSpace(req.Title), Author: strings.TrimSpace(req.Author),
 		AuthorKey: req.AuthorKey, Year: req.Year, CoverID: req.CoverID, WantEbook: req.Ebook, WantAudiobook: req.Audiobook}
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	gbID := ""
+	if id, ok := books.ParseGoogleKey(b.OLKey); ok {
+		gbID = id
+	}
+	if books.ValidGoogleID(strings.TrimSpace(req.GoogleID)) {
+		gbID = strings.TrimSpace(req.GoogleID)
+	}
+	timeout := 10 * time.Second
+	if _, ok := books.ParseHardcoverKey(b.OLKey); ok || req.HardcoverID > 0 || gbID != "" {
+		timeout = 20 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
-	if work, err := s.OpenLibrary.GetWork(ctx, b.OLKey); err == nil {
-		b.Description = work.Description
-		if b.CoverID == 0 {
-			b.CoverID = work.CoverID
+	hcID, cover := s.prepareNewBook(ctx, &b, req.HardcoverID)
+	if b.Description == "" && gbID != "" {
+		if info, err := s.googleWork(ctx, gbID); err == nil && info.Description != "" {
+			b.Description = info.Description
 		}
 	}
 	userID, byline := requester(r)
@@ -233,6 +303,18 @@ func (s *Server) handleAddBook(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if hcID > 0 && created.CoverID == 0 && created.OwnCover == 0 {
+		s.keepHardcoverCover(ctx, created, hcID, cover)
+		if fresh, err := s.BookRepo.Get(created.ID); err == nil {
+			created = fresh
+		}
+	}
+	if gbID != "" && created.CoverID == 0 && created.OwnCover == 0 {
+		s.keepGoogleCover(ctx, created.ID, gbID)
+		if fresh, err := s.BookRepo.Get(created.ID); err == nil {
+			created = fresh
+		}
 	}
 	_ = s.QueueRepo.LogActivity(0, "added", fmt.Sprintf("%s by %s added to the library%s", created.Name(), created.Author, byline))
 	if req.SearchNow {
@@ -438,6 +520,7 @@ func (s *Server) handleBookReleases(w http.ResponseWriter, r *http.Request) {
 	for _, res := range found.Results {
 		p := s.toSearchResultPayload(res)
 		p.Blocklisted = blocked[blocklist.Key(res.Title)]
+		p.Categories = res.Categories
 		out = append(out, p)
 	}
 	s.markCachedPayloads(r.Context(), out)
@@ -618,6 +701,59 @@ const maxBookSearchesPerHunt = 10
 type huntPosition struct {
 	mu            sync.Mutex
 	movies, books int
+	// episodes is when the scheduled TV search last looked for each episode
+	// (by id), so a show with more missing episodes than one run can search
+	// goes on with the ones not tried yet instead of starting over.
+	episodes map[int64]time.Time
+}
+
+// noteEpisode records that the scheduled search just looked for an episode.
+func (h *huntPosition) noteEpisode(id int64, at time.Time) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.episodes == nil || len(h.episodes) > 100000 {
+		h.episodes = map[int64]time.Time{}
+	}
+	h.episodes[id] = at
+}
+
+// orderEpisodes puts the episodes the scheduled search tried longest ago (or
+// never) first, inside each season and among the seasons of one show. The
+// order of the shows themselves is kept.
+func (h *huntPosition) orderEpisodes(wants []tvWant) {
+	h.mu.Lock()
+	last := func(id int64) time.Time { return h.episodes[id] }
+	oldest := make([]time.Time, len(wants))
+	for i := range wants {
+		eps := wants[i].episodes
+		sort.SliceStable(eps, func(a, b int) bool { return last(eps[a].ID).Before(last(eps[b].ID)) })
+		if len(eps) > 0 {
+			oldest[i] = last(eps[0].ID)
+		}
+	}
+	h.mu.Unlock()
+	rank := map[int64]int{}
+	for _, w := range wants {
+		if _, ok := rank[w.series.ID]; !ok {
+			rank[w.series.ID] = len(rank)
+		}
+	}
+	idx := make([]int, len(wants))
+	for i := range idx {
+		idx[i] = i
+	}
+	sort.SliceStable(idx, func(a, b int) bool {
+		ra, rb := rank[wants[idx[a]].series.ID], rank[wants[idx[b]].series.ID]
+		if ra != rb {
+			return ra < rb
+		}
+		return oldest[idx[a]].Before(oldest[idx[b]])
+	})
+	sorted := make([]tvWant, len(wants))
+	for i, j := range idx {
+		sorted[i] = wants[j]
+	}
+	copy(wants, sorted)
 }
 
 // bookOwnFolder is the folder that belongs to a book alone, for removing it

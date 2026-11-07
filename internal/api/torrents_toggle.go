@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,6 +18,20 @@ import (
 // torrent switch (Settings > Downloading > Torrents) is off. It is written for the person
 // reading it, so it is passed to the UI as is.
 var errTorrentsDisabled = errors.New("Torrents are switched off. Switch them on in Settings > Downloading > Torrents to download torrent releases.")
+
+// codeTorrentsOff is the stable code sent beside errTorrentsDisabled, so the
+// page can offer a "Switch on torrents" button without matching the words
+// (which are translated).
+const codeTorrentsOff = "torrents_off"
+
+// errorCodeFor is the stable "code" that goes with an error message, for the
+// few errors the page does more with than show: "" for all the others.
+func errorCodeFor(message string) string {
+	if strings.Contains(message, errTorrentsDisabled.Error()) {
+		return codeTorrentsOff
+	}
+	return ""
+}
 
 // torrentsEnabled reports the torrent on/off switch. On unless explicitly
 // turned off, so upgrading never changes anyone's behavior underneath them.

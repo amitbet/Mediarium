@@ -50,7 +50,42 @@ const (
 	// maxRetryAfterSeconds is the longest pause the server can ask for before
 	// a retry; a request cannot wait for ever on what a reply says.
 	maxRetryAfterSeconds = 60
+	// maxPatientRetryAfter is the longest pause a patient request takes on
+	// what a reply says.
+	maxPatientRetryAfter = 2 * time.Minute
 )
+
+// defaultPatientWaits are the pauses of a patient request: it tries again
+// after 2 seconds, 5, 15, 45 and 2 minutes, about three and a half minutes
+// in all, which covers the busy spells MusicBrainz has now and then. Every
+// try still takes its place in the one-request-per-second limit.
+var defaultPatientWaits = []time.Duration{2 * time.Second, 5 * time.Second, 15 * time.Second, 45 * time.Second, 2 * time.Minute}
+
+// ErrUnavailable is what a request ends with when MusicBrainz could not be
+// used because it is busy (503, 429) or could not be reached, as opposed to
+// answering that it does not know something. Test for it with errors.Is.
+var ErrUnavailable = errors.New("the music database is busy or not reachable")
+
+type unavailableError struct{ msg string }
+
+func (e *unavailableError) Error() string        { return e.msg }
+func (e *unavailableError) Is(target error) bool { return target == ErrUnavailable }
+
+type patientKey struct{}
+
+// Patient marks the requests made with the returned context as patient: they
+// keep trying through a busy spell (see defaultPatientWaits), and also
+// through timeouts and 502/504 answers, instead of giving up after a few
+// seconds. For background work such as an import, never for a person waiting
+// at a page.
+func Patient(ctx context.Context) context.Context {
+	return context.WithValue(ctx, patientKey{}, true)
+}
+
+func isPatient(ctx context.Context) bool {
+	v, _ := ctx.Value(patientKey{}).(bool)
+	return v
+}
 
 // Client talks to one MusicBrainz server. It is safe for concurrent use; all
 // requests made through one Client share its rate limit and cache.
@@ -63,6 +98,7 @@ type Client struct {
 	cache     *cache
 	retries   int
 	backoff   func(attempt int) time.Duration
+	patient   []time.Duration // the waits of a patient request (see Patient)
 }
 
 // Option changes a Client made by New.
@@ -94,6 +130,12 @@ func WithBackoff(f func(attempt int) time.Duration) Option {
 	return func(c *Client) { c.backoff = f }
 }
 
+// WithPatientWaits sets the pauses before each retry of a patient request
+// (see Patient): one retry per entry. Tests pass tiny ones.
+func WithPatientWaits(waits ...time.Duration) Option {
+	return func(c *Client) { c.patient = waits }
+}
+
 // UserAgent is the identifying User-Agent MusicBrainz asks for:
 // application name, version and a contact address.
 func UserAgent(version string) string {
@@ -114,6 +156,7 @@ func New(version string, opts ...Option) *Client {
 		bucket:    newTokenBucket(defaultInterval),
 		cache:     newCache(defaultCacheTTL, maxCacheEntries),
 		retries:   defaultRetries,
+		patient:   append([]time.Duration(nil), defaultPatientWaits...),
 		backoff:   func(attempt int) time.Duration { return time.Duration(attempt) * 2 * time.Second },
 	}
 	for _, o := range opts {
@@ -155,6 +198,13 @@ func decode(body []byte, out any, path string) error {
 }
 
 func (c *Client) fetch(ctx context.Context, full string) ([]byte, error) {
+	patient := isPatient(ctx)
+	maxRetries, pauseFor := c.retries, c.backoff
+	if patient {
+		waits := c.patient
+		maxRetries = len(waits)
+		pauseFor = func(attempt int) time.Duration { return waits[attempt-1] }
+	}
 	for attempt := 0; ; attempt++ {
 		if err := c.bucket.wait(ctx); err != nil {
 			return nil, err
@@ -167,11 +217,23 @@ func (c *Client) fetch(ctx context.Context, full string) ([]byte, error) {
 		req.Header.Set("Accept", "application/json")
 		resp, err := c.http.Do(req)
 		if err != nil {
-			return nil, fmt.Errorf("music database: %w", err)
+			if !patient || ctx.Err() != nil {
+				return nil, fmt.Errorf("music database: %w", err)
+			}
+			// A timeout or a dropped connection: MusicBrainz is struggling.
+			if attempt >= maxRetries {
+				return nil, &unavailableError{fmt.Sprintf("the music database could not be reached, even after %d retries: %v", maxRetries, err)}
+			}
+			if err := sleep(ctx, pauseFor(attempt+1)); err != nil {
+				return nil, err
+			}
+			continue
 		}
 		body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
 		resp.Body.Close()
 
+		busy := resp.StatusCode == http.StatusServiceUnavailable || resp.StatusCode == http.StatusTooManyRequests ||
+			(patient && (resp.StatusCode == http.StatusBadGateway || resp.StatusCode == http.StatusGatewayTimeout))
 		switch {
 		case resp.StatusCode == http.StatusOK:
 			if readErr != nil {
@@ -180,22 +242,23 @@ func (c *Client) fetch(ctx context.Context, full string) ([]byte, error) {
 			return body, nil
 		case resp.StatusCode == http.StatusNotFound:
 			return nil, ErrNotFound
-		case resp.StatusCode == http.StatusServiceUnavailable && attempt < c.retries:
-			pause := c.backoff(attempt + 1)
+		case busy && attempt < maxRetries:
+			pause := pauseFor(attempt + 1)
 			if s, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && s > 0 {
-				if s > maxRetryAfterSeconds {
-					s = maxRetryAfterSeconds // a huge number would also overflow the multiplication
+				limit := maxRetryAfterSeconds // a huge number would also overflow the multiplication
+				if patient {
+					limit = int(maxPatientRetryAfter / time.Second)
 				}
-				if time.Duration(s)*time.Second > pause {
-					pause = time.Duration(s) * time.Second
+				if ask := time.Duration(min(s, limit)) * time.Second; ask > pause {
+					pause = ask
 				}
 			}
 			if err := sleep(ctx, pause); err != nil {
 				return nil, err
 			}
 			continue
-		case resp.StatusCode == http.StatusServiceUnavailable:
-			return nil, fmt.Errorf("the music database is busy (503), even after %d retries. Try again later.", c.retries)
+		case busy:
+			return nil, &unavailableError{fmt.Sprintf("the music database is busy (%d), even after %d retries. Try again later.", resp.StatusCode, maxRetries)}
 		default:
 			return nil, fmt.Errorf("music database: unexpected status %d", resp.StatusCode)
 		}

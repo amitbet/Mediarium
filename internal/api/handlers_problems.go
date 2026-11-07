@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rdborg/mediarium/internal/logbuf"
 	"github.com/rdborg/mediarium/internal/problems"
 	"github.com/rdborg/mediarium/internal/settings"
 )
@@ -143,6 +144,7 @@ type problemsPayload struct {
 	Counts           problems.Counts     `json:"counts"`
 	Areas            []problems.AreaInfo `json:"areas"`
 	NotifyOnProblems bool                `json:"notifyOnProblems"`
+	DebugLogging     bool                `json:"debugLogging"`
 	KeepDays         int                 `json:"keepDays"`
 }
 
@@ -159,7 +161,7 @@ func (s *Server) handleProblems(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	out := problemsPayload{Items: []problemView{}, Counts: counts, Areas: problems.Areas(), NotifyOnProblems: s.notifyOnProblems(), KeepDays: s.problemKeepDays()}
+	out := problemsPayload{Items: []problemView{}, Counts: counts, Areas: problems.Areas(), NotifyOnProblems: s.notifyOnProblems(), DebugLogging: logbuf.Debug(), KeepDays: s.problemKeepDays()}
 	if r.URL.Query().Get("summary") != "1" {
 		entries, total, err := s.Problems.List(f)
 		if err != nil {
@@ -252,6 +254,39 @@ func (s *Server) handleProblemsNotify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"notifyOnProblems": req.Enabled})
+}
+
+// applyDebugLogging sets the log detail from the saved switch. It runs at start.
+func (s *Server) applyDebugLogging() {
+	v, _ := s.Settings.Get(settings.KeyDebugLogging)
+	logbuf.SetDebug(v == "1")
+}
+
+// handleDebugLogging switches detailed logging on or off. It applies at once
+// and is kept for the next start.
+func (s *Server) handleDebugLogging(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "Couldn't read that request. Reload the page and try again.")
+		return
+	}
+	value := "0"
+	if req.Enabled {
+		value = "1"
+	}
+	if err := s.Settings.Set(settings.KeyDebugLogging, value, false); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	logbuf.SetDebug(req.Enabled)
+	if req.Enabled {
+		slog.Info("Detailed logging switched on.")
+	} else {
+		slog.Info("Detailed logging switched off.")
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"debugLogging": req.Enabled})
 }
 
 // problemKeepDays is how many days problems are kept: 30, or fewer when the

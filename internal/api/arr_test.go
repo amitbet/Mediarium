@@ -242,6 +242,9 @@ func TestArrAPIForOverseerr(t *testing.T) {
 	if got := list(arrCall(t, "GET", fmt.Sprintf("%s/episode?seriesId=%v&episodeIds=%v", sonarr, seriesID, one), key, nil, http.StatusOK)); len(got) != 1 || obj(got[0])["id"] != one {
 		t.Fatalf("episodeIds filter: %v", got)
 	}
+	if got := list(arrCall(t, "GET", fmt.Sprintf("%s/episode?episodeIds=%v&includeSeries=true", sonarr, one), key, nil, http.StatusOK)); len(got) != 1 || obj(got[0])["id"] != one || obj(got[0])["series"] == nil {
+		t.Fatalf("episodeIds without a show: %v", got)
+	}
 	if cmd := obj(arrCall(t, "POST", sonarr+"/command", key, map[string]any{"name": "SeriesSearch", "seriesId": seriesID}, http.StatusCreated)); cmd["status"] == nil {
 		t.Fatalf("command: %v", cmd)
 	}

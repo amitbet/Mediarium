@@ -55,6 +55,29 @@ func (s *Scheduler) DelayFirstRuns(d time.Duration) {
 	}
 }
 
+// StaggerFirstRuns is DelayFirstRuns for a crowd of jobs: each job that has
+// no InitialDelay of its own waits base, base+step, base+2*step and so on, in
+// the order the jobs were given, so they do not all start in the same second.
+// Call it before Start.
+func (s *Scheduler) StaggerFirstRuns(base, step time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	slot := 0
+	for i := range s.jobs {
+		if s.jobs[i].InitialDelay == 0 {
+			s.jobs[i].InitialDelay = base + time.Duration(slot)*step
+			slot++
+		}
+	}
+}
+
+// Jobs returns a copy of the scheduler's jobs, with the delays as set so far.
+func (s *Scheduler) Jobs() []Job {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]Job(nil), s.jobs...)
+}
+
 // Start launches every job's ticker loop in its own goroutine. Each job
 // runs once (right away, or after its InitialDelay), then again every
 // Interval, until Stop is called.

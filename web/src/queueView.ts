@@ -65,7 +65,7 @@ export function groupQueue(items: readonly QueueItem[]): QueueSections {
 }
 
 // What the status badge says.
-export function statusLabel(q: Pick<QueueItem, 'status' | 'interrupted' | 'pending' | 'unpack'>): string {
+export function statusLabel(q: Pick<QueueItem, 'status' | 'interrupted' | 'pending' | 'unpack'> & { waiting?: boolean }): string {
   if (q.pending === 'pausing') return t('Pausing…')
   if (q.pending === 'stopping') return t('Stopping…')
   switch (q.status) {
@@ -74,6 +74,7 @@ export function statusLabel(q: Pick<QueueItem, 'status' | 'interrupted' | 'pendi
     case 'downloading':
       return t('Downloading')
     case 'importing':
+      if (q.waiting) return t('Waiting for MusicBrainz')
       return q.unpack ? t('Unpacking') : t('Importing')
     case 'paused':
       return q.interrupted ? t('Partly downloaded, stopped') : t('Paused')

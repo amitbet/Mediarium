@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"sync"
@@ -20,15 +21,72 @@ import (
 func (s *Server) bookResults(found []books.Found) []bookSearchResult {
 	out := make([]bookSearchResult, 0, len(found))
 	covers := make([]int, 0, len(found))
+	hcCovers := make([]int, 0, len(found))
+	gbCovers := make([]string, 0, len(found))
+	var hardcoverRows []books.Book
+	var googleRows []books.Book
+	var listed, googleListed bool
 	for _, f := range found {
 		covers = append(covers, f.CoverID)
-		res := bookSearchResult{Found: f, CoverURL: books.LocalCoverURL(f.CoverID, "M")}
-		if b, ok, _ := s.BookRepo.GetByKey(f.Key); ok {
+		if f.HardcoverID > 0 {
+			s.rememberHardcoverCover(f.HardcoverID, f.CoverImage)
+			if f.CoverID <= 0 && f.CoverImage != "" {
+				hcCovers = append(hcCovers, f.HardcoverID)
+			}
+		}
+		if f.CoverID <= 0 && f.CoverImage == "" && f.GoogleID != "" && f.GoogleCover != "" {
+			gbCovers = append(gbCovers, f.GoogleID)
+		}
+		res := bookSearchResult{Found: f, CoverURL: f.CoverAddress("M")}
+		b, ok, err := s.BookRepo.GetByKey(f.Key)
+		if err != nil {
+			slog.Info("books: library lookup failed", "key", f.Key, "err", err)
+		} else if ok {
 			res.LibraryID = b.ID
+		} else if _, hcOnly := books.ParseHardcoverKey(f.Key); hcOnly {
+			if !listed {
+				listed = true
+				library, listErr := s.BookRepo.List()
+				if listErr != nil {
+					slog.Info("books: library lookup failed", "err", listErr)
+				}
+				for _, row := range library {
+					if _, ok := books.ParseHardcoverKey(row.OLKey); ok {
+						hardcoverRows = append(hardcoverRows, row)
+					}
+				}
+			}
+			for _, row := range hardcoverRows {
+				if books.SameTitle(row.Title, f.Title, true) && books.SameAuthor(row.Author, f.Author) {
+					res.LibraryID = row.ID
+					break
+				}
+			}
+		} else if _, gbOnly := books.ParseGoogleKey(f.Key); gbOnly {
+			if !googleListed {
+				googleListed = true
+				library, listErr := s.BookRepo.List()
+				if listErr != nil {
+					slog.Info("books: library lookup failed", "err", listErr)
+				}
+				for _, row := range library {
+					if _, ok := books.ParseGoogleKey(row.OLKey); ok {
+						googleRows = append(googleRows, row)
+					}
+				}
+			}
+			for _, row := range googleRows {
+				if books.SameTitle(row.Title, f.Title, true) && books.SameAuthor(row.Author, f.Author) {
+					res.LibraryID = row.ID
+					break
+				}
+			}
 		}
 		out = append(out, res)
 	}
 	s.warmBookCovers("M", covers)
+	s.warmHardcoverCovers(hcCovers)
+	s.warmGoogleCovers(gbCovers)
 	return out
 }
 
@@ -125,9 +183,19 @@ type workPayload struct {
 }
 
 // GET /api/book-works/{key}: one book from Open Library for its info page,
-// marked when it is already in the library.
+// or from Hardcover when the key is one of theirs, marked when it is already
+// in the library.
 func (s *Server) handleBookWork(w http.ResponseWriter, r *http.Request) {
-	info, err := s.OpenLibrary.WorkInfo(r.Context(), r.PathValue("key"))
+	key := r.PathValue("key")
+	if id, ok := books.ParseHardcoverKey(key); ok {
+		s.handleHardcoverWork(w, r, id)
+		return
+	}
+	if id, ok := books.ParseGoogleKey(key); ok {
+		s.handleGoogleWork(w, r, id)
+		return
+	}
+	info, err := s.OpenLibrary.WorkInfo(r.Context(), key)
 	if errors.Is(err, books.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "Open Library doesn't have that book.")
 		return
@@ -136,9 +204,84 @@ func (s *Server) handleBookWork(w http.ResponseWriter, r *http.Request) {
 		writeUpstreamError(w, "look the book up on Open Library", err)
 		return
 	}
-	out := workPayload{WorkInfo: info, CoverURL: books.LocalCoverURL(info.CoverID, "L")}
+	s.fillGoogleGap(r.Context(), &info)
+	if info.GoogleCover != "" {
+		s.warmGoogleCovers([]string{info.GoogleID})
+	}
+	out := workPayload{WorkInfo: info, CoverURL: info.CoverAddress("L")}
 	if b, ok, _ := s.BookRepo.GetByKey(info.Key); ok {
 		out.LibraryID = b.ID
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleHardcoverWork is the info page of a book that was found on Hardcover
+// and not on Open Library.
+func (s *Server) handleHardcoverWork(w http.ResponseWriter, r *http.Request, id int) {
+	hc := s.hardcover()
+	if hc == nil {
+		writeError(w, http.StatusNotFound, "That book was found on Hardcover, and no Hardcover token is saved.")
+		return
+	}
+	info, err := hc.Book(r.Context(), id)
+	if errors.Is(err, books.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "Hardcover doesn't have that book.")
+		return
+	}
+	if err != nil {
+		writeUpstreamError(w, "look the book up on Hardcover", err)
+		return
+	}
+	s.rememberHardcoverCover(info.HardcoverID, info.CoverImage)
+	out := workPayload{WorkInfo: info, CoverURL: info.CoverAddress("L")}
+	if b, ok, err := s.BookRepo.GetByKey(info.Key); err != nil {
+		slog.Info("books: library lookup failed", "err", err)
+	} else if ok {
+		out.LibraryID = b.ID
+	} else if library, err := s.BookRepo.List(); err != nil {
+		slog.Info("books: library lookup failed", "err", err)
+	} else {
+		for _, b := range library {
+			if _, hc := books.ParseHardcoverKey(b.OLKey); !hc {
+				continue
+			}
+			if books.SameTitle(b.Title, info.Title, true) && books.SameAuthor(b.Author, info.Author) {
+				out.LibraryID = b.ID
+				break
+			}
+		}
+	}
+	if info.CoverImage != "" {
+		s.warmHardcoverCovers([]int{info.HardcoverID})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleGoogleWork is the info page of a book that was found on Google Books
+// and not on Open Library or Hardcover.
+func (s *Server) handleGoogleWork(w http.ResponseWriter, r *http.Request, id string) {
+	info, err := s.googleWork(r.Context(), id)
+	if errors.Is(err, books.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "Google Books doesn't have that book.")
+		return
+	}
+	if err != nil {
+		writeUpstreamError(w, "look the book up on Google Books", err)
+		return
+	}
+	out := workPayload{WorkInfo: info, CoverURL: info.CoverAddress("L")}
+	if b, ok, _ := s.BookRepo.GetByKey(info.Key); ok {
+		out.LibraryID = b.ID
+	} else if library, err := s.BookRepo.List(); err == nil {
+		for _, b := range library {
+			if books.SameTitle(b.Title, info.Title, true) && books.SameAuthor(b.Author, info.Author) {
+				out.LibraryID = b.ID
+				break
+			}
+		}
+	}
+	if info.GoogleCover != "" {
+		s.warmGoogleCovers([]string{info.GoogleID})
 	}
 	writeJSON(w, http.StatusOK, out)
 }

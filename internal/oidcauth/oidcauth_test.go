@@ -390,10 +390,17 @@ func TestConfigCheck(t *testing.T) {
 		{Issuer: "https://auth.example.com?x=1", ClientID: "a", ClientSecret: "b"},
 		{Issuer: "https://auth.example.com", ClientSecret: "b"},
 		{Issuer: "https://auth.example.com", ClientID: "a"},
+		{Issuer: "https://auth.example.com", ClientID: "a", ClientSecret: "b", AdminGroup: "g", ViewerGroup: "g"},
 	}
 	for i, c := range bad {
 		if c.Check() == nil {
 			t.Errorf("case %d accepted: %+v", i, c)
+		}
+	}
+	for _, c := range []oidcauth.Config{{AdminGroup: "a"}, {ViewerGroup: "v"}, {AdminGroup: "a", ViewerGroup: "v"}} {
+		c.Issuer, c.ClientID, c.ClientSecret = "https://auth.example.com", "a", "b"
+		if err := c.Check(); err != nil {
+			t.Errorf("%+v refused: %v", c, err)
 		}
 	}
 	scopes := (oidcauth.Config{Scopes: "profile email profile groups"}).ScopeList()

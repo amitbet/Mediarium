@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/rdborg/mediarium/internal/books"
@@ -35,7 +36,16 @@ import (
 // never what they point at.
 
 // downloadClientPoll is how often the client is asked how a torrent is doing.
-var downloadClientPoll = 15 * time.Second
+// It is atomic because tests shorten it while earlier downloads' goroutines
+// may still be reading it.
+var downloadClientPoll = func() *atomic.Int64 {
+	v := new(atomic.Int64)
+	v.Store(int64(15 * time.Second))
+	return v
+}()
+
+// downloadClientPollEvery is the current time between two status checks.
+func downloadClientPollEvery() time.Duration { return time.Duration(downloadClientPoll.Load()) }
 
 const (
 	// downloadClientStall is how long a torrent may sit in the client without
@@ -218,7 +228,7 @@ func (s *Server) downloadViaClient(ctx context.Context, queueID int64, downloadU
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case <-time.After(downloadClientPoll):
+			case <-time.After(downloadClientPollEvery()):
 			}
 			continue
 		}
@@ -272,6 +282,9 @@ func (s *Server) downloadViaClient(ctx context.Context, queueID int64, downloadU
 			if settle > 0 {
 				settle--
 			}
+			if t.Waiting() {
+				lastMove = time.Now() // in line in the client: not stalled
+			}
 			if t.Progress != lastProgress {
 				lastProgress, lastMove = t.Progress, time.Now()
 				report(t.Progress * 100)
@@ -283,7 +296,7 @@ func (s *Server) downloadViaClient(ctx context.Context, queueID int64, downloadU
 		select {
 		case <-ctx.Done():
 			return ctx.Err() // paused or stopped: the torrent stays in the client for later
-		case <-time.After(downloadClientPoll):
+		case <-time.After(downloadClientPollEvery()):
 		}
 	}
 }

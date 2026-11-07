@@ -8,6 +8,7 @@ import { useMusicPlayer } from '../components/MusicPlayer'
 import Dropdown from '../components/Dropdown'
 import Icon from '../components/Icon'
 import PosterCard, { type CardAction } from '../components/PosterCard'
+import { WindowedGrid } from '../components/Windowed'
 import { describeState, type ItemState } from '../components/state'
 import { useToast } from '../components/Toast'
 import { chosenOf, failureLines, nameList, selectAllKeys, selectionText, selectRange, toggleKey } from '../librarySelection'
@@ -348,8 +349,10 @@ export default function MusicLibrary({
           )}
         </div>
       ) : (
-        <div className="poster-grid music-grid">
-          {shown.map((a) => {
+        <WindowedGrid
+          className="poster-grid music-grid"
+          items={shown}
+          render={(a) => {
             const missing = missingOf(a)
             return (
               <PosterCard
@@ -372,8 +375,8 @@ export default function MusicLibrary({
                 }
               />
             )
-          })}
-        </div>
+          }}
+        />
       )}
     </div>
   )

@@ -25,6 +25,12 @@ type grabRequest struct {
 	// ReplaceQueueID names the download that is in the way: it is cancelled
 	// and this release grabbed in its place (see replaceBlocking).
 	ReplaceQueueID int64 `json:"replaceQueueId,omitempty"`
+	// Replace says the person picked this release by hand and agreed to it
+	// taking the place of the file the title (or each episode it covers) has:
+	// the import then swaps the new file in whatever "Better versions" and "If
+	// a file already exists" say, and the old file goes to the recycle bin.
+	// Left out, the grab behaves like an automatic one.
+	Replace bool `json:"replace,omitempty"`
 }
 
 func (r grabRequest) protocol() indexers.Protocol {
@@ -74,7 +80,7 @@ func (s *Server) handleGrab(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	queueID, err := s.grabRelease(movie, req.ReleaseTitle, req.DownloadURL, req.SizeBytes, req.protocol())
+	queueID, err := s.grabMovieOpts(movie, req.ReleaseTitle, req.DownloadURL, req.SizeBytes, req.protocol(), grabPicked, grabOpts{byHand: req.Replace})
 	if err != nil {
 		writeGrabError(w, err, http.StatusInternalServerError)
 		return
@@ -145,7 +151,7 @@ func (s *Server) handleSearchGrab(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	queueID, err := s.grabRelease(movie, req.ReleaseTitle, req.DownloadURL, req.SizeBytes, req.protocol())
+	queueID, err := s.grabMovieOpts(movie, req.ReleaseTitle, req.DownloadURL, req.SizeBytes, req.protocol(), grabPicked, grabOpts{byHand: req.Replace})
 	if err != nil {
 		writeGrabError(w, err, http.StatusInternalServerError)
 		return
@@ -175,6 +181,21 @@ func (s *Server) grabMovie(movie library.Movie, releaseTitle, downloadURL string
 // item remembers that path, and the import swaps the new file in and removes
 // the old one only once the new one is in the library.
 func (s *Server) grabMovieReplacing(movie library.Movie, releaseTitle, downloadURL string, sizeBytes int64, protocol indexers.Protocol, kind grabKind, replaces string) (int64, error) {
+	return s.grabMovieOpts(movie, releaseTitle, downloadURL, sizeBytes, protocol, kind, grabOpts{replaces: replaces})
+}
+
+// grabOpts are the extras of a grab that is meant to replace a file.
+type grabOpts struct {
+	// replaces is the path of the movie's file a smaller version takes the
+	// place of ("" for an ordinary grab).
+	replaces string
+	// byHand says a person picked the release and agreed to it replacing the
+	// file the title has (see grabRequest.Replace).
+	byHand bool
+}
+
+// grabMovieOpts is grabMovieReplacing with the extras in one place.
+func (s *Server) grabMovieOpts(movie library.Movie, releaseTitle, downloadURL string, sizeBytes int64, protocol indexers.Protocol, kind grabKind, o grabOpts) (int64, error) {
 	if protocol == indexers.ProtocolTorrent && !s.torrentReleasesOn() {
 		return 0, errTorrentsDisabled
 	}
@@ -213,7 +234,7 @@ func (s *Server) grabMovieReplacing(movie library.Movie, releaseTitle, downloadU
 		}
 	}
 	queueID, err := s.QueueRepo.Enqueue(queue.Item{
-		MovieID: movie.ID, ReleaseTitle: releaseTitle, NZBURL: downloadURL, SizeBytes: sizeBytes, Protocol: queue.Protocol(protocol), Priority: kind.priority(), ReplacesFile: replaces,
+		MovieID: movie.ID, ReleaseTitle: releaseTitle, NZBURL: downloadURL, SizeBytes: sizeBytes, Protocol: queue.Protocol(protocol), Priority: kind.priority(), ReplacesFile: o.replaces, ReplaceByHand: o.byHand && kind == grabPicked,
 	})
 	if err == nil {
 		// From here the movie is taken, as an episode or an album is, even while
@@ -227,7 +248,7 @@ func (s *Server) grabMovieReplacing(movie library.Movie, releaseTitle, downloadU
 	}
 	grabbedMessage := s.grabbedMessage(releaseTitle, movie.Title)
 	_ = s.QueueRepo.LogActivity(movie.ID, "grabbed", grabbedMessage)
-	grabbedItem := movieItem(movie)
+	grabbedItem := s.localizedMovieItem(movie)
 	grabbedItem.Quality, grabbedItem.SizeBytes, grabbedItem.Release = string(quality.Classify(parser.Parse(releaseTitle))), sizeBytes, releaseTitle
 	s.movieReleaseDetails(&grabbedItem, movie, releaseTitle, downloadURL)
 	s.notifyItem("grabbed", grabbedItem)
@@ -273,5 +294,6 @@ func (s *Server) findOrAddMovie(match metadata.Movie, userID int64) (library.Mov
 	return s.MovieRepo.Add(library.Movie{
 		TMDBID: match.TMDBID, Title: match.Title, Year: match.Year(), Overview: match.Overview,
 		PosterPath: match.PosterPath, Monitored: true, ReleaseDate: match.ReleaseDate, NoUpgrade: true, AddedBy: userID,
+		RootPath: s.newMovieFolder(),
 	})
 }

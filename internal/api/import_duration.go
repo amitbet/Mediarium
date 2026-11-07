@@ -208,7 +208,6 @@ func (s *Server) fillRuntimes(ctx context.Context, until time.Time) {
 		slog.Warn("runtime: couldn't list the titles to look up", "err", err)
 		return
 	}
-	done := 0
 	for _, w := range wanted {
 		if ctx.Err() != nil || time.Now().After(until) {
 			break
@@ -219,14 +218,12 @@ func (s *Server) fillRuntimes(ctx context.Context, until time.Time) {
 				slog.Warn("runtime: couldn't save a runtime", "err", err)
 				break
 			}
-			done++
 		}
 		select {
 		case <-ctx.Done():
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
-	if done > 0 {
-		s.mediaInfo.gen.Add(1)
-	}
+	// The lists renew themselves every few seconds (mediaSummaryTTL), so the
+	// new runtimes are picked up without throwing the lists away here.
 }

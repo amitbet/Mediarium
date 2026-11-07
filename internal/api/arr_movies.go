@@ -317,6 +317,7 @@ type arrMovieRequest struct {
 	ProfileID        int64   `json:"profileId"`
 	Monitored        *bool   `json:"monitored"`
 	Tags             []int64 `json:"tags"`
+	RootFolderPath   string  `json:"rootFolderPath"`
 	AddOptions       *struct {
 		SearchForMovie bool   `json:"searchForMovie"`
 		Monitor        string `json:"monitor"`
@@ -351,10 +352,15 @@ func (s *Server) arrAddMovie(w http.ResponseWriter, r *http.Request) {
 	}
 	monitored := req.Monitored == nil || *req.Monitored
 	userID, byline := requester(r)
+	// The app's root folder when it is one of ours; else where new movies go.
+	rootPath, problem := s.folderForNewMovie(req.RootFolderPath)
+	if problem != "" {
+		rootPath = s.newMovieFolder()
+	}
 	created, err := s.MovieRepo.Add(library.Movie{
 		TMDBID: tm.TMDBID, Title: tm.Title, Year: tm.Year(), Overview: tm.Overview, PosterPath: tm.PosterPath,
 		Monitored: monitored, ReleaseDate: tm.ReleaseDate, NoUpgrade: true, AddedBy: userID,
-		Genres: s.TMDB().MovieGenres(r.Context(), *tm),
+		Genres: s.TMDB().MovieGenres(r.Context(), *tm), RootPath: rootPath,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

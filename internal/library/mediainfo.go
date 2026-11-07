@@ -2,6 +2,7 @@ package library
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -66,12 +67,28 @@ func (r *Repo) SaveMediaInfo(m MediaInfoRow) error {
 	if m.CheckedAt == "" {
 		m.CheckedAt = m.ScannedAt
 	}
-	_, err := r.db.Exec(`INSERT OR REPLACE INTO media_info (`+mediaInfoCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		m.Path, m.Size, m.MTime, m.ScannedAt, m.CheckedAt, failed, m.Info, m.Container, m.VCodec, m.HDR, m.Res, m.ACodecs, m.ALangs, m.SLangs)
+	_, err := r.db.Exec(`INSERT OR REPLACE INTO media_info (`+mediaInfoCols+`, duration) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		m.Path, m.Size, m.MTime, m.ScannedAt, m.CheckedAt, failed, m.Info, m.Container, m.VCodec, m.HDR, m.Res, m.ACodecs, m.ALangs, m.SLangs, infoDuration(m))
 	if err != nil {
 		return fmt.Errorf("save media info: %w", err)
 	}
 	return nil
+}
+
+// infoDuration is the length in seconds that the saved JSON holds (0 when the
+// file could not be read or says nothing). It is kept in a column of its own so
+// the lists never have to read the JSON.
+func infoDuration(m MediaInfoRow) float64 {
+	if m.Failed || m.Info == "" {
+		return 0
+	}
+	var d struct {
+		Duration float64 `json:"duration"`
+	}
+	if json.Unmarshal([]byte(m.Info), &d) != nil || d.Duration < 0 {
+		return 0
+	}
+	return d.Duration
 }
 
 // TouchMediaInfo notes that the file was looked at and had not changed.

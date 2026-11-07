@@ -29,15 +29,24 @@ test('the speed schedule: add a line, change it, remove it', async ({ page }) =>
   const errors = watchErrors(page)
   await page.goto('/settings/download-rules')
   await expect(page.getByText('Speed schedule').first()).toBeVisible()
+  // Wait for each change to be saved (the settings call) before the page is reloaded.
+  const saveDone = () => page.waitForResponse((r) => r.request().method() === 'PUT' && /\/api\/settings$/.test(new URL(r.url()).pathname))
+  let saved = saveDone()
   await page.getByRole('button', { name: 'Add a line' }).click()
-  const limit = page.getByRole('combobox', { name: 'Limit' }).first()
+  await saved
+  const limit = page.locator('.speed-rule').getByRole('combobox', { name: 'Limit' }).first()
   await expect(limit).toBeVisible()
+  saved = saveDone()
   await limit.selectOption('5')
+  await saved
   await page.reload()
-  await expect(page.getByRole('combobox', { name: 'Limit' }).first()).toHaveValue('5')
+  await expect(page.locator('.speed-rule').getByRole('combobox', { name: 'Limit' }).first()).toHaveValue('5')
+  // The line is saved by the click; wait for that before reloading.
+  saved = saveDone()
   await page.getByRole('button', { name: 'Remove' }).first().click()
+  await saved
   await page.reload()
-  await expect(page.getByRole('combobox', { name: 'Limit' })).toHaveCount(0)
+  await expect(page.locator('.speed-rule')).toHaveCount(0)
   await expectNoErrors(errors)
 })
 

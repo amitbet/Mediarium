@@ -361,10 +361,10 @@ func (s *Server) checkImportListInput(in importListInput, cur *importList) (impo
 	}
 	l.ProfileID = in.ProfileID
 	var problem string
-	if l.MovieRoot, problem = s.checkFolderChoice(in.MovieRoot, s.movieFolders(), "movie"); problem != "" {
+	if l.MovieRoot, problem = s.checkFolderSetting(in.MovieRoot, s.movieFolders(), "movie"); problem != "" {
 		return l, problem
 	}
-	if l.TVRoot, problem = s.checkFolderChoice(in.TVRoot, s.tvFolders(), "show"); problem != "" {
+	if l.TVRoot, problem = s.checkFolderSetting(in.TVRoot, s.tvFolders(), "show"); problem != "" {
 		return l, problem
 	}
 	l.Tags = library.NormalizeTags(in.Tags)

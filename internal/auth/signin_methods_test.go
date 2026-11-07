@@ -175,6 +175,52 @@ func TestExternalRoleSync(t *testing.T) {
 	}
 }
 
+func TestGroupRoleNoteFollowsWhoSetTheRole(t *testing.T) {
+	svc := newTestService(t)
+	svc.CreateUser("ryan", "hunter2hunter2")
+	u, _ := svc.CreateExternalUser(auth.ExternalProfile{Provider: auth.SourceOIDC, Subject: "s1", Username: "sam", Role: auth.RoleMember})
+	if got, err := svc.GroupRole(u.ID); err != nil || got != "" {
+		t.Fatalf("new account: %q %v", got, err)
+	}
+	if err := svc.SetGroupRole(u.ID, auth.RoleViewer); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := svc.GroupRole(u.ID); got != auth.RoleViewer {
+		t.Errorf("note = %q", got)
+	}
+	// Only the viewer role is ever noted.
+	svc.SetGroupRole(u.ID, auth.RoleAdmin)
+	if got, _ := svc.GroupRole(u.ID); got != "" {
+		t.Errorf("note after admin = %q", got)
+	}
+	// A change of role by hand wipes the note; a name change does not.
+	svc.SyncExternalRole(u.ID, auth.RoleViewer)
+	svc.SetGroupRole(u.ID, auth.RoleViewer)
+	first := "Sam"
+	svc.UpdateAccount(u.ID, auth.AccountUpdate{FirstName: &first})
+	if got, _ := svc.GroupRole(u.ID); got != auth.RoleViewer {
+		t.Errorf("note after a rename = %q", got)
+	}
+	yes, no := true, false
+	svc.UpdateAccount(u.ID, auth.AccountUpdate{IsAdmin: &no, Viewer: &yes}) // the same role saved again
+	if got, _ := svc.GroupRole(u.ID); got != auth.RoleViewer {
+		t.Errorf("note after saving the same role = %q", got)
+	}
+	svc.UpdateAccount(u.ID, auth.AccountUpdate{Viewer: &no})
+	if got, _ := svc.GroupRole(u.ID); got != "" {
+		t.Errorf("note after a role change = %q", got)
+	}
+	// An account with a password here never gets one.
+	local, _ := svc.CreateAccount("lena", "hunter2hunter2", "", "", "", true)
+	svc.SetGroupRole(local.ID, auth.RoleViewer)
+	if got, _ := svc.GroupRole(local.ID); got != "" {
+		t.Errorf("local account note = %q", got)
+	}
+	if _, err := svc.GroupRole(9999); !errors.Is(err, auth.ErrUserNotFound) {
+		t.Errorf("unknown account: %v", err)
+	}
+}
+
 func TestLastAdministratorRulesCountOnlyEnabledOnes(t *testing.T) {
 	svc := newTestService(t)
 	a, _ := svc.CreateUser("ryan", "hunter2hunter2")

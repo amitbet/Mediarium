@@ -47,19 +47,19 @@ func TestPruneCoverCacheKeepsTheLimit(t *testing.T) {
 	}
 	write("notes.txt", 100*time.Hour) // not ours: never touched
 
-	pruneCoverCache(dir, 4, 24*time.Hour)
+	pruneCoverCache(dir, 4, 4, 24*time.Hour)
 
 	left := map[string]bool{}
 	entries, _ := os.ReadDir(dir)
 	for _, e := range entries {
 		left[e.Name()] = true
 	}
-	for _, gone := range []string{"stale.none", "leftover.tmp", "cover-0.img", "cover-1.img", "cover-2.img"} {
+	for _, gone := range []string{"stale.none", "leftover.tmp", "cover-0.img", "cover-1.img"} {
 		if left[gone] {
 			t.Errorf("%s should have been removed", gone)
 		}
 	}
-	for _, kept := range []string{"fresh.tmp", "cover-3.img", "cover-4.img", "cover-5.img", "notes.txt"} {
+	for _, kept := range []string{"fresh.tmp", "cover-2.img", "cover-3.img", "cover-4.img", "cover-5.img", "notes.txt"} {
 		if !left[kept] {
 			t.Errorf("%s should have been kept", kept)
 		}

@@ -207,6 +207,33 @@ func (s *Service) SyncExternalRole(userID int64, role string) (bool, error) {
 	return true, nil
 }
 
+// GroupRole says which role, if any, a sign-in group gave the account:
+// RoleViewer, or "" when the role is the account's own (set by hand, or the
+// default for new people).
+func (s *Service) GroupRole(userID int64) (string, error) {
+	var r string
+	if err := s.db.QueryRow(`SELECT group_role FROM users WHERE id = ?`, userID).Scan(&r); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrUserNotFound
+		}
+		return "", fmt.Errorf("read group role: %w", err)
+	}
+	return r, nil
+}
+
+// SetGroupRole notes that a sign-in group gave the account its role
+// (RoleViewer), or clears the note with "". It changes no role by itself and
+// does nothing to an account with a password here.
+func (s *Service) SetGroupRole(userID int64, role string) error {
+	if role != RoleViewer {
+		role = ""
+	}
+	if _, err := s.db.Exec(`UPDATE users SET group_role = ? WHERE id = ? AND auth_source != 'local'`, role, userID); err != nil {
+		return fmt.Errorf("set group role: %w", err)
+	}
+	return nil
+}
+
 // RefreshExternalProfile updates the name and email of an account made through
 // a provider, when the provider reports something (an empty value changes nothing).
 func (s *Service) RefreshExternalProfile(userID int64, name, email string) error {

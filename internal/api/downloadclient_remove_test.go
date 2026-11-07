@@ -37,10 +37,24 @@ func startHeld(t *testing.T, body map[string]any) *removeEnv {
 		t.Fatal(err)
 	}
 	r := &removeEnv{clientEnv: e, movie: m, id: id}
+	// A test that fails (t.Fatal) before it stops the download would leave the
+	// download polling for ever, and the cleanup that waits for every download
+	// to end would hang. Cleanups run last in, first out, so this runs before
+	// that wait. Stopping a download that already ended is harmless here.
+	t.Cleanup(func() {
+		if resp, err := r.client.Post(fmt.Sprintf("%s/api/queue/%d/stop", r.url, r.id), "application/json", strings.NewReader("{}")); err == nil {
+			resp.Body.Close()
+		}
+	})
+	// The status checks before the torrent is added (is it there already?) also
+	// count in infos, so wait for two listings of the torrent itself: the second
+	// is only asked for once the first look at it has been dealt with. A test
+	// that changes the torrent's state afterwards then changes it for a download
+	// that is past its first look.
 	r.waitFor(t, "the torrent to be added and followed", func() bool {
 		e.qb.mu.Lock()
 		defer e.qb.mu.Unlock()
-		return len(e.qb.tags) == 1 && e.qb.infos >= 2
+		return len(e.qb.tags) == 1 && e.qb.polls >= 2
 	})
 	return r
 }

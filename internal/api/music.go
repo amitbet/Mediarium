@@ -20,6 +20,7 @@ type musicState struct {
 	covers     coverLocks  // one cover download per album at a time (music_cover.go)
 	scans      musicScans  // existing-library scans (music_import.go)
 	checks     groupChecks // bootleg look-ups waiting to run (music_filters.go)
+	waits      musicWaits  // imports waiting for MusicBrainz (music_import_wait.go)
 
 	lbMu sync.Mutex
 	lb   *listenbrainz.Client // Discover lists (music_discover.go); created on first use

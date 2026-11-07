@@ -30,7 +30,7 @@ type fakeLDAP struct {
 
 type dirUser struct {
 	dn, uid, cn, mail, uuid, password string
-	admin                             bool
+	admin, viewer                     bool
 }
 
 func newFakeLDAP() *fakeLDAP {
@@ -38,6 +38,7 @@ func newFakeLDAP() *fakeLDAP {
 		users: []*dirUser{
 			{dn: "uid=sam,ou=people,dc=example,dc=com", uid: "sam", cn: "Sam Example", mail: "sam@example.com", uuid: "uuid-sam", password: "dir-password"},
 			{dn: "uid=ann,ou=people,dc=example,dc=com", uid: "ann", cn: "Ann Admin", mail: "ann@example.com", uuid: "uuid-ann", password: "ann-password", admin: true},
+			{dn: "uid=vic,ou=people,dc=example,dc=com", uid: "vic", cn: "Vic Viewer", mail: "vic@example.com", uuid: "uuid-vic", password: "vic-password"},
 		}}
 }
 
@@ -97,7 +98,11 @@ func (c *fakeConn) Search(req *ldap.SearchRequest) (*ldap.SearchResult, error) {
 	if req.BaseDN == f.groupsDN {
 		// (&(objectClass=groupOfNames)(cn=mediarium-admins)(member=<dn>))
 		for _, u := range f.users {
-			if u.admin && strings.Contains(req.Filter, "(member="+strings.NewReplacer(`(`, `\28`, `)`, `\29`).Replace(u.dn)+")") {
+			in := u.admin
+			if strings.Contains(req.Filter, "cn=mediarium-viewers") {
+				in = u.viewer
+			}
+			if in && strings.Contains(req.Filter, "(member="+strings.NewReplacer(`(`, `\28`, `)`, `\29`).Replace(u.dn)+")") {
 				return &ldap.SearchResult{Entries: []*ldap.Entry{ldap.NewEntry("cn=mediarium-admins,"+f.groupsDN, nil)}}, nil
 			}
 		}

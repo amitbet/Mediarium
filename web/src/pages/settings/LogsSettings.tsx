@@ -206,6 +206,16 @@ export default function LogsSettings() {
     }
   }
 
+  async function setDebug(on: boolean) {
+    try {
+      await api.setDebugLogging(on)
+      setData((d) => (d ? { ...d, debugLogging: on } : d))
+      toast.success(on ? t('Detailed logging is on.') : t('Detailed logging is off.'))
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    }
+  }
+
   const filtered = filtersActive(filters)
   const counts = data?.counts
 
@@ -351,6 +361,20 @@ export default function LogsSettings() {
               })}
             </>
           }
+        />
+      </fieldset>
+
+      <fieldset className="group alerts pl-notify">
+        <legend>
+          <Icon name="info" size={14} /> {t('Detailed logging')}
+        </legend>
+        <Switch
+          checked={data?.debugLogging ?? false}
+          disabled={!data}
+          onChange={(on) => void setDebug(on)}
+          label={t('Detailed logging')}
+          showState
+          description={t('Writes more to the log. Use it to find a problem with help, and switch it off again afterwards.')}
         />
       </fieldset>
     </div>

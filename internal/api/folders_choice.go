@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"path/filepath"
 	"strconv"
+
+	"github.com/rdborg/mediarium/internal/settings"
 )
 
 // checkFolderChoice reads the folder picked for a title. "" or the main folder
@@ -27,16 +29,35 @@ func (s *Server) checkFolderChoice(want string, offered []string, what string) (
 }
 
 // handleLibraryFolders is GET /api/library/folders (any account): the folders
-// a movie or a show can be kept in, the main one first. The add dialog uses it
+// a movie or a show can be kept in, the main one first, and under newTitles
+// where a title added without a choice goes right now. The add dialog uses it
 // to offer a choice. Administrators get the full paths; everyone else gets a
 // label for each folder (its name), which is accepted wherever a folder is
 // chosen.
 func (s *Server) handleLibraryFolders(w http.ResponseWriter, r *http.Request) {
 	movies, tv := s.movieFolders(), s.tvFolders()
+	shownMovies, shownTV := movies, tv
 	if !isAdminRequest(r) {
-		movies, tv = folderLabels(movies), folderLabels(tv)
+		shownMovies, shownTV = folderLabels(movies), folderLabels(tv)
 	}
-	writeJSON(w, http.StatusOK, map[string][]string{"movies": nonNil(movies), "tv": nonNil(tv)})
+	writeJSON(w, http.StatusOK, libraryFoldersPayload{
+		Movies: nonNil(shownMovies), TV: nonNil(shownTV),
+		NewTitles: newTitlesPayload{
+			Movies: s.newTitlePayloadFor(settings.KeyMoviesNewFolder, movies, shownMovies),
+			TV:     s.newTitlePayloadFor(settings.KeyTVNewFolder, tv, shownTV),
+		},
+	})
+}
+
+type libraryFoldersPayload struct {
+	Movies    []string         `json:"movies"`
+	TV        []string         `json:"tv"`
+	NewTitles newTitlesPayload `json:"newTitles"`
+}
+
+type newTitlesPayload struct {
+	Movies newTitleFolderPayload `json:"movies"`
+	TV     newTitleFolderPayload `json:"tv"`
 }
 
 type setFolderRequest struct {

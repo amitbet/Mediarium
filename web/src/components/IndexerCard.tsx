@@ -11,6 +11,7 @@ import { plural, t, st } from '../i18n'
 import { untilText } from '../delayText'
 import TipLabel from './TipLabel'
 import KnownFixHint from './KnownFixHint'
+import { EXTRA_KINDS, addToText, buildExtra, suggestionsFor, textsFrom, type CapCategory, type ExtraKind } from '../extraCategories'
 
 // How long a site test runs before the card explains the wait.
 const SLOW_TEST_HINT_MS = 5000
@@ -20,7 +21,7 @@ const SLOW_TEST_HINT_MS = 5000
 export default function IndexerCard({ indexer: i, onChanged, onToggle, onRemove }: { indexer: IndexerConfig; onChanged: () => void; onToggle: () => void; onRemove: () => void }) {
   const toast = useToast()
   const [testing, setTesting] = useState(false)
-  const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null)
+  const [result, setResult] = useState<{ ok: boolean; message: string; detail?: string } | null>(null)
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState(i.name)
   const [baseUrl, setBaseUrl] = useState(i.baseUrl)
@@ -30,6 +31,12 @@ export default function IndexerCard({ indexer: i, onChanged, onToggle, onRemove 
   const [prio, setPrio] = useState(String(i.priority ?? 25))
   const [minSeed, setMinSeed] = useState(String(i.minSeeders ?? 0))
   const site = i.kind === 'cardigann'
+  // Extra category numbers per kind of media, as typed; the suggestions are what the indexer lists.
+  const [extraText, setExtraText] = useState(() => textsFrom(i.extraCategories))
+  const [caps, setCaps] = useState<CapCategory[] | null>(null)
+  const [capsLoading, setCapsLoading] = useState(false)
+  const extra = buildExtra(extraText)
+  const kindNames: Record<ExtraKind, string> = { movies: t('Movies'), tv: t('TV'), music: t('Music'), books: t('Books'), audiobooks: t('Audiobooks') }
   // A site behind a Cloudflare check can take up to a minute to test, so after a
   // few seconds the card says what it is waiting for.
   const [slowTest, setSlowTest] = useState(false)
@@ -44,6 +51,7 @@ export default function IndexerCard({ indexer: i, onChanged, onToggle, onRemove 
   const v = useValidation({
     name: firstError(required(name, t('Give this indexer a name.')), maxLength(name, 80, t('The name'))),
     perDay: numberRange(perDay, t('Requests per day'), { min: 0, max: 100000 }),
+    ...(site ? {} : Object.fromEntries(EXTRA_KINDS.map((k) => [`extra_${k}`, extra.errors[k] ?? null]))),
     ...(site
       ? i.localSite
         ? { baseUrl: firstError(required(baseUrl, t('Add the address of the indexer, for example {example}.', { example: 'http://192.168.1.10:3333' })), urlCheck(baseUrl, { requireScheme: true, example: 'http://192.168.1.10:3333' }), maxLength(baseUrl, 200, t('The address'))) }
@@ -59,7 +67,7 @@ export default function IndexerCard({ indexer: i, onChanged, onToggle, onRemove 
     setResult(null)
     try {
       const r = await api.testIndexer(i.id)
-      setResult({ ok: r.ok, message: r.ok ? r.message : friendlyIndexerError(r.message) })
+      setResult({ ok: r.ok, message: r.ok ? r.message : friendlyIndexerError(r.message), detail: r.ok ? undefined : r.detail })
     } catch (e) {
       setResult({ ok: false, message: e instanceof Error ? e.message : String(e) })
     } finally {
@@ -126,11 +134,22 @@ export default function IndexerCard({ indexer: i, onChanged, onToggle, onRemove 
     }
   }
 
+  async function showCategories() {
+    setCapsLoading(true)
+    try {
+      setCaps((await api.indexerCategories(i.id)).categories)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setCapsLoading(false)
+    }
+  }
+
   async function save() {
     if (!v.attempt()) return
     setSaving(true)
     try {
-      await api.updateIndexer(i.id, { name: name.trim(), requestsPerDay: Number(perDay.trim() || '0'), ...(site ? (i.localSite ? { baseUrl: baseUrl.trim() } : {}) : { baseUrl: baseUrl.trim(), apiKey: apiKey.trim() }) })
+      await api.updateIndexer(i.id, { name: name.trim(), requestsPerDay: Number(perDay.trim() || '0'), ...(site ? (i.localSite ? { baseUrl: baseUrl.trim() } : {}) : { baseUrl: baseUrl.trim(), apiKey: apiKey.trim(), extraCategories: extra.extra }) })
       toast.success(t('{name} saved.', { name: name.trim() || i.name }))
       setEditing(false)
       setApiKey('')
@@ -206,6 +225,7 @@ export default function IndexerCard({ indexer: i, onChanged, onToggle, onRemove 
         <div className={`indexer-result ${result.ok ? 'ok' : 'bad'}`}>
           <Icon name={result.ok ? 'check' : 'warning'} size={14} /> {st(result.message)}
           {!result.ok && <KnownFixHint error={result.message} />}
+          {!result.ok && result.detail && <small className="idx-detail">{result.detail}</small>}
         </div>
       )}
 
@@ -275,6 +295,39 @@ export default function IndexerCard({ indexer: i, onChanged, onToggle, onRemove 
             <input type="number" min={0} max={100000} value={perDay} onChange={(e) => setPerDay(e.target.value)} {...v.bind('perDay', perDay, setPerDay)} />
             <FieldError v={v} name="perDay" />
           </label>
+          {!site && (
+            <div className="indexer-extra">
+              <TipLabel text={t('Category numbers your indexer files releases under besides the standard ones, for example 105000 for TV or 7120 for German books. They are searched together with the standard categories. Separate several with commas.')} learnMore="indexers#extra-categories">{t('Extra categories')}</TipLabel>
+              {EXTRA_KINDS.map((k) => {
+                const hints = caps ? suggestionsFor(k, caps, extra.extra[k] ?? []) : []
+                return (
+                  <div key={k} className="indexer-extra-row">
+                    <label>
+                      <span>{kindNames[k]}</span>
+                      <input value={extraText[k]} onChange={(e) => setExtraText({ ...extraText, [k]: e.target.value })} placeholder={t('For example {example}', { example: k === 'books' ? '7120' : '105000' })} spellCheck={false} inputMode="numeric" {...v.bind(`extra_${k}`, extraText[k], (val: string) => setExtraText({ ...extraText, [k]: val }))} />
+                    </label>
+                    <FieldError v={v} name={`extra_${k}`} />
+                    {hints.length > 0 && (
+                      <div className="indexer-extra-hints">
+                        {hints.map((c) => (
+                          <button key={c.id} type="button" className="btn-sm" title={c.name} onClick={() => setExtraText({ ...extraText, [k]: addToText(extraText[k], c.id) })}>
+                            {c.id} {c.name}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+              {caps === null ? (
+                <button type="button" className="btn-sm" onClick={() => void showCategories()} disabled={capsLoading}>
+                  {capsLoading ? t('Asking the indexer…') : t('Show the categories this indexer lists')}
+                </button>
+              ) : (
+                caps.length === 0 && <small style={{ color: 'var(--text-dim)' }}>{t('The indexer did not list any categories.')}</small>
+              )}
+            </div>
+          )}
           <div>
             <button className="primary btn-sm" onClick={() => void save()} disabled={saving}>
               {saving ? t('Saving…') : t('Save changes')}

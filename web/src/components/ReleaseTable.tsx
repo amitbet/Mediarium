@@ -7,6 +7,7 @@ import { indexerChoices, type Searched } from '../searched'
 import { FIRST_DIRECTION, ageOf, defaultOrder, filterReleases, publishedAt, qualitiesIn, scoreOf, sortReleases, type ReleaseSortKey, type SortDir } from '../releaseSort'
 import Dropdown from './Dropdown'
 import Icon from './Icon'
+import TorrentsOffNote from './TorrentsOffNote'
 
 // Interactive-search results: every release with quality info, badges for
 // packs / blocklisted / "automation would skip this" (with the reason on
@@ -46,6 +47,15 @@ export default function ReleaseTable({
   const qualities = useMemo(() => qualitiesIn(results), [results])
   const shown = useMemo(() => sortReleases(defaultOrder(filterReleases(results, { text: words, indexer, quality })), sort?.key ?? null, sort?.dir ?? 1), [results, words, indexer, quality, sort])
   const filtering = words !== '' || indexer !== '' || quality !== ''
+  // Two releases can share one link (the same torrent listed twice), and React mixes up rows that share a key: a row the filter removed could stay on screen.
+  const rowKeys = useMemo(() => {
+    const seen = new Map<string, number>()
+    return shown.map((r) => {
+      const n = seen.get(r.downloadUrl) ?? 0
+      seen.set(r.downloadUrl, n + 1)
+      return n === 0 ? r.downloadUrl : `${r.downloadUrl}#${n}`
+    })
+  }, [shown])
 
   // First click sorts the natural way for that column, the second reverses it, the third goes back to the starting order (best match first, then by score).
   function clickSort(key: ReleaseSortKey) {
@@ -86,6 +96,7 @@ export default function ReleaseTable({
 
   return (
     <>
+      <TorrentsOffNote results={results} />
       <div className="rel-tools">
         <input type="search" value={words} onChange={(e) => setWords(e.target.value)} placeholder={t('Find in these releases')} aria-label={t('Find in these releases')} />
         {indexers.length > 1 && (
@@ -140,11 +151,11 @@ export default function ReleaseTable({
               </tr>
             </thead>
             <tbody>
-              {shown.map((r) => {
+              {shown.map((r, i) => {
                 const why = whyOf(r)
                 const open = why !== null && (opened[r.downloadUrl] ?? showWhy)
                 return (
-                <Fragment key={r.downloadUrl}>
+                <Fragment key={rowKeys[i]}>
                 <tr className={open ? 'rel-open' : undefined} style={r.rejections?.length || r.blocklisted ? { opacity: 0.75 } : undefined}>
                   <td className="rel-name">
                     {nameParts(r.title).map((p, i) => (
@@ -159,6 +170,7 @@ export default function ReleaseTable({
                       </span>
                     )}
                     {r.matchedTitle && <div className="lang-hint lang-hint-wrap">{t('Matched on the title "{title}"', { title: r.matchedTitle })}</div>}
+                    {r.categories && r.categories.length > 0 && <div className="lang-hint lang-hint-wrap">{t('Category {numbers}', { numbers: r.categories.join(', ') })}</div>}
                     {showPackBadge && (r.episodes?.length ?? 0) === 0 && (
                       <span className="badge" style={{ marginLeft: 8 }}>
                         {t('season pack')}

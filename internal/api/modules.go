@@ -79,6 +79,11 @@ type modulesPayload struct {
 	TrailerBackground bool `json:"trailerBackground"`
 	// TrailerSound starts that trailer with its sound on.
 	TrailerSound bool `json:"trailerSound"`
+	// TorrentsOn says whether torrent releases can be downloaded at all (the
+	// built-in client, a debrid service or a download client), so every
+	// account's release lists can say when they can't. Only an administrator
+	// can change it (Settings > Downloading > Torrents).
+	TorrentsOn bool `json:"torrentsOn"`
 }
 
 func (s *Server) modulesPayload() modulesPayload {
@@ -93,6 +98,8 @@ func (s *Server) modulesPayload() modulesPayload {
 
 		TrailerBackground: s.trailerBackground(),
 		TrailerSound:      s.trailerSound(),
+
+		TorrentsOn: s.torrentReleasesOn(),
 	}
 }
 

@@ -208,16 +208,7 @@ func (s *Server) accountForOIDC(cfg oidcauth.Config, res *oidcauth.Result) (*aut
 		if u.Disabled {
 			return nil, errDisabled
 		}
-		if cfg.AdminGroup != "" {
-			want := u.Role()
-			switch {
-			case oidcauth.InGroup(res.Groups, cfg.AdminGroup):
-				want = auth.RoleAdmin
-			case u.IsAdmin:
-				want = cfg.DefaultRole
-			}
-			s.syncExternalRole(u, want)
-		}
+		s.applyGroupRoles(u, oidcGroups(cfg, res))
 		if err := s.Auth.RefreshExternalProfile(u.ID, res.Name, res.Email); err != nil {
 			slog.Warn("auth: could not refresh an account's details", "err", err)
 		}
@@ -272,10 +263,7 @@ func (s *Server) accountForOIDC(cfg oidcauth.Config, res *oidcauth.Result) (*aut
 	if !cfg.AutoCreate {
 		return nil, errNoAccount
 	}
-	role := cfg.DefaultRole
-	if oidcauth.InGroup(res.Groups, cfg.AdminGroup) {
-		role = auth.RoleAdmin
-	}
+	role, groupRole := oidcGroups(cfg, res).newAccountRole()
 	name := res.Username
 	if name == "" {
 		name = strings.SplitN(res.Email, "@", 2)[0]
@@ -290,8 +278,22 @@ func (s *Server) accountForOIDC(cfg oidcauth.Config, res *oidcauth.Result) (*aut
 		slog.Error("auth: create an account for a first single sign-on", "err", err)
 		return nil, errFailed
 	}
+	if groupRole != "" {
+		if err := s.Auth.SetGroupRole(created.ID, groupRole); err != nil {
+			slog.Error("auth: could not note where an account's role comes from", "user", created.Username, "err", err)
+		}
+	}
 	slog.Info("auth: account made on a first single sign-on", "user", created.Username, "role", created.Role())
 	return created, ""
+}
+
+// oidcGroups is what the groups claim says about one person.
+func oidcGroups(cfg oidcauth.Config, res *oidcauth.Result) groupRoles {
+	return groupRoles{
+		adminOn: cfg.AdminGroup != "", viewerOn: cfg.ViewerGroup != "",
+		inAdmin: oidcauth.InGroup(res.Groups, cfg.AdminGroup), inViewer: oidcauth.InGroup(res.Groups, cfg.ViewerGroup),
+		def: cfg.DefaultRole,
+	}
 }
 
 // finishOIDCLink ties the provider to the account that asked for it.
@@ -427,7 +429,7 @@ func (s *Server) oidcFromRequest(r *http.Request) (oidcauth.Config, error) {
 	if err := decodeJSON(r, &c); err != nil {
 		return c, err
 	}
-	for _, p := range []*string{&c.Name, &c.Issuer, &c.ClientID, &c.Scopes, &c.UsernameClaim, &c.EmailClaim, &c.NameClaim, &c.GroupsClaim, &c.AdminGroup, &c.AllowedGroup, &c.AllowedDomains} {
+	for _, p := range []*string{&c.Name, &c.Issuer, &c.ClientID, &c.Scopes, &c.UsernameClaim, &c.EmailClaim, &c.NameClaim, &c.GroupsClaim, &c.AdminGroup, &c.ViewerGroup, &c.AllowedGroup, &c.AllowedDomains} {
 		*p = strings.TrimSpace(*p)
 		if len(*p) > 1000 {
 			return c, errors.New("a field is too long")
@@ -458,6 +460,10 @@ func (s *Server) handlePutOIDC(w http.ResponseWriter, r *http.Request) {
 	c, err := s.oidcFromRequest(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "That request couldn't be read.")
+		return
+	}
+	if c.CheckGroups() != nil {
+		writeError(w, http.StatusBadRequest, "The viewer group has to be a different group than the administrator group.")
 		return
 	}
 	if c.Enabled {
@@ -543,7 +549,7 @@ func (s *Server) handleTestOIDC(w http.ResponseWriter, r *http.Request) {
 			notes = append(notes, "The provider doesn't list S256 for PKCE. Sign-in may fail.")
 		}
 	}
-	if (c.AdminGroup != "" || c.AllowedGroup != "") && len(ep.ScopesSupported) > 0 {
+	if (c.AdminGroup != "" || c.ViewerGroup != "" || c.AllowedGroup != "") && len(ep.ScopesSupported) > 0 {
 		found := false
 		for _, sc := range strings.Fields(c.Defaults().Scopes) {
 			if sc == "groups" || sc == "roles" {

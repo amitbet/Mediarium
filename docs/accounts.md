@@ -193,6 +193,7 @@ The issuer has to be written exactly as the provider reports it, including a clo
 
 - **Make an account the first time someone signs in** (off by default): the account gets the user name from the `preferred_username` claim (or the part of the email before the `@`), made to fit the rules. If another account already has that name, a number is added (`sam-2`): a new sign-in never takes over an existing account. **Role for new accounts** is Basic user or Viewer.
 - **Administrator group**: people in this group (in the `groups` claim) are admins, checked at every sign-in. Take someone out of the group and their next sign-in makes them a basic user again. The last admin who can sign in is never demoted this way.
+- **Viewer group**: people in this group are viewers (they can look, never change anything), checked at every sign-in the same way. It has to be another group than the administrator group; someone in both is an admin. Empty means nobody becomes a viewer this way. See [Groups and roles](#groups-and-roles) for the order and an example.
 - **Only this group may sign in** and **Only these email domains** (for example `example.com`) limit who gets in at all, new accounts and returning ones alike. Use the domain list with a provider anyone can register at, such as Google.
 - Without **Make an account...**, only people who already have an account can sign in: the sign-in page says "there's no account for you here yet".
 - An account is tied to the provider's own id for the person (the issuer and the `sub` claim), never to the name or the email address, which can change hands. Moving to a different provider therefore makes new accounts.
@@ -201,6 +202,24 @@ The issuer has to be written exactly as the provider reports it, including a clo
 
 - A person with a password here can open **Settings > Account & Access > Security** and press **Link to <name>**. After that, **Sign in with <name>** lands on their account, and their password keeps working. **Unlink** takes it away again.
 - **Link a first sign-in to an existing account with the same email address** (off by default): when the provider says the email address is verified, and exactly one account here has it, that account is linked. Only an address an administrator set on the account (when making it, or with **Edit**) counts; one a person typed on their own profile never does, because anyone could type someone else's address. Addresses saved by an older version are not known to have been set by an administrator, so set them again with **Edit** if you rely on this. A sign-in with an unverified address is refused. An admin account is never linked this way, because whoever controls an email address at the provider would otherwise control an admin: an admin links their account from their own profile. Only turn this on if your provider checks email addresses.
+
+#### Groups and roles
+
+Each role can follow a group at the provider. At every sign-in Mediarium works out the role in this order:
+
+1. In the **Administrator group**: admin.
+2. Otherwise in the **Viewer group**: viewer.
+3. Otherwise a new account gets **Role for new accounts**. An account that already exists keeps the role it has, with one exception: someone an administrator group made an admin, or a viewer group made a viewer, and who is no longer in that group, goes back to **Role for new accounts**.
+
+What this means in practice:
+
+- A role you set by hand in Mediarium (**Edit** on the account) is left alone by a group that isn't set up for it. With only an administrator group, a viewer you made by hand stays a viewer. With only a viewer group, a basic user or admin you made by hand stays as they are, unless they are in the viewer group. Setting a role by hand also ends the link to the group: a viewer you promote to basic user stays a basic user, even when they later leave the viewer group.
+- Someone you made a viewer by hand who then shows up in the viewer group is looked after by the group from that sign-in on: when they leave the group they go back to the default role.
+- With a viewer group but no administrator group, an admin is never made a viewer by the group, because nothing says that admin role came from a group.
+- The last admin who can sign in is never demoted, whatever the groups say.
+- Leaving both group fields empty changes nothing, as before: roles stay what they are in Mediarium.
+
+Example with three groups at the provider: `mediarium-admins` as the administrator group, `mediarium-viewers` as the viewer group, and `mediarium-users` as **Only this group may sign in**, with **Role for new accounts** on Basic user. Members of `mediarium-admins` and `mediarium-users` are admins, members of `mediarium-viewers` and `mediarium-users` are viewers, and members of only `mediarium-users` are basic users. Make sure your provider sends the `groups` claim (ask for the `groups` scope).
 
 If something goes wrong the sign-in page tells you in a sentence, for example "That sign-in took too long, or was started in another browser" or "Your email address isn't verified". The Mediarium log has one line with the short reason (never a code, token or secret).
 
@@ -223,9 +242,10 @@ Open **Settings > Account & Access > Ways to sign in > Directory sign-in** and f
 Sign in by email as well as name with a filter such as `(&(objectClass=person)(|(uid={username})(mail={username})))`.
 
 - **Administrator group filter** (optional): a filter that finds the person's membership, where `{dn}` stands for the person. People it finds are admins, checked at every sign-in. For OpenLDAP: `(&(objectClass=groupOfNames)(cn=mediarium-admins)(member={dn}))`. For Active Directory, including nested groups: `(&(objectClass=group)(cn=Mediarium Admins)(member:1.2.840.113556.1.4.1941:={dn}))`.
-- **Make an account the first time someone signs in** and **Role for new accounts** work as for single sign-on.
+- **Viewer group filter** (optional): the same kind of filter for viewers. People it finds are viewers (they can look, never change anything), checked at every sign-in. For OpenLDAP: `(&(objectClass=groupOfNames)(cn=mediarium-viewers)(member={dn}))`. It has to be a different filter than the administrator group filter, and someone both filters find is an admin. Both filters are searched under **Where to look for groups**.
+- **Make an account the first time someone signs in** and **Role for new accounts** work as for single sign-on, and so do the rules for which role wins and for roles you set by hand: see [Groups and roles](#groups-and-roles) above. A directory person who is in neither group gets **Role for new accounts**; one who leaves the viewer group (or the administrator group) goes back to it at the next sign-in. To limit who may sign in at all, put a group condition into the user filter.
 
-Press **Find this person** under **Try it** to check the setup before you switch it on: it connects, signs in the bind account, looks the person up and shows the DN, name, email, the id that will be used and whether they would be an admin. Add their password to check that as well. Nothing is saved and nobody is signed in. Switching it on needs a complete setup and a bind account the directory accepts.
+Press **Find this person** under **Try it** to check the setup before you switch it on: it connects, signs in the bind account, looks the person up and shows the DN, name, email, the id that will be used and whether they would be an admin or a viewer. Add their password to check that as well. Nothing is saved and nobody is signed in. Switching it on needs a complete setup and a bind account the directory accepts.
 
 How it behaves:
 
@@ -309,7 +329,7 @@ It asks for the new password twice (at least 8 characters) and signs that accoun
 - Problem reports: `GET /api/issues` (admins get all, others their own), `POST /api/issues` (`kind` `movie` or `tv`, `itemId` the library id, `category`, optional `episode` and `message`), `POST /api/issues/{id}/resolve` with `{"comment": "..."}`, `POST /api/issues/{id}/reopen` and `DELETE /api/issues/{id}` (admins).
 - Messages to people: `GET /api/auth/request-notices`, `PUT /api/auth/request-notices` (`{"enabled": true}`), `POST /api/auth/request-notices/devices` (`subscription`, `name`) and `DELETE /api/auth/request-notices/devices/{id}`, each for the signed-in account.
 
-- Roles are stored in `users.is_admin` (1 for an admin) and `users.is_viewer` (1 for a viewer, never together with `is_admin`). The API reports both `role` (`"admin"`, `"member"` or `"viewer"`) and `isAdmin`. `POST /api/users` and `PUT /api/users/{id}` take `role` and, on update, `disabled`. Accounts also report `disabled` and `source` (`"local"`, `"oidc"` or `"ldap"`).
+- Roles are stored in `users.is_admin` (1 for an admin) and `users.is_viewer` (1 for a viewer, never together with `is_admin`). `users.group_role` is `viewer` when a viewer group gave the account that role and empty otherwise; changing the role by hand empties it. The API reports both `role` (`"admin"`, `"member"` or `"viewer"`) and `isAdmin`. `POST /api/users` and `PUT /api/users/{id}` take `role` and, on update, `disabled`. Accounts also report `disabled` and `source` (`"local"`, `"oidc"` or `"ldap"`).
 - `POST /api/auth/api-keys` takes `readOnly: true`; the key list reports it. A read-only key gets `403` on anything but `GET` and `HEAD`.
 - Sign-in: `GET /api/auth/methods` (public: what the sign-in page offers), `GET /api/auth/oidc/start` and `GET /api/auth/oidc/callback` (the browser's way through single sign-on), `POST /api/auth/passkey/login/begin` and `.../finish` (passkey sign-in). Signed in: `GET/POST/PUT/DELETE /api/auth/passkeys...`, `POST/DELETE /api/auth/oidc/link`. Admins, in a browser session only for changes: `GET/PUT /api/auth/sign-in`, `GET/PUT /api/auth/oidc`, `POST /api/auth/oidc/test`, `GET/PUT /api/auth/ldap`, `POST /api/auth/ldap/test`. Secrets (client secret, bind password) are never returned.
 - Accounts: `GET /api/users`, `POST /api/users`, `PUT /api/users/{id}`, `DELETE /api/users/{id}` (administrators only).

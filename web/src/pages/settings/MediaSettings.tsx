@@ -352,7 +352,7 @@ function LibrarySection({ part, onSettings }: { part: 'folders' | 'naming'; onSe
               <span>{t('Keep the original file names')}</span>
             </label>
             <small style={{ color: 'var(--text-dim)' }}>
-              {t('Files keep the name they came with. Folders are still named after the movie or show, so media servers find them. A file with a random name, like a8f7d6e5c4b3.mkv, is named by the preset instead.')}
+              {t('Files keep the name they came with. Folders are still named after the movie or show, so media servers find them. A file with a random name, like a8f7d6e5c4b3.mkv, takes the name of the release instead. If that name is random too, the naming preset is used.')}
             </small>
           </div>
           <div className="grid-form">

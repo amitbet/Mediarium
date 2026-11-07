@@ -443,6 +443,26 @@ func (r *Repo) GetTrack(id int64) (Track, error) {
 	return t, nil
 }
 
+// AlbumsWithFiles returns the albums of an artist that have a file for at
+// least one track, partly downloaded ones included.
+func (r *Repo) AlbumsWithFiles(artistID int64) (map[int64]bool, error) {
+	rows, err := r.db.Query(`SELECT DISTINCT t.album_id FROM tracks t JOIN albums al ON al.id = t.album_id
+		WHERE al.artist_id = ? AND t.file_path <> ''`, artistID)
+	if err != nil {
+		return nil, fmt.Errorf("list albums with files of artist %d: %w", artistID, err)
+	}
+	defer rows.Close()
+	out := map[int64]bool{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan album id: %w", err)
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}
+
 // SetTrackFile records the file a track was imported to ("" clears it).
 func (r *Repo) SetTrackFile(trackID int64, path string) error {
 	if _, err := r.db.Exec(`UPDATE tracks SET file_path = ? WHERE id = ?`, path, trackID); err != nil {

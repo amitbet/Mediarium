@@ -271,11 +271,16 @@ func (c *Control) Download(ctx context.Context, stallAfter time.Duration, onProg
 	defer ticker.Stop()
 	done, _ := c.Progress()
 	last, lastMoved := done, time.Now()
+	nextLog := time.Now().Add(downloadLogEach)
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
+			if now := time.Now(); now.After(nextLog) {
+				nextLog = now.Add(downloadLogEach)
+				logSwarm("torrent: download progress", c.t, "bytesDone", done, "quietFor", time.Since(lastMoved).Round(time.Second).String())
+			}
 			if c.writeFailed.Load() {
 				// Nothing more will arrive: say why now rather than call the
 				// torrent stalled (and blocklist it) hours later.
@@ -295,7 +300,7 @@ func (c *Control) Download(ctx context.Context, stallAfter time.Duration, onProg
 			if done > last {
 				last, lastMoved = done, time.Now()
 			} else if stallAfter > 0 && time.Since(lastMoved) >= stallAfter {
-				return ErrStalled
+				return &StalledError{Waited: stallAfter, Diag: Diagnose(c.t)}
 			}
 		}
 	}

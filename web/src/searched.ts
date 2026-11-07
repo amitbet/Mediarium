@@ -14,6 +14,8 @@ export interface Searched {
   // The short why behind a failed or skipped line, and the same in a sentence.
   code?: string
   reason?: string
+  // The technical text behind a reason that was written for the person.
+  detail?: string
 }
 
 // summaryLine is the one short line: "Searched 8 indexers: 2 had releases, 5 had
@@ -42,6 +44,10 @@ export function why(s: Searched): string {
       return t('key or login refused')
     case 'unreachable':
       return t('could not be reached')
+    case 'flaresolverr':
+      return t("FlareSolverr isn't reachable")
+    case 'gone':
+      return t('the site says the page is gone')
     case 'vpn':
       return t('waiting for the VPN')
     case 'paused':

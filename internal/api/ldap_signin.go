@@ -60,15 +60,17 @@ func (s *Server) accountForDirectory(cfg ldapauth.Config, e *ldapauth.Entry) (*a
 		if !cfg.AutoCreate {
 			return nil, errNoAccountHere
 		}
-		role := cfg.DefaultRole
-		if e.Admin {
-			role = auth.RoleAdmin
-		}
+		role, groupRole := directoryGroups(cfg, e).newAccountRole()
 		created, err := s.Auth.CreateExternalUser(auth.ExternalProfile{
 			Provider: auth.SourceLDAP, Subject: e.ID, Username: e.Username, Name: e.Name, Email: e.Email, Role: role,
 		})
 		if err != nil {
 			return nil, err
+		}
+		if groupRole != "" {
+			if err := s.Auth.SetGroupRole(created.ID, groupRole); err != nil {
+				slog.Error("auth: could not note where an account's role comes from", "user", created.Username, "err", err)
+			}
 		}
 		slog.Info("auth: account made on a first directory sign-in", "user", created.Username, "role", created.Role())
 		return created, nil
@@ -76,37 +78,19 @@ func (s *Server) accountForDirectory(cfg ldapauth.Config, e *ldapauth.Entry) (*a
 	return nil, err
 }
 
-// syncDirectoryRole keeps the administrator role in step with the
-// administrator group, when the setup has one: in the group, an administrator;
-// out of it, no longer one. Other roles are left as an administrator set them.
-// The last administrator is never demoted.
-func (s *Server) syncDirectoryRole(cfg ldapauth.Config, u *auth.User, e *ldapauth.Entry) {
-	if strings.TrimSpace(cfg.AdminGroupFilter) == "" {
-		return
+// directoryGroups is what the directory's groups say about one person.
+func directoryGroups(cfg ldapauth.Config, e *ldapauth.Entry) groupRoles {
+	return groupRoles{
+		adminOn: strings.TrimSpace(cfg.AdminGroupFilter) != "", viewerOn: strings.TrimSpace(cfg.ViewerGroupFilter) != "",
+		inAdmin: e.Admin, inViewer: e.Viewer, def: cfg.DefaultRole,
 	}
-	want := u.Role()
-	switch {
-	case e.Admin:
-		want = auth.RoleAdmin
-	case u.IsAdmin:
-		want = cfg.DefaultRole
-	}
-	s.syncExternalRole(u, want)
 }
 
-func (s *Server) syncExternalRole(u *auth.User, want string) {
-	if want == u.Role() {
-		return
-	}
-	changed, err := s.Auth.SyncExternalRole(u.ID, want)
-	switch {
-	case errors.Is(err, auth.ErrLastAdmin):
-		slog.Warn("auth: kept the last administrator, even though the sign-in provider no longer lists them as one", "user", u.Username)
-	case err != nil:
-		slog.Error("auth: could not change an account's role", "user", u.Username, "err", err)
-	case changed:
-		slog.Warn("auth: an account's role changed to follow the sign-in provider", "user", u.Username, "role", want)
-	}
+// syncDirectoryRole keeps the role in step with the administrator group and
+// the viewer group, when the setup has them (see groupRoles). Other roles are
+// left as an administrator set them. The last administrator is never demoted.
+func (s *Server) syncDirectoryRole(cfg ldapauth.Config, u *auth.User, e *ldapauth.Entry) {
+	s.applyGroupRoles(u, directoryGroups(cfg, e))
 }
 
 // ---- Settings ----
@@ -146,7 +130,7 @@ func (s *Server) ldapFromRequest(r *http.Request, extra any) (ldapauth.Config, e
 	if t, ok := extra.(*[2]string); ok {
 		t[0], t[1] = body.TestUsername, body.TestPassword
 	}
-	for _, p := range []*string{&c.URL, &c.BindDN, &c.BaseDN, &c.UserFilter, &c.UsernameAttr, &c.NameAttr, &c.EmailAttr, &c.IDAttr, &c.AdminGroupFilter, &c.GroupBaseDN} {
+	for _, p := range []*string{&c.URL, &c.BindDN, &c.BaseDN, &c.UserFilter, &c.UsernameAttr, &c.NameAttr, &c.EmailAttr, &c.IDAttr, &c.AdminGroupFilter, &c.ViewerGroupFilter, &c.GroupBaseDN} {
 		*p = strings.TrimSpace(*p)
 		if utf8.RuneCountInString(*p) > ldapFieldMax {
 			return ldapauth.Config{}, errors.New("a field is too long")
@@ -174,6 +158,10 @@ func (s *Server) handlePutLDAP(w http.ResponseWriter, r *http.Request) {
 	c, err := s.ldapFromRequest(r, nil)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "That request couldn't be read.")
+		return
+	}
+	if c.CheckGroups() != nil {
+		writeError(w, http.StatusBadRequest, "The viewer group filter has to be different from the administrator group filter.")
 		return
 	}
 	if c.Enabled {

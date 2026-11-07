@@ -13,6 +13,7 @@ import (
 	"github.com/rdborg/mediarium/internal/cleanup"
 	"github.com/rdborg/mediarium/internal/indexers"
 	"github.com/rdborg/mediarium/internal/music"
+	"github.com/rdborg/mediarium/internal/musicbrainz"
 	"github.com/rdborg/mediarium/internal/notify"
 	"github.com/rdborg/mediarium/internal/organizer"
 	"github.com/rdborg/mediarium/internal/plainerror"
@@ -115,6 +116,14 @@ func (s *Server) albumDownloadInProgress(albumID int64) (string, error) {
 // runMusicPipeline downloads, unpacks and imports one album release.
 // restore is the status the album goes back to when it fails.
 func (s *Server) runMusicPipeline(queueID, artistID, albumID int64, restore music.Status, releaseTitle, downloadURL string, protocol indexers.Protocol) error {
+	return s.runMusicPipelineFrom(queueID, artistID, albumID, restore, releaseTitle, downloadURL, protocol, "")
+}
+
+// runMusicPipelineFrom is runMusicPipeline that, given the folder of files
+// that are already downloaded, skips the download and only imports them (an
+// import that had to wait for MusicBrainz, see music_import_wait.go). It
+// answers errMusicWaiting when it left the album waiting for MusicBrainz.
+func (s *Server) runMusicPipelineFrom(queueID, artistID, albumID int64, restore music.Status, releaseTitle, downloadURL string, protocol indexers.Protocol, readyDir string) error {
 	ctx, run := s.pipelines.begin(queueID)
 	defer s.pipelines.end(queueID, run)
 	if s.pausedBeforeStart(queueID) {
@@ -165,18 +174,38 @@ func (s *Server) runMusicPipeline(queueID, artistID, albumID int64, restore musi
 	}
 	label = albumLabel(artist, album)
 
-	if err := s.QueueRepo.SetStatus(queueID, queue.StatusDownloading, ""); err != nil {
-		return fail(err)
-	}
-	dir, err := s.prepareDownload(ctx, queueID, downloadURL, protocol)
-	if err != nil {
-		return fail(err)
+	dir := readyDir
+	if readyDir == "" {
+		if err := s.QueueRepo.SetStatus(queueID, queue.StatusDownloading, ""); err != nil {
+			return fail(err)
+		}
+		dir, err = s.prepareDownload(ctx, queueID, downloadURL, protocol)
+		if err != nil {
+			return fail(err)
+		}
+	} else {
+		if !fileExists(readyDir) {
+			return fail(errors.New("the downloaded files are no longer there. Press Retry to download them again"))
+		}
+		if err := s.QueueRepo.SetStatus(queueID, queue.StatusImporting, ""); err != nil {
+			return fail(err)
+		}
 	}
 	if ctx.Err() != nil {
 		return fail(ctx.Err()) // cancelled: never import for an artist that was removed
 	}
 	res, err := s.importAlbumFiles(ctx, artist, album, dir, releaseTitle)
 	if err != nil {
+		if errors.Is(err, musicbrainz.ErrUnavailable) && ctx.Err() == nil {
+			// MusicBrainz would not give the track list. The files are fine:
+			// keep them and try the import again later, never the download.
+			wait := musicWait{queueID: queueID, artistID: artistID, albumID: albumID, restore: restore,
+				releaseTitle: releaseTitle, downloadURL: downloadURL, protocol: protocol, dir: dir}
+			if s.holdForMusicBrainz(wait, label, err) {
+				return errMusicWaiting
+			}
+			return fail(errors.New(musicWaitGaveUp))
+		}
 		return fail(err)
 	}
 	if err := s.QueueRepo.SetStatus(queueID, queue.StatusCompleted, ""); err != nil {
@@ -272,7 +301,10 @@ func (s *Server) importAlbumFiles(ctx context.Context, artist music.Artist, albu
 	if root == "" {
 		return albumImport{}, fmt.Errorf("the music folder isn't set. Choose one in Settings > Library > Folders")
 	}
-	tracks, err := s.ensureTracks(ctx, album)
+	// A busy MusicBrainz is waited out for a few minutes here (nobody is
+	// watching a page); if it is still busy the caller keeps the files and
+	// tries the import again later.
+	tracks, err := s.ensureTracks(musicbrainz.Patient(ctx), album)
 	if err != nil {
 		return albumImport{}, err
 	}

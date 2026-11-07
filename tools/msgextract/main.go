@@ -39,7 +39,7 @@ const out = "web/src/serverText.json"
 // the position of that argument: whatever it holds is kept even when it does
 // not end like a sentence.
 var messageCalls = map[string]int{
-	"writeError": 2, "LogActivity": 2, "LogSeriesActivity": 2, "LogItemActivity": 3,
+	"writeError": 2, "LogActivity": 2, "LogSeriesActivity": 2, "LogItemActivity": 3, "renamedLine": 0,
 }
 
 // healthCalls are the functions that add a line to the Health list on the

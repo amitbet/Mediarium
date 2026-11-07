@@ -5,3 +5,4 @@ export const REPO_URL = 'https://github.com/rdborg/Mediarium'
 export const WEBSITE_URL = 'https://mediarium.app'
 // Ideas, questions and "this worked for me" go to GitHub Discussions.
 export const FEEDBACK_URL = REPO_URL + '/discussions'
+export const REDDIT_URL = 'https://www.reddit.com/r/Mediarium/'

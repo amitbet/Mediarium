@@ -230,3 +230,120 @@ func TestMoveRequestsAreChecked(t *testing.T) {
 	// Stopping when nothing runs is harmless.
 	postJSON[map[string]any](t, l.client, l.base+"/api/library/move-files/cancel", map[string]any{}, http.StatusOK)
 }
+
+func TestMoveDryRunTouchesNothing(t *testing.T) {
+	l := newMoveLibrary(t)
+	before := func() string {
+		out := ""
+		for _, root := range []string{l.movies, l.movies2, l.tv, l.tv2} {
+			_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+				if err == nil {
+					out += p + "\n"
+				}
+				return nil
+			})
+		}
+		return out
+	}
+	files := before()
+	movie, _ := l.server.TestScalar(`SELECT file_path FROM movies`)
+	ep, _ := l.server.TestScalar(`SELECT group_concat(file_path) FROM episodes`)
+	for _, c := range []struct {
+		kind string
+		id   float64
+		to   string
+	}{{"movie", l.movieID, l.movies2}, {"tv", l.showID, l.tv2}} {
+		prev := postJSON[map[string]any](t, l.client, l.base+"/api/library/move-files/preview", map[string]any{"items": l.items(c.kind, c.id), "rootPath": c.to}, http.StatusOK)
+		if prev["canMove"] != float64(1) || prev["files"].(float64) < 1 {
+			t.Fatalf("preview = %v", prev)
+		}
+	}
+	if before() != files {
+		t.Fatal("the preview changed files on disk")
+	}
+	if m, _ := l.server.TestScalar(`SELECT file_path FROM movies`); m != movie {
+		t.Fatal("the preview changed the movie record")
+	}
+	if e, _ := l.server.TestScalar(`SELECT group_concat(file_path) FROM episodes`); e != ep {
+		t.Fatal("the preview changed the episode records")
+	}
+	if root, _ := l.server.TestScalar(`SELECT root_path FROM movies`); root != "" {
+		t.Fatalf("the preview changed the folder setting: %q", root)
+	}
+}
+
+func TestMoveIsUndoneWhenTheRecordsCannotBeSaved(t *testing.T) {
+	l := newMoveLibrary(t)
+	oldDir := filepath.Dir(l.movie)
+	before := slurp(t, l.movie)
+	if err := l.server.TestExec(`CREATE TRIGGER refuse_move BEFORE UPDATE OF root_path ON movies BEGIN SELECT RAISE(ABORT, 'boom'); END`); err != nil {
+		t.Fatal(err)
+	}
+	postJSON[map[string]any](t, l.client, l.base+"/api/library/move-files", map[string]any{"items": l.items("movie", l.movieID), "rootPath": l.movies2}, http.StatusAccepted)
+	st := l.waitMove(t)
+	if st["moved"] != float64(0) || st["left"] != float64(1) {
+		t.Fatalf("status = %v", st)
+	}
+	if !exists(l.movie) || slurp(t, l.movie) != before || !exists(filepath.Join(oldDir, "The Matrix (1999).en.srt")) {
+		t.Fatal("the files are not back where they were")
+	}
+	if exists(filepath.Join(l.movies2, "The Matrix (1999)")) {
+		t.Fatal("the new folder was left behind")
+	}
+	if got, _ := l.server.TestScalar(`SELECT file_path FROM movies`); got != l.movie {
+		t.Fatalf("the record points to %q", got)
+	}
+	if got, _ := l.server.TestScalar(`SELECT sub_path FROM subtitle_files`); !strings.HasPrefix(got, oldDir) {
+		t.Fatalf("the subtitle record points to %q", got)
+	}
+}
+
+func TestMoveNeverFollowsALinkOutOfTheLibrary(t *testing.T) {
+	l := newMoveLibrary(t)
+	outside := filepath.Join(filepath.Dir(l.movies), "elsewhere")
+	putFile(t, filepath.Join(outside, "private.txt"), "not part of the library")
+	if err := os.Symlink(outside, filepath.Join(filepath.Dir(l.movie), "extras")); err != nil {
+		t.Skipf("no symlinks here: %v", err)
+	}
+	postJSON[map[string]any](t, l.client, l.base+"/api/library/move-files", map[string]any{"items": l.items("movie", l.movieID), "rootPath": l.movies2}, http.StatusAccepted)
+	st := l.waitMove(t)
+	if st["bytesAll"].(float64) > 1000 {
+		t.Fatalf("the size counted what the link leads to: %v", st["bytesAll"])
+	}
+	// On one drive the folder is renamed and the link goes along as a link;
+	// what it leads to is never copied, moved or removed.
+	if slurp(t, filepath.Join(outside, "private.txt")) != "not part of the library" {
+		t.Fatal("the file outside the library was changed")
+	}
+	if st["moved"] == float64(1) {
+		if info, err := os.Lstat(filepath.Join(l.movies2, "The Matrix (1999)", "extras")); err != nil || info.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("the link was turned into something else: %v", err)
+		}
+	}
+}
+
+func TestMoveAsksForFewerTitlesWhenThereAreTooMany(t *testing.T) {
+	l := newMoveLibrary(t)
+	var items []map[string]any
+	for i := 0; i < 51; i++ {
+		items = append(items, map[string]any{"kind": "movie", "id": float64(1000 + i)})
+	}
+	for _, url := range []string{"/api/library/move-files/preview", "/api/library/move-files"} {
+		postJSON[map[string]any](t, l.client, l.base+url, map[string]any{"items": items, "rootPath": l.movies2}, http.StatusBadRequest)
+	}
+}
+
+func TestMoveWritesAnActivityLine(t *testing.T) {
+	l := newMoveLibrary(t)
+	postJSON[map[string]any](t, l.client, l.base+"/api/library/move-files", map[string]any{"items": l.items("movie", l.movieID), "rootPath": l.movies2}, http.StatusAccepted)
+	l.waitMove(t)
+	found := false
+	for _, e := range getJSON[[]map[string]any](t, l.client, l.base+"/api/activity?limit=200") {
+		if msg, _ := e["message"].(string); strings.HasPrefix(msg, "Moved The Matrix") && strings.Contains(msg, " to "+l.movies2) && strings.Contains(msg, "2 files") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("no Activity line for the move")
+	}
+}

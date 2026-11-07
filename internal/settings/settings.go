@@ -28,6 +28,8 @@ const (
 	KeyRootsConfirmed      = "library.roots_confirmed"          // library folders Mediarium has seen with their .mediarium-root marker (a JSON list); one that loses its marker is refused until it is back
 	KeyMoviesExtraPaths    = "library.movies_extra_paths"       // more movie folders next to the main one (a JSON list of paths); each movie says which one its files go to
 	KeyTVExtraPaths        = "library.tv_extra_paths"           // the same for shows
+	KeyMoviesNewFolder     = "library.movies_new_folder"        // where a movie added without a folder choice is kept: unset = the main folder, a path = that one of the extra folders, "most-room" = whichever movie folder has the most free space at the time
+	KeyTVNewFolder         = "library.tv_new_folder"            // the same for shows
 	KeyMovieCopiesPath     = "library.movie_copies_path"        // where second copies of movies go (a 4K copy next to the 1080p one); unset = second copies of movies are off
 	KeyTVCopiesPath        = "library.tv_copies_path"           // the same for shows
 	KeyDownloadsPath       = "library.downloads_path"
@@ -37,7 +39,7 @@ const (
 	KeyMovieNameFormat     = "library.movie_name_format"   // token string, used when preset=custom
 	KeyEpisodeNameFormat   = "library.episode_name_format" // token string, used when preset=custom
 	KeyTVmazeAirTimes      = "metadata.tvmaze_air_times"   // "0" stops Mediarium looking up the time episodes air on TVmaze (the calendar then only knows days); anything else (including unset) leaves it on
-	KeyKeepOriginalNames   = "library.keep_original_names" // "1" keeps the file name an imported video came with (folders are still named by the preset; a random, obfuscated name falls back to the preset); unset or "0" renames as the preset says
+	KeyKeepOriginalNames   = "library.keep_original_names" // "1" keeps the file name an imported video came with (folders are still named by the preset; a random, obfuscated name is replaced by the release's name for a movie or single episode, else by the preset); unset or "0" renames as the preset says
 	KeyTMDBAPIKey          = "metadata.tmdb_api_key"       // encrypted
 	KeyOnboardingDone      = "onboarding.done"             // "1" once the first-run wizard completes
 
@@ -106,7 +108,7 @@ const (
 	KeyAutomationEnabled  = "automation.enabled"            // "0" disables; anything else (including unset) enables
 	KeyQualityProfile     = "library.quality_profile"       // legacy: an old preset key (any-1080p, ultra-hd, any); only read once to pick the initial default profile
 	KeyQualityLanguage    = "quality.language"              // the audio language wanted, as a name like "English" (the default when unset); a release clearly in another language only is not picked automatically
-	KeyInfoLanguage       = "info.language"                 // the language titles, plots, genres and posters are read in, as a TMDB tag like "de-DE" (en-US when unset); file and folder names always use the English title
+	KeyInfoLanguage       = "info.language"                 // the language titles, plots, genres and posters are read in, as a TMDB tag like "de-DE" (en-US when unset); with naming.folders_in_info_language on, new movie and show folders and file names use that language's title too
 	KeyReleaseCountry     = "info.release_country"          // the country release dates are read for, as a code like "IN"; unset = the country of the info language
 	KeySubtitleAddons     = "subtitles.addons"              // subtitle add-ons (JSON list of {id, name, url}; the url can hold the person's own key for a site, so it is stored encrypted)
 	KeyDefaultSources     = "library.default_sources"       // usenet | torrent | both (default both)
@@ -114,6 +116,9 @@ const (
 	KeyDefaultProfileID   = "library.default_profile_id"    // id of the stored quality profile used by items with no profile of their own
 	KeyDefaultTVProfileID = "library.default_profile_id_tv" // id of the quality profile shows with none of their own use; unset = the same default as movies
 	KeyPresetsVersion     = "library.presets_version"       // revision of the built-in quality presets last applied; unset means never (set at start, not user-editable)
+
+	// Folder and file names.
+	KeyFoldersInInfoLanguage = "naming.folders_in_info_language" // "1" names new movie and show folders and files with the title in the info language; unset or "0" keeps the English title
 
 	// "Only take releases in these languages", next to quality.language.
 	KeyQualityLanguageOnly = "quality.language_only" // "1" takes only releases that say they are in a wanted audio language (no untagged, English-only or bare multi releases unless English is wanted); unset or "0" keeps those as a lower-ranked fallback
@@ -138,12 +143,13 @@ const (
 	// Phase 3 — curated/public list import (Discover). Trakt's
 	// public list-items endpoint only needs a client ID (an app
 	// registration on trakt.tv), no OAuth user login — see internal/trakt.
-	KeyTraktClientID  = "metadata.trakt_client_id" // encrypted
-	KeySimklClientID  = "metadata.simkl_client_id" // encrypted; the Client ID of a Simkl app (own, or the one a release ships with)
-	KeySimklToken     = "metadata.simkl_token"     // encrypted; the access token of the connected Simkl account
-	KeySimklRefresh   = "metadata.simkl_refresh"   // encrypted; the refresh token Simkl gave with the access token, when it gave one
-	KeySimklExpires   = "metadata.simkl_expires"   // when the access token runs out (Unix seconds), when Simkl said; unset for a token that does not expire
-	KeyHardcoverToken = "books.hardcover_token"    // encrypted; a personal Hardcover API token for better book series and release dates. Unset = Open Library only
+	KeyTraktClientID     = "metadata.trakt_client_id"   // encrypted
+	KeySimklClientID     = "metadata.simkl_client_id"   // encrypted; the Client ID of a Simkl app (own, or the one a release ships with)
+	KeySimklToken        = "metadata.simkl_token"       // encrypted; the access token of the connected Simkl account
+	KeySimklRefresh      = "metadata.simkl_refresh"     // encrypted; the refresh token Simkl gave with the access token, when it gave one
+	KeySimklExpires      = "metadata.simkl_expires"     // when the access token runs out (Unix seconds), when Simkl said; unset for a token that does not expire
+	KeyHardcoverToken    = "books.hardcover_token"      // encrypted; a personal Hardcover API token for better book series and release dates. Unset = Open Library only
+	KeyGoogleBooksAPIKey = "books.google_books_api_key" // encrypted; an optional personal Google Books API key. Book search asks Google Books without one. A key is for people who reach Google's limit.
 
 	// Illegal filename character handling ("configurable
 	// (replace vs. strip)"). The engine (internal/organizer.Sanitize) has
@@ -164,6 +170,10 @@ const (
 
 	// Indexer traffic through the VPN. Off when unset.
 	KeyVPNRouteIndexers = "vpn.route_indexers" // "1" sends searches, RSS, release downloads, IRC announces and debrid through the VPN, and they wait while it isn't up. Home-network addresses still connect directly
+
+	// UDP tracker announces and DHT queries through the built-in VPN. Off
+	// when unset: those are skipped, and only HTTP trackers are used.
+	KeyVPNDiscoverThroughTunnel = "vpn.discover_through_tunnel" // "1" sends UDP tracker announces and DHT through the VPN and looks their names up through the VPN's DNS. A failed lookup, or a tunnel socket that will not open, sends nothing from the home address. Unset or "0" skips them
 
 	// A SOCKS5 or HTTP proxy for some of Mediarium's traffic. The address
 	// (with any user name and password) is stored encrypted; "" means no
@@ -190,6 +200,8 @@ const (
 	KeyPublicURL = "server.public_url" // the address you open Mediarium at from your own devices (like https://mediarium.example.com); links in notification messages use it; unset = no links
 
 	KeyNotifyOnProblems = "notify.on_problems" // "1" sends a notification (to the targets that listen for Health) when a new error is added to the problem log; unset or "0" sends none
+
+	KeyDebugLogging = "log.debug" // "1" writes the extra detail (debug lines) to the log, taking effect at once and after a restart; unset or "0" keeps the log to normal detail
 
 	// A download keeps its place until it has been repaired, unpacked and
 	// imported; the others wait in line.

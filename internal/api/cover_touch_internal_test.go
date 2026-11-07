@@ -25,7 +25,7 @@ func TestTouchCoverMarksUse(t *testing.T) {
 	st, _ := os.Stat(used)
 	touchCover(used, st)
 
-	pruneCoverCache(dir, 1, time.Hour)
+	pruneCoverCache(dir, 1, 1, time.Hour)
 	if _, err := os.Stat(used); err != nil {
 		t.Fatalf("the cover that was looked at was removed: %v", err)
 	}

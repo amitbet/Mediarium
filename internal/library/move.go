@@ -34,6 +34,11 @@ func (r *Repo) ApplyMove(kind string, id int64, root string, mapPath func(string
 		if err := mapSubtitles(tx, `SELECT media_id, language, sub_path FROM subtitle_files WHERE kind = 'movie' AND media_id = ?`, id, "movie", mapPath); err != nil {
 			return err
 		}
+		if file.Valid {
+			if err := moveMediaInfo(tx, []string{file.String}, mapPath); err != nil {
+				return err
+			}
+		}
 	case KindShow:
 		rows, err := tx.Query(`SELECT id, file_path FROM episodes WHERE series_id = ? AND COALESCE(file_path, '') != ''`, id)
 		if err != nil {
@@ -44,6 +49,7 @@ func (r *Repo) ApplyMove(kind string, id int64, root string, mapPath func(string
 			path string
 		}
 		var changes []change
+		var oldFiles []string
 		for rows.Next() {
 			var epID int64
 			var file string
@@ -51,6 +57,7 @@ func (r *Repo) ApplyMove(kind string, id int64, root string, mapPath func(string
 				rows.Close()
 				return err
 			}
+			oldFiles = append(oldFiles, file)
 			if p, ok := mapPath(file); ok {
 				changes = append(changes, change{epID, p})
 			}
@@ -64,6 +71,9 @@ func (r *Repo) ApplyMove(kind string, id int64, root string, mapPath func(string
 			if _, err := tx.Exec(`UPDATE episodes SET file_path = ? WHERE id = ?`, c.path, c.id); err != nil {
 				return fmt.Errorf("move episode %d: %w", c.id, err)
 			}
+		}
+		if err := moveMediaInfo(tx, oldFiles, mapPath); err != nil {
+			return err
 		}
 		if err := mapSubtitles(tx, `SELECT sf.media_id, sf.language, sf.sub_path FROM subtitle_files sf JOIN episodes e ON e.id = sf.media_id WHERE sf.kind = 'episode' AND e.series_id = ?`, id, "episode", mapPath); err != nil {
 			return err
@@ -118,6 +128,21 @@ func mapSubtitles(tx *sql.Tx, query string, id int64, kind string, mapPath func(
 	for _, c := range changes {
 		if _, err := tx.Exec(`UPDATE subtitle_files SET sub_path = ? WHERE kind = ? AND media_id = ? AND language = ?`, c.path, kind, c.media, c.language); err != nil {
 			return fmt.Errorf("move subtitle record: %w", err)
+		}
+	}
+	return nil
+}
+
+// moveMediaInfo keeps what was read from the video files (codec, tracks and so
+// on) with the files that moved, so they are not read again. A row that would
+// land on an existing one is left alone; the clean-up drops rows for paths
+// nothing uses any more.
+func moveMediaInfo(tx *sql.Tx, files []string, mapPath func(string) (string, bool)) error {
+	for _, f := range files {
+		if p, ok := mapPath(f); ok && p != f {
+			if _, err := tx.Exec(`UPDATE OR IGNORE media_info SET path = ?1 WHERE path = ?2`, p, f); err != nil {
+				return fmt.Errorf("move the file facts: %w", err)
+			}
 		}
 	}
 	return nil

@@ -50,6 +50,9 @@ indexers:
     priority: 10         # 1 to 50, lower is tried first (25 = default)
     requestsPerDay: 25   # most requests a day (0 = none set)
     minSeeders: 5        # torrent indexers: skip releases with fewer seeders (0 = off, up to 1000)
+    extraCategories:     # more category numbers to search, per kind: movies, tv, music, books, audiobooks
+      tv: [105000]
+      books: [7120]
 
 qualityProfiles:
   - name: Any HD

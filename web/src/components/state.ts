@@ -35,7 +35,10 @@ export function describeState(key: ItemStateKey, extra?: string, hint?: string):
 }
 
 // Movie state from the library row plus whatever the queue says about it.
-export function movieState(m: { id: number; status: string; monitored?: boolean }, queue: QueueItem[]): ItemState {
+// All the state functions need of a queue row; Discover's slim answer carries just these.
+export type QueueLike = Pick<QueueItem, 'movieId' | 'seriesId' | 'status' | 'progressPct'>
+
+export function movieState(m: { id: number; status: string; monitored?: boolean }, queue: ReadonlyArray<QueueLike>): ItemState {
   const q = queue.filter((x) => x.movieId === m.id && !x.seriesId)
   const running = q.find((x) => x.status === 'downloading' || x.status === 'importing')
   if (running) return describeState('downloading', `${Math.round(running.progressPct)}%`)
@@ -49,7 +52,7 @@ export function movieState(m: { id: number; status: string; monitored?: boolean 
   return describeState('searching')
 }
 
-export function seriesState(s: { id: number; episodeCount: number; downloadedCount: number; monitored: boolean }, queue: QueueItem[]): ItemState {
+export function seriesState(s: { id: number; episodeCount: number; downloadedCount: number; monitored: boolean }, queue: ReadonlyArray<QueueLike>): ItemState {
   const q = queue.filter((x) => x.seriesId === s.id)
   const running = q.find((x) => x.status === 'downloading' || x.status === 'importing')
   if (running) return describeState('downloading', `${Math.round(running.progressPct)}%`)

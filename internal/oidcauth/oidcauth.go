@@ -52,6 +52,9 @@ type Config struct {
 	AutoCreate  bool   `json:"autoCreate"`  // make the account on the first sign-in
 	DefaultRole string `json:"defaultRole"` // "member" (default) or "viewer"
 	AdminGroup  string `json:"adminGroup"`  // people in this group are administrators ("" = nobody is, by group)
+	// ViewerGroup, when set, makes the people in it viewers (unless they are in
+	// the administrator group too). "" = nobody is a viewer by group.
+	ViewerGroup string `json:"viewerGroup"`
 	// AllowedGroup, when set, limits who may sign in at all to this group.
 	AllowedGroup string `json:"allowedGroup"`
 	// AllowedDomains, when set, limits who may sign in or be linked to the
@@ -102,9 +105,21 @@ func (c Config) ScopeList() []string {
 	return out
 }
 
+// CheckGroups says what is wrong with the group names: the viewer group has
+// to be another group than the administrator group.
+func (c Config) CheckGroups() error {
+	if v := strings.TrimSpace(c.ViewerGroup); v != "" && v == strings.TrimSpace(c.AdminGroup) {
+		return errors.New("the viewer group has to be a different group than the administrator group")
+	}
+	return nil
+}
+
 // Check says what is missing, in words for the settings page.
 func (c Config) Check() error {
 	c = c.Defaults()
+	if err := c.CheckGroups(); err != nil {
+		return err
+	}
 	u, err := url.Parse(c.Issuer)
 	switch {
 	case c.Issuer == "":
@@ -444,7 +459,7 @@ func (m *Manager) Finish(ctx context.Context, cfg Config, redirect string, q url
 	// Claims the ID token does not carry may be in the user info answer. It is
 	// only believed if it is about the same person.
 	need := []string{cfg.UsernameClaim, cfg.EmailClaim, cfg.NameClaim}
-	if cfg.AdminGroup != "" || cfg.AllowedGroup != "" {
+	if cfg.AdminGroup != "" || cfg.ViewerGroup != "" || cfg.AllowedGroup != "" {
 		need = append(need, cfg.GroupsClaim)
 	}
 	if missing(claims, need) {

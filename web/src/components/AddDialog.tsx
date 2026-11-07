@@ -1,8 +1,10 @@
 import { createPortal } from 'react-dom'
 import { sortProfiles } from './qualityBlurb'
 import { useEffect, useRef, useState } from 'react'
-import { api, can, isRequested, isViewer, type DashboardData, type QualityProfile, type RequestStatus, type SourcePref } from '../api'
+import { api, can, isAdmin, isRequested, isViewer, type DashboardData, type QualityProfile, type RequestStatus, type SourcePref } from '../api'
 import { useAuth } from '../AuthContext'
+import type { NewTitleFolder } from '../api'
+import { addChoices, mostRoomNote } from '../newTitleFolder'
 import Icon from './Icon'
 import ViewerNotice from './ViewerNotice'
 import { TagChips, TagInput } from './Tags'
@@ -12,6 +14,7 @@ import { useFocusTrap } from '../useFocusTrap'
 import { t, st } from '../i18n'
 import { defaultProfileFor } from '../profileDefaults'
 import InfoTip from './InfoTip'
+import { collectionBodyFor, offersCollectionAdd } from '../collectionAdd'
 
 export interface AddTarget {
   kind: 'movie' | 'tv'
@@ -81,6 +84,7 @@ function AddForm({
   // The library folders to choose from, when more than one is set up (the main one first).
   const [folders, setFolders] = useState<string[]>([])
   const [rootPath, setRootPath] = useState('')
+  const [newNow, setNewNow] = useState<NewTitleFolder | undefined>()
   const [tags, setTags] = useState<string[]>([])
   const [knownTags, setKnownTags] = useState<string[]>([])
   useEffect(() => {
@@ -90,6 +94,19 @@ function AddForm({
       .catch(() => undefined)
   }, [])
   const [keepBetter, setKeepBetter] = useState(savedBetter)
+  // The TMDB collection this film belongs to, if any (administrators can add the rest of it too).
+  const admin = isAdmin(useAuth().user)
+  const [collection, setCollection] = useState<{ id: number; name: string } | null>(null)
+  const [addCollection, setAddCollection] = useState(false)
+  useEffect(() => {
+    if (!isMovie || !admin || asks) return
+    api
+      .tmdbMovieDetail(target.tmdbId)
+      .then((d) => setCollection(d.collection ? { id: d.collection.id, name: d.collection.name } : null))
+      .catch(() => undefined)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  const collectionOffered = offersCollectionAdd(isMovie, admin, asks, collection?.id)
   // For an account that has to ask: can it ask for the 4K copy too, and does it want to.
   const [reqStatus, setReqStatus] = useState<RequestStatus | null>(null)
   const [wantFourK, setWantFourK] = useState(false)
@@ -110,7 +127,13 @@ function AddForm({
     }).catch(() => undefined)
     api
       .libraryFolders()
-      .then((f) => setFolders(target.kind === 'movie' ? f.movies : f.tv))
+      .then((f) => {
+        const list = target.kind === 'movie' ? f.movies : f.tv
+        const now = target.kind === 'movie' ? f.newTitles.movies : f.newTitles.tv
+        setFolders(list)
+        setNewNow(now)
+        setRootPath(addChoices(list, now).initial)
+      })
       .catch(() => undefined)
     api.dashboard().then((d) => setDash(d.setup)).catch(() => undefined)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -143,6 +166,15 @@ function AddForm({
         await api.setTitleTags(isMovie ? 'movie' : 'tv', libraryId, tags).catch(() => undefined)
       }
       toast.success(searchNow && !cannotSearch ? t('{title} added. Searching for a release now.', { title: target.title }) : t('{title} added.', { title: target.title }))
+      if (collectionOffered && addCollection && collection) {
+        // The movie is in the library now, so this adds the other films with the same choices.
+        try {
+          const r = await api.addCollection(collection.id, collectionBodyFor({ profileId, rootPath, monitored, sources, searchNow: searchNow && !cannotSearch }))
+          toast.success(st(r.message))
+        } catch (e) {
+          toast.error(e instanceof Error ? e.message : String(e))
+        }
+      }
       onAdded(libraryId)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -195,13 +227,13 @@ function AddForm({
                 <InfoTip text={t('The library folder this title is stored in once it is downloaded.')} />
               </span>
               <select value={rootPath} onChange={(e) => setRootPath(e.target.value)}>
-                <option value="">{t('{folder} (main)', { folder: folders[0] })}</option>
-                {folders.slice(1).map((f) => (
-                  <option key={f} value={f}>
-                    {f}
+                {addChoices(folders, newNow).options.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
                   </option>
                 ))}
               </select>
+              {mostRoomNote(newNow) && <small className="path-note">{mostRoomNote(newNow)}</small>}
             </label>
           )}
 
@@ -284,6 +316,19 @@ function AddForm({
               </small>
             </span>
           </label>
+
+          {collectionOffered && collection && (
+            <label className="check-row" style={{ color: 'var(--text)' }}>
+              <input type="checkbox" checked={addCollection} onChange={(e) => setAddCollection(e.target.checked)} disabled={busy} />
+              <span>
+                <span className="has-tip">
+                  {t('Add the other films of this collection too')}
+                  <InfoTip text={t('Adds the rest of the collection with the same quality profile, folder, monitoring and search choice as this film. Films you already have are left alone.')} />
+                </span>
+                <small style={{ display: 'block', color: 'var(--text-dim)', fontWeight: 400 }}>{collection.name}</small>
+              </span>
+            </label>
+          )}
 
           {fourKOffered && (
             <label className="check-row" style={{ color: 'var(--text)' }}>

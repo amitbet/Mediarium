@@ -43,6 +43,9 @@ const (
 	// mediaInfoKickDelay lets the rest of a season pack finish importing.
 	mediaInfoKickDelay = 4 * time.Second
 	mediaSummaryTTL    = 15 * time.Second
+	// mediaSummaryMaxStale is how old the lists may be and still be handed out
+	// while they are renewed in the background; older ones are waited for.
+	mediaSummaryMaxStale = 10 * time.Minute
 )
 
 // mediaInfoSettle: a file changed more recently than this may still be being
@@ -55,10 +58,10 @@ type mediaInfoState struct {
 	kicked atomic.Bool // a pass after an import is already waiting to start
 	gen    atomic.Int64
 
-	mu         sync.Mutex
-	summaries  *mediaSummaries
-	incomplete *incompleteSet         // the files that look cut off (incomplete_files.go)
-	folders    map[string]folderNames // folder listings, for the subtitle files beside the videos
+	mu      sync.Mutex             // one build of the lists below at a time (media_cache.go)
+	folders map[string]folderNames // folder listings, for the subtitle files beside the videos
+
+	cache cacheState // who may read the two pointers above, and the renewals in progress (media_cache.go)
 }
 
 // folderNames is the files in one folder, valid while the folder's time is
@@ -145,7 +148,8 @@ func (s *Server) saveFileInfo(path string, known mediaRoots, settle bool) miOutc
 		slog.Warn("media info: couldn't save a file's details", "err", err)
 		return miSkipped
 	}
-	s.mediaInfo.gen.Add(1)
+	// The lists are not thrown away for every file read (a read pass saves
+	// several a second): they renew themselves every few seconds anyway.
 	return miDone
 }
 
@@ -221,9 +225,7 @@ func (s *Server) mediaInfoJob(ctx context.Context) {
 		}
 		time.Sleep(mediaInfoPause)
 	}
-	if gone, err := s.MovieRepo.PruneMediaInfo(); err == nil && gone > 0 {
-		s.mediaInfo.gen.Add(1)
-	}
+	_, _ = s.MovieRepo.PruneMediaInfo()
 	if n > 0 || changed > 0 {
 		slog.Info("media info: read the details of files", "new", n, "changed", changed)
 	}
@@ -341,11 +343,30 @@ func mediaSummaryOf(list ...library.MediaSummary) *mediaSummaryPayload {
 // caller needs it.
 func (s *Server) mediaSummaryNow(sidecars bool) *mediaSummaries {
 	st := &s.mediaInfo
+	cur := st.cache.summaries()
+	if cur != nil && cur.gen == st.gen.Load() && (cur.sidecars || !sidecars) {
+		if time.Since(cur.at) < mediaSummaryTTL {
+			return cur
+		}
+		// Out of date, but of the right kind: hand it out and renew it in the
+		// background rather than make this request wait for the whole library.
+		if time.Since(cur.at) < mediaSummaryMaxStale {
+			st.cache.renew(&st.cache.renewingSummaries, func() { s.buildMediaSummaries(sidecars) })
+			return cur
+		}
+	}
+	return s.buildMediaSummaries(sidecars)
+}
+
+// buildMediaSummaries reads the lists afresh (unless another caller has just
+// done so) and keeps them.
+func (s *Server) buildMediaSummaries(sidecars bool) *mediaSummaries {
+	st := &s.mediaInfo
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	gen := st.gen.Load()
-	if st.summaries != nil && st.summaries.gen == gen && time.Since(st.summaries.at) < mediaSummaryTTL && (st.summaries.sidecars || !sidecars) {
-		return st.summaries
+	if cur := st.cache.summaries(); cur != nil && cur.gen == gen && time.Since(cur.at) < mediaSummaryTTL && (cur.sidecars || !sidecars) {
+		return cur
 	}
 	out := &mediaSummaries{at: time.Now(), gen: gen, sidecars: sidecars}
 	var err error
@@ -358,7 +379,7 @@ func (s *Server) mediaSummaryNow(sidecars bool) *mediaSummaries {
 	if sidecars {
 		s.addSidecarSubtitles(out)
 	}
-	st.summaries = out
+	st.cache.setSummaries(out)
 	return out
 }
 

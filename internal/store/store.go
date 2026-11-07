@@ -31,6 +31,13 @@ import (
 // purpose: a NAS has few cores, and SQLite allows one writer at a time anyway.
 const poolSize = 8
 
+// pageCacheKiB is SQLite's page cache for each connection, in KiB (a negative
+// cache_size means KiB). The default is about 2 MB, which a library list with
+// thousands of titles outgrows on every call. The cache is per connection and
+// fills only as pages are used, so the most the pool of poolSize can ever hold
+// is 64 MB, and a quiet app holds a fraction of that.
+const pageCacheKiB = 8000
+
 // Journal modes reported by Mode.
 const (
 	ModeWAL      = "wal"
@@ -133,6 +140,7 @@ func dsn(path, synchronous string) string {
 	q.Add("_pragma", "foreign_keys(1)")
 	q.Add("_pragma", "synchronous("+synchronous+")")
 	q.Add("_pragma", "journal_size_limit(67108864)")
+	q.Add("_pragma", fmt.Sprintf("cache_size(-%d)", pageCacheKiB))
 	q.Set("_txlock", "immediate")
 	return "file:" + escaped + "?" + q.Encode()
 }

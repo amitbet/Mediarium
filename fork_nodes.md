@@ -104,6 +104,32 @@ this upgrade; they are preserved as fork changes, not attributed to upstream.
 
 ## Upgrade procedure
 
+### 2026-11-07: upstream v3.9.4
+
+Merged stable release `v3.9.4` into `main`. Resolved CHANGELOG by retaining
+both release histories, and go.mod by keeping Windows x/sys direct while using
+upstream dependency versions (go mod tidy also marks upstream's dht import direct).
+The TV destination conflict retains upstream's translated title for new folders
+and the fork's unconditional existing-show and existing-season folder reuse.
+Windows runtime, installers and AudioBook Bay changes remain intact.
+`internal/api/folders_new_internal_test.go` normalizes fixture paths with
+filepath on Windows; fake disk-usage lookups and expected paths now follow the
+host path separator without changing production folder-selection behavior.
+
+Validation: production frontend build and all 669 frontend tests pass. Full
+cmd/app, organizer, metafiles, libimport, indexers and store suites pass, as do
+focused API folder-format/existing-series/new-folder tests and the Python
+migration test. Native Windows GUI build with the existing installation's private
+API registrations reports 3.9.4 windows/amd64; registrations remain outside Git.
+The local service was upgraded after a stopped configuration/key/binary backup.
+Live version and embedded UI assets pass HTTP checks; SQLite integrity, all
+library counts, encrypted settings/indexer secrets, user password hashes, key,
+media path settings and service environment are preserved. Schema is now 0235.
+Backup: `C:\ProgramData\Mediarium\backups\before-v3.9.4-20261107-100519`.
+No installer lifecycle tests were run against this production machine; the
+existing broader Windows torrent fixture-cleanup limitation remains applicable.
+
+
 ### 2026-10-25: upstream v3.7.3
 
 Fetched upstream and merged `v3.7.3` / upstream/main (`f7d1e26`) into `main`

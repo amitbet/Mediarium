@@ -63,7 +63,10 @@ type Config struct {
 	// {dn} stands for the person's DN and {username} for their user name.
 	// It is searched under GroupBaseDN (the base DN when empty).
 	AdminGroupFilter string `json:"adminGroupFilter"`
-	GroupBaseDN      string `json:"groupBaseDn"`
+	// ViewerGroupFilter works the same way and makes the people it finds
+	// viewers (unless the administrator group finds them too).
+	ViewerGroupFilter string `json:"viewerGroupFilter"`
+	GroupBaseDN       string `json:"groupBaseDn"`
 
 	AutoCreate  bool   `json:"autoCreate"`  // make the account on the first sign-in
 	DefaultRole string `json:"defaultRole"` // "member" (default) or "viewer"
@@ -143,10 +146,30 @@ func (c Config) Check() error {
 			return fmt.Errorf("the administrator group filter isn't a valid LDAP filter: %v", err)
 		}
 	}
+	if g := strings.TrimSpace(c.ViewerGroupFilter); g != "" {
+		if !strings.Contains(g, "{dn}") && !strings.Contains(g, "{username}") {
+			return errors.New("the viewer group filter has to contain {dn} or {username}, for example (&(objectClass=groupOfNames)(cn=viewers)(member={dn}))")
+		}
+		if _, err := ldap.CompileFilter(groupReplacer("x", "cn=x").Replace(g)); err != nil {
+			return fmt.Errorf("the viewer group filter isn't a valid LDAP filter: %v", err)
+		}
+	}
+	if err := c.CheckGroups(); err != nil {
+		return err
+	}
 	if c.CACert != "" {
 		if _, err := certPool(c.CACert); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// CheckGroups says what is wrong with the two group filters: the viewer group
+// filter has to be another one than the administrator group filter.
+func (c Config) CheckGroups() error {
+	if v := strings.TrimSpace(c.ViewerGroupFilter); v != "" && v == strings.TrimSpace(c.AdminGroupFilter) {
+		return errors.New("the viewer group filter has to be different from the administrator group filter")
 	}
 	return nil
 }
@@ -163,6 +186,7 @@ type Entry struct {
 	// would then not be found again.
 	IDIsDN bool
 	Admin  bool // in the administrator group
+	Viewer bool // in the viewer group
 }
 
 // Errors. ErrInvalidCredentials covers a user that does not exist, a wrong
@@ -401,21 +425,37 @@ func (c *Client) find(conn Conn, cfg Config, username string) (*Entry, error) {
 		out.IDIsDN = true
 	}
 	if g := strings.TrimSpace(cfg.AdminGroupFilter); g != "" {
-		req := ldap.NewSearchRequest(cfg.GroupBaseDN, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 1, int(cfg.timeout().Seconds()), false,
-			groupReplacer(out.Username, out.DN).Replace(g), []string{"dn"}, nil)
-		gres, err := conn.Search(req)
-		if ldap.IsErrorWithCode(err, ldap.LDAPResultSizeLimitExceeded) {
-			err = nil // more than one group matched: still a member
-			if gres == nil {
-				gres = &ldap.SearchResult{Entries: []*ldap.Entry{{}}}
-			}
-		}
+		in, err := c.inGroup(conn, cfg, g, out)
 		if err != nil {
 			return nil, fmt.Errorf("%w: the administrator group search failed: %s", ErrUnavailable, explain(cfg, err))
 		}
-		out.Admin = len(gres.Entries) > 0
+		out.Admin = in
+	}
+	if g := strings.TrimSpace(cfg.ViewerGroupFilter); g != "" {
+		in, err := c.inGroup(conn, cfg, g, out)
+		if err != nil {
+			return nil, fmt.Errorf("%w: the viewer group search failed: %s", ErrUnavailable, explain(cfg, err))
+		}
+		out.Viewer = in
 	}
 	return out, nil
+}
+
+// inGroup runs one group filter for the person and says whether it found a group.
+func (c *Client) inGroup(conn Conn, cfg Config, filter string, who *Entry) (bool, error) {
+	req := ldap.NewSearchRequest(cfg.GroupBaseDN, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 1, int(cfg.timeout().Seconds()), false,
+		groupReplacer(who.Username, who.DN).Replace(filter), []string{"dn"}, nil)
+	gres, err := conn.Search(req)
+	if ldap.IsErrorWithCode(err, ldap.LDAPResultSizeLimitExceeded) {
+		err = nil // more than one group matched: still a member
+		if gres == nil {
+			gres = &ldap.SearchResult{Entries: []*ldap.Entry{{}}}
+		}
+	}
+	if err != nil {
+		return false, err
+	}
+	return len(gres.Entries) > 0, nil
 }
 
 // Authenticate checks the user name and password against the directory and
@@ -476,6 +516,7 @@ type Report struct {
 	ID              string `json:"id,omitempty"`
 	IDIsDN          bool   `json:"idIsDn"` // no unchanging id was found, so the DN is used
 	Admin           bool   `json:"admin"`
+	Viewer          bool   `json:"viewer"`
 	PasswordChecked bool   `json:"passwordChecked"`
 	PasswordOK      bool   `json:"passwordOk"`
 }
@@ -504,6 +545,7 @@ func (c *Client) Test(ctx context.Context, cfg Config, username, password string
 		return rep, nil
 	}
 	rep.Found, rep.DN, rep.Username, rep.Name, rep.Email, rep.ID, rep.IDIsDN, rep.Admin = true, entry.DN, entry.Username, entry.Name, entry.Email, entry.ID, entry.IDIsDN, entry.Admin
+	rep.Viewer = entry.Viewer
 	if password != "" && validInput(username, password, true) {
 		rep.PasswordChecked = true
 		if err := conn.Bind(entry.DN, password); err == nil {

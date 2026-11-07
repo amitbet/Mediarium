@@ -194,6 +194,8 @@ func (s *Server) handleListSeries(w http.ResponseWriter, r *http.Request) {
 	short := s.incompleteNow().series
 	for i, sr := range list {
 		out[i] = toSeriesPayload(sr, who)
+		out[i].Title, out[i].PosterURL = s.shownFace("tv", sr.TMDBID, sr.Title, sr.PosterPath)
+		out[i].Overview = s.shownOverview("tv", sr.TMDBID, sr.Overview)
 		out[i].ShortFiles = len(short[sr.ID])
 		out[i].Media = mediaSummaryOf(media[sr.ID]...)
 		out[i].RootPath = folderShown(r, tvFolders, sr.RootPath)
@@ -231,8 +233,10 @@ func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := seriesDetailPayload{seriesPayload: toSeriesPayload(sr, s.accountNames()), Episodes: make([]episodePayload, len(eps))}
+	out.Title, out.PosterURL = s.shownFace("tv", sr.TMDBID, sr.Title, sr.PosterPath)
+	out.Overview = s.shownOverview("tv", sr.TMDBID, sr.Overview)
 	out.RootPath = folderShown(r, s.tvFolders(), sr.RootPath)
-	if all, err := s.MovieRepo.ListSeries(); err == nil {
+	if all, err := s.MovieRepo.ListSeriesNames(); err == nil {
 		key := sr.ID
 		if sr.CopyOf != 0 {
 			key = sr.CopyOf
@@ -277,7 +281,8 @@ type addSeriesRequest struct {
 	// NoUpgrade leaves the episodes alone once they are downloaded. On when
 	// left out: better versions are something the person asks for.
 	NoUpgrade *bool `json:"noUpgrade"`
-	// RootPath is the TV folder to keep it in; left out = the main one.
+	// RootPath is the TV folder to keep it in; left out = where new shows go
+	// (Settings > Library > Folders).
 	RootPath string `json:"rootPath"`
 }
 
@@ -321,22 +326,17 @@ func (s *Server) handleAddSeries(w http.ResponseWriter, r *http.Request) {
 		writeProfileError(w, err)
 		return
 	}
-	rootPath, problem := s.checkFolderChoice(req.RootPath, s.tvFolders(), "show")
+	rootPath, problem := s.folderForNewShow(req.RootPath)
 	if problem != "" {
 		writeError(w, http.StatusBadRequest, problem)
 		return
 	}
 
 	userID, byline := requester(r)
-	created, err := s.addSeriesFromTMDB(r.Context(), req.TMDBID, userID, boolOr(req.NoUpgrade, true))
+	created, err := s.addSeriesFromTMDB(r.Context(), req.TMDBID, userID, boolOr(req.NoUpgrade, true), rootPath)
 	if err != nil {
 		writeUpstreamError(w, "add that show", err)
 		return
-	}
-	if rootPath != "" {
-		if err := s.MovieRepo.SetSeriesRoot(created.ID, rootPath); err == nil {
-			created.RootPath = rootPath
-		}
 	}
 	if req.Monitor == library.MonitorFuture || req.Monitor == library.MonitorNone {
 		_, _ = s.MovieRepo.ApplyMonitorMode(created.ID, req.Monitor, todayUTC(), false)
@@ -369,7 +369,7 @@ func (s *Server) handleAddSeries(w http.ResponseWriter, r *http.Request) {
 // addSeriesFromTMDB adds a show with its episode list and genres, recording
 // userID (0 = unknown) as the account that added it. noUpgrade leaves the
 // episodes alone once they are downloaded.
-func (s *Server) addSeriesFromTMDB(ctx context.Context, tmdbID int, userID int64, noUpgrade bool) (library.Series, error) {
+func (s *Server) addSeriesFromTMDB(ctx context.Context, tmdbID int, userID int64, noUpgrade bool, rootPath string) (library.Series, error) {
 	detail, infos, err := s.TMDB().GetShowEpisodes(ctx, tmdbID)
 	if err != nil {
 		return library.Series{}, err
@@ -378,13 +378,14 @@ func (s *Server) addSeriesFromTMDB(ctx context.Context, tmdbID int, userID int64
 		TMDBID: detail.TMDBID, Title: detail.Name, Year: detail.Year(), Overview: detail.Overview,
 		PosterPath: detail.PosterPath, FirstAirDate: detail.FirstAirDate, Monitored: true,
 		NoUpgrade: noUpgrade, AddedBy: userID, Genres: s.TMDB().ShowGenres(ctx, detail.Show),
-		SeriesType: guessSeriesType(detail.Show),
+		SeriesType: guessSeriesType(detail.Show), RootPath: rootPath,
 	}, toLibraryEpisodes(infos))
 	if err != nil {
 		return sr, err
 	}
 	s.saveSeriesIDs(&sr, detail)
 	s.noteSeriesNumbering(sr)
+	go s.rememberDisplayFace("tv", sr.TMDBID, sr.Title, sr.PosterPath, sr.Overview)
 	return sr, nil
 }
 
@@ -541,6 +542,7 @@ func (s *Server) refreshSeries(ctx context.Context, sr library.Series) error {
 		}
 	}
 	s.syncAirTimes(ctx, sr)
+	go s.rememberDisplayFace("tv", sr.TMDBID, sr.Title, sr.PosterPath, sr.Overview)
 	return nil
 }
 
@@ -592,7 +594,7 @@ func (s *Server) handleGrabSeries(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	queueID, err := s.grabTVRelease(sr, req.Season, req.Episode, req.ReleaseTitle, req.DownloadURL, req.SizeBytes, req.protocol())
+	queueID, err := s.grabTVOpts(sr, req.Season, req.Episode, req.ReleaseTitle, req.DownloadURL, req.SizeBytes, req.protocol(), grabPicked, req.Replace)
 	if err != nil {
 		writeGrabError(w, err, http.StatusBadRequest)
 		return

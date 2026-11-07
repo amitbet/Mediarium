@@ -60,8 +60,8 @@ type browsePayload struct {
 // titles already in the library.
 func (s *Server) moviePagePayload(ctx context.Context, page *metadata.MoviePage) browsePayload {
 	inLib := map[int]browseItem{}
-	if list, err := s.MovieRepo.List(); err == nil {
-		for _, m := range list {
+	if o, err := s.ownedLibrary(ctx); err == nil {
+		for _, m := range o.movies {
 			inLib[m.TMDBID] = browseItem{InLibrary: true, LibraryID: m.ID, Status: string(m.Status)}
 		}
 	}
@@ -79,8 +79,8 @@ func (s *Server) moviePagePayload(ctx context.Context, page *metadata.MoviePage)
 // "downloaded/total" episode count.
 func (s *Server) showPagePayload(ctx context.Context, page *metadata.ShowPage) browsePayload {
 	inLib := map[int]browseItem{}
-	if list, err := s.MovieRepo.ListSeries(); err == nil {
-		for _, sr := range list {
+	if o, err := s.ownedLibrary(ctx); err == nil {
+		for _, sr := range o.shows {
 			inLib[sr.TMDBID] = browseItem{InLibrary: true, LibraryID: sr.ID,
 				Status: strconv.Itoa(sr.DownloadedCount) + "/" + strconv.Itoa(sr.EpisodeCount)}
 		}

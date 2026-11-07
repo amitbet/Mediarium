@@ -291,6 +291,61 @@ func TestAdminGroup(t *testing.T) {
 	}
 }
 
+func TestViewerGroup(t *testing.T) {
+	cfg := baseConfig()
+	cfg.AdminGroupFilter = "(&(objectClass=groupOfNames)(cn=mediarium-admins)(member={dn}))"
+	cfg.ViewerGroupFilter = "(&(objectClass=groupOfNames)(cn=mediarium-viewers)(member={dn}))"
+	cfg.GroupBaseDN = "ou=groups,dc=example,dc=com"
+	tests := []struct {
+		name          string
+		admin, viewer bool
+		set           func(c *ldapauth.Config)
+	}{
+		{"in the viewer group only", false, true, nil},
+		{"in the admin group only", true, false, nil},
+		{"in both", true, true, nil},
+		{"in neither", false, false, nil},
+		{"viewer filter off: nobody is a viewer", false, false, func(c *ldapauth.Config) { c.ViewerGroupFilter = "" }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := cfg
+			if tc.set != nil {
+				tc.set(&c)
+			}
+			f := &fakeDirectory{}
+			f.searchFn = func(req *ldap.SearchRequest) (*ldap.SearchResult, error) {
+				if req.BaseDN == "ou=groups,dc=example,dc=com" {
+					in := tc.admin
+					if strings.Contains(req.Filter, "mediarium-viewers") {
+						in = tc.viewer
+					}
+					if in {
+						return result(entry("cn=g,ou=groups,dc=example,dc=com", nil)), nil
+					}
+					return result(), nil
+				}
+				return result(entry("uid=sam,dc=example,dc=com", map[string][]string{"uid": {"sam"}})), nil
+			}
+			e, err := f.client().Authenticate(context.Background(), c, "sam", "pw")
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantViewer := tc.viewer && c.ViewerGroupFilter != ""
+			if e.Admin != tc.admin || e.Viewer != wantViewer {
+				t.Errorf("admin=%v viewer=%v, want admin=%v viewer=%v", e.Admin, e.Viewer, tc.admin, wantViewer)
+			}
+			wantSearches := 3
+			if c.ViewerGroupFilter == "" {
+				wantSearches = 2
+			}
+			if len(f.searches) != wantSearches {
+				t.Errorf("%d searches, want %d", len(f.searches), wantSearches)
+			}
+		})
+	}
+}
+
 func TestPlaceholdersAreExpandedOnce(t *testing.T) {
 	cfg := baseConfig()
 	cfg.AdminGroupFilter = "(&(cn=admins)(member={dn})(memberUid={username}))"
@@ -359,7 +414,12 @@ func TestConfigCheck(t *testing.T) {
 		"broken filter":              mod(func(c *ldapauth.Config) { c.UserFilter = "(uid={username}" }),
 		"broken group filter":        mod(func(c *ldapauth.Config) { c.AdminGroupFilter = "(member={dn}" }),
 		"group filter about nobody":  mod(func(c *ldapauth.Config) { c.AdminGroupFilter = "(cn=admins)" }),
-		"bad CA":                     mod(func(c *ldapauth.Config) { c.CACert = "not a certificate" }),
+		"broken viewer filter":       mod(func(c *ldapauth.Config) { c.ViewerGroupFilter = "(member={dn}" }),
+		"viewer filter about nobody": mod(func(c *ldapauth.Config) { c.ViewerGroupFilter = "(cn=viewers)" }),
+		"same filter for both groups": mod(func(c *ldapauth.Config) {
+			c.AdminGroupFilter, c.ViewerGroupFilter = "(member={dn})", " (member={dn}) "
+		}),
+		"bad CA": mod(func(c *ldapauth.Config) { c.CACert = "not a certificate" }),
 	}
 	for name, c := range bad {
 		if c.Check() == nil {

@@ -217,6 +217,7 @@
 .settings-content .indexer-info summary.idx-line::after { content: ""; flex: none; margin-left: auto; margin-right: 6px; width: 6px; height: 6px; border: solid currentColor; border-width: 0 2px 2px 0; transform: translateY(-2px) rotate(45deg); }
 .settings-content .indexer-info .idx-more[open] > summary.idx-line::after { transform: translateY(1px) rotate(225deg); }
 .settings-content .indexer-info .idx-line.old { opacity: 0.6; }
+.settings-content .indexer-result .idx-detail { display: block; margin-top: 3px; color: var(--text-dim); font-family: var(--mono, monospace); overflow-wrap: anywhere; }
 .settings-content .indexer-info .idx-why { display: block; margin-top: 3px; color: var(--danger); -webkit-line-clamp: unset; }
 .settings-content .indexer-card .tile-ico { width: 32px; height: 32px; flex: none; }
 .settings-content .indexer-card .qdetails summary { font-size: 0.85rem; }

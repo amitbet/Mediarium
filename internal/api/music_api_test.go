@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/rdborg/mediarium/internal/api"
@@ -92,6 +93,8 @@ type musicIndexer struct {
 	*httptest.Server
 	mu   sync.Mutex
 	cats []string
+	// nzbHits counts the downloads of the NZB file.
+	nzbHits atomic.Int32
 }
 
 func newMusicIndexer(t *testing.T, titles []string, nzb string) *musicIndexer {
@@ -111,6 +114,7 @@ func newMusicIndexer(t *testing.T, titles []string, nzb string) *musicIndexer {
 		fmt.Fprintf(w, `<?xml version="1.0"?><rss version="2.0" xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/"><channel>%s</channel></rss>`, items.String())
 	})
 	mux.HandleFunc("/nzb/", func(w http.ResponseWriter, r *http.Request) {
+		idx.nzbHits.Add(1)
 		w.Header().Set("Content-Type", "application/xml")
 		fmt.Fprint(w, nzb)
 	})
@@ -131,6 +135,7 @@ type musicEnv struct {
 	client    *http.Client
 	musicRoot string
 	covers    *coverHits // requests the fake Cover Art Archive has seen
+	mbURL     string     // the fake MusicBrainz
 }
 
 // newMusicEnv boots a server with an administrator, the music module on
@@ -147,7 +152,7 @@ func newMusicEnv(t *testing.T) *musicEnv {
 	postJSONMethod[map[string]any](t, client, http.MethodPut, base+"/api/settings", map[string]any{
 		"musicEnabled": true, "musicPath": root,
 	}, http.StatusOK)
-	return &musicEnv{server: server, base: base, client: client, musicRoot: root, covers: covers}
+	return &musicEnv{server: server, base: base, client: client, musicRoot: root, covers: covers, mbURL: mb.URL}
 }
 
 func (e *musicEnv) addArtist(t *testing.T, monitor string) map[string]any {

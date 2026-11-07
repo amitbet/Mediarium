@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api } from './api'
+import { api, type OwnedAnswer } from './api'
 import { movieState, seriesState, type ItemStateInput } from './components/state'
+import { ownedPollMs } from './pollPlan'
 import { useLive } from './useLive'
 
 export interface Owned {
@@ -11,25 +12,26 @@ export interface Owned {
 
 // Which TMDB titles are already in the library, and their state (wanted,
 // downloading, downloaded), kept live so Discover cards update on their own.
-export function useOwned(ms = 15000): Owned {
+// It reads one small answer (GET /api/library/owned: ids, status and the
+// downloads of those titles) instead of the whole movie list, show list and
+// queue. It asks every 30 seconds, every 15 while a download moves, and not
+// at all while the tab is hidden.
+export function useOwned(): Owned {
   const [movies, setMovies] = useState<Map<number, ItemStateInput>>(new Map())
   const [shows, setShows] = useState<Map<number, ItemStateInput>>(new Map())
+  const [ms, setMs] = useState(ownedPollMs(undefined))
 
   // The same answer keeps the same Map, so the cards on Discover are not redrawn every poll for nothing.
-  // The lists come back as the very same objects when nothing changed on the server; then there is nothing to rebuild.
-  const seen = useRef<{ movies?: [unknown, unknown]; shows?: [unknown, unknown] }>({})
+  // The server answers "nothing changed" with the very same object; then there is nothing to rebuild.
+  const seen = useRef<OwnedAnswer | undefined>(undefined)
   const reload = useCallback(() => {
-    const queue = api.listQueue().catch(() => [])
     const same = (next: Map<number, ItemStateInput>) => (prev: Map<number, ItemStateInput>) => (JSON.stringify([...prev]) === JSON.stringify([...next]) ? prev : next)
-    Promise.all([queue, api.listMovies()]).then(([q, m]) => {
-      if (seen.current.movies?.[0] === q && seen.current.movies[1] === m) return
-      seen.current.movies = [q, m]
-      setMovies(same(new Map(m.map((x) => [x.tmdbId, { id: x.id, state: movieState(x, q) }]))))
-    }).catch(() => undefined)
-    Promise.all([queue, api.listSeries()]).then(([q, s]) => {
-      if (seen.current.shows?.[0] === q && seen.current.shows[1] === s) return
-      seen.current.shows = [q, s]
-      setShows(same(new Map(s.map((x) => [x.tmdbId, { id: x.id, state: seriesState(x, q) }]))))
+    api.libraryOwned().then((a) => {
+      if (seen.current === a) return
+      seen.current = a
+      setMs(ownedPollMs(a.queue))
+      setMovies(same(new Map(a.movies.map((x) => [x.tmdbId, { id: x.id, state: movieState(x, a.queue) }]))))
+      setShows(same(new Map(a.shows.map((x) => [x.tmdbId, { id: x.id, state: seriesState(x, a.queue) }]))))
     }).catch(() => undefined)
   }, [])
 

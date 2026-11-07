@@ -32,6 +32,17 @@ test('everything answered and nothing matched', () => {
   assert.equal(h?.link, false)
 })
 
+test('releases came back but none fits the title: says so and names some', () => {
+  const h = releaseHint(2, [], 0, ['Some.Film.2006.1080p.BluRay-GRP', 'Some.Film.2023.2160p.WEB-GRP'])
+  assert.equal(h?.empty, true)
+  assert.match(h?.text ?? '', /^Your indexers answered with releases, but none of them fits this title and year/)
+  assert.match(h?.text ?? '', /Some\.Film\.2006\.1080p\.BluRay-GRP; Some\.Film\.2023\.2160p\.WEB-GRP$/)
+  // An indexer that did not answer is still the first thing to say.
+  assert.match(releaseHint(2, down, 0, ['X'])?.text ?? '', /^No matching releases\. 1 indexer did not answer/)
+  // A list with releases in it needs no such note.
+  assert.equal(releaseHint(2, [], 5, ['X']), null)
+})
+
 test('releases found: only a note when someone did not answer', () => {
   assert.equal(releaseHint(2, [], 5), null)
   const h = releaseHint(2, down, 5)

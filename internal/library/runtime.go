@@ -86,9 +86,10 @@ type FileLength struct {
 	Expected float64 // minutes TMDB gives, 0 when not known
 }
 
-// The lengths are in the saved details of the file (the "info" JSON). A row
+// The lengths are the "duration" column, copied from the saved details JSON when
+// a file is saved (so the lists never read the JSON, which is large). A row
 // whose details could not be read, or hold no length, is left out.
-const lengthExpr = `CASE WHEN mi.failed = 0 AND json_valid(mi.info) THEN COALESCE(CAST(json_extract(mi.info, '$.duration') AS REAL), 0) ELSE 0 END`
+const lengthExpr = `CASE WHEN mi.failed = 0 THEN mi.duration ELSE 0 END`
 
 // ShortFileCandidates lists the downloaded files whose length is under
 // maxSeconds, or under half their title's runtime, whichever is longer. The

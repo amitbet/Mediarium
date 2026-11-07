@@ -101,6 +101,9 @@ func TestReplaceWithSmallerVersionKeepsTheOldFileWhenTheDownloadFails(t *testing
 		t.Fatalf("grab: %v", err)
 	}
 	waitFor(t, "the download to end", func() bool { s := e.status(t, id); return s == "completed" || s == "failed" })
+	// The item is marked failed first; the movie goes back to "downloaded" a few
+	// steps later in the same run. Wait for the run to end before reading it.
+	e.server.TestWaitBackground()
 	if got := e.status(t, id); got != "failed" {
 		t.Fatalf("the download should fail, it ended %s", got)
 	}

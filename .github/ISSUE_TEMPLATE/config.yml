@@ -9,3 +9,6 @@ contact_links:
   - name: Ask a question or share an idea
     url: https://github.com/rdborg/Mediarium/discussions
     about: Questions, ideas and show-and-tell go in Discussions. Bugs and specific feature requests go in Issues.
+  - name: Chat with other users on Reddit
+    url: https://www.reddit.com/r/Mediarium/
+    about: The Mediarium community on Reddit. Bugs are fixed fastest when they are reported here on GitHub.

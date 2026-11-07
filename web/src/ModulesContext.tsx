@@ -24,6 +24,9 @@ interface ModulesState {
   trailerOn: boolean
   // Whether it starts with its sound on.
   trailerSoundOn: boolean
+  // Whether torrent releases can be downloaded at all (the built-in client, a
+  // debrid service or a download client). True until the server says otherwise.
+  torrentsOn: boolean
   // Whether a kind of media is switched on.
   on: (key: ModuleKey) => boolean
   refresh: () => Promise<void>
@@ -43,17 +46,19 @@ export function ModulesProvider({ children }: { children: ReactNode }) {
   const [subtitlesOn, setSubtitlesOn] = useState(false)
   const [trailerOn, setTrailerOn] = useState(false)
   const [trailerSoundOn, setTrailerSoundOn] = useState(false)
+  const [torrentsOn, setTorrentsOn] = useState(true)
   const [loaded, setLoaded] = useState(false)
 
   const refresh = useCallback(async () => {
     if (!signedIn) return
     try {
       const early = takeEarlyModules()
-      const { subtitlesEnabled, trailerBackground, trailerSound, ...kinds } = await (early ? early.catch(() => api.modules()) : api.modules())
+      const { subtitlesEnabled, trailerBackground, trailerSound, torrentsOn: torrents, ...kinds } = await (early ? early.catch(() => api.modules()) : api.modules())
       setModules({ ...FALLBACK, ...kinds })
       setSubtitlesOn(subtitlesEnabled === true)
       setTrailerOn(trailerBackground === true)
       setTrailerSoundOn(trailerSound === true)
+      setTorrentsOn(torrents !== false)
     } catch {
       // Keep whatever we had: an older server has no switchboard.
     } finally {
@@ -67,6 +72,7 @@ export function ModulesProvider({ children }: { children: ReactNode }) {
       setSubtitlesOn(false)
       setTrailerOn(false)
       setTrailerSoundOn(false)
+      setTorrentsOn(true)
       setLoaded(false)
       return
     }
@@ -81,6 +87,7 @@ export function ModulesProvider({ children }: { children: ReactNode }) {
       subtitlesOn,
       trailerOn,
       trailerSoundOn,
+      torrentsOn,
       on: (key) => modules[key]?.enabled === true,
       refresh,
       set: (next) => {
@@ -88,7 +95,7 @@ export function ModulesProvider({ children }: { children: ReactNode }) {
         setLoaded(true)
       },
     }),
-    [modules, loaded, subtitlesOn, trailerOn, trailerSoundOn, refresh],
+    [modules, loaded, subtitlesOn, trailerOn, trailerSoundOn, torrentsOn, refresh],
   )
   return <ModulesContext.Provider value={value}>{children}</ModulesContext.Provider>
 }

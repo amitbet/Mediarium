@@ -1,4 +1,5 @@
 import { useMoreBelow } from './useMoreBelow'
+import { usePauseWhileScrolling } from './usePauseWhileScrolling'
 import { MiniPlayer, MusicPlayerProvider } from './MusicPlayer'
 import { Fragment, useCallback, useEffect, useRef, useState, Suspense } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate, useNavigationType } from 'react-router-dom'
@@ -14,6 +15,7 @@ import { useUnreadErrors } from '../useProblems'
 import { useModules } from '../ModulesContext'
 import { libraryEntries, type LibraryTab } from '../libraryTabs'
 import { afterClick, afterKey, type NavGroup, type OpenGroup } from '../navGroups'
+import BackToTop from './BackToTop'
 import BrandMark from './BrandMark'
 import PageLoading from './PageLoading'
 import FeedbackNudge from './FeedbackNudge'
@@ -247,6 +249,7 @@ function Shell() {
   const navRef = useRef<HTMLElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const moreBelow = useMoreBelow(scrollRef)
+  usePauseWhileScrolling(mainRef)
   const menuButton = useRef<HTMLButtonElement>(null)
   // The open drawer (phones and tablets): Escape closes it, Tab stays inside
   // it, and focus goes back to the menu button when it closes.
@@ -325,12 +328,12 @@ function Shell() {
   // A small count of downloads in flight next to "Activity".
   const loadActive = useCallback(() => {
     api
-      .listActiveQueue()
-      .then((q) => setActive(q.length))
+      .queueCount()
+      .then((c) => setActive(c.active))
       .catch(() => undefined)
   }, [])
   useEffect(loadActive, [loadActive])
-  useLive(loadActive, 3000)
+  useLive(loadActive, 5000)
 
   return (
     <div className="app-shell" data-section={sectionFor(location.pathname)}>
@@ -566,6 +569,7 @@ function Shell() {
             <Outlet />
           </Suspense>
         </main>
+        <BackToTop target={mainRef} />
         <MiniPlayer />
         {!demoEnabled() && <WhatsNew version={version} onDone={onNotesDone} />}
         {!demoEnabled() && admin && notesDone && <UsageStatsPrompt />}
